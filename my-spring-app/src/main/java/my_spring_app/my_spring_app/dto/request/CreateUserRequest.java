@@ -22,5 +22,9 @@ public class CreateUserRequest {
     @NotBlank(message = "Password không được để trống")
     @Size(min = 1, message = "Password phải có ít nhất 1 ký tự")
     private String password;
+
+    @NotBlank(message = "Confirm Password không được để trống")
+    @Size(min = 1, message = "Confirm Password phải có ít nhất 1 ký tự")
+    private String confirmPassword;
 }
 

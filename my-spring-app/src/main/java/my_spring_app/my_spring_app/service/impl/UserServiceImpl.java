@@ -26,6 +26,11 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public CreateUserResponse createUser(CreateUserRequest request) {
+        // Kiểm tra password và confirmPassword có khớp nhau không
+        if (!request.getPassword().equals(request.getConfirmPassword())) {
+            throw new RuntimeException("Mật khẩu xác nhận không khớp");
+        }
+
         // Kiểm tra username đã tồn tại chưa
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new RuntimeException("Username đã tồn tại");
