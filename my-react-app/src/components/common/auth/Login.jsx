@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { authService } from '../services/api';
-import './Auth.css';
+import { authService } from '../../../services/api';
+import '../Auth.css';
 
 function Login() {
   const navigate = useNavigate();
@@ -26,27 +26,25 @@ function Login() {
     setLoading(true);
 
     try {
-      // Gọi API đăng nhập từ UserController
       const response = await authService.login(formData.username, formData.password);
       console.log('Login successful:', response);
       
-      // Lưu thông tin user vào localStorage
       localStorage.setItem('user', JSON.stringify(response));
       localStorage.setItem('isAuthenticated', 'true');
       
-      // Chuyển đến trang chủ (hiện tại redirect về login, sau có thể tạo dashboard)
-      // TODO: Tạo dashboard page và chuyển đến đó
-      navigate('/');
+      // Chuyển đến dashboard dựa trên role
+      if (response.role === 'admin') {
+        navigate('/admin/dashboard');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err) {
-      // Xử lý lỗi từ API
       let errorMessage = 'Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.';
       
       if (err.response) {
-        // Lỗi từ server (Spring Boot)
         const status = err.response.status;
         const data = err.response.data;
         
-        // Kiểm tra message trong response
         if (data?.message) {
           errorMessage = data.message;
         } else if (data && typeof data === 'string') {
@@ -57,10 +55,8 @@ function Login() {
           errorMessage = 'Lỗi server. Vui lòng thử lại sau.';
         }
       } else if (err.request) {
-        // Request được gửi nhưng không nhận được response
         errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra lại kết nối.';
       } else {
-        // Lỗi khi setup request
         errorMessage = err.message || errorMessage;
       }
       

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { authService } from '../services/api';
-import './Auth.css';
+import { authService } from '../../../services/api';
+import '../Auth.css';
 
 function Register() {
   const navigate = useNavigate();
@@ -27,7 +27,6 @@ function Register() {
     e.preventDefault();
     setError('');
 
-    // Kiểm tra password và confirmPassword ở frontend
     if (formData.password !== formData.confirmPassword) {
       setError('Mật khẩu xác nhận không khớp!');
       return;
@@ -36,7 +35,6 @@ function Register() {
     setLoading(true);
 
     try {
-      // Gọi API tạo tài khoản từ UserController
       const response = await authService.register(
         formData.fullname,
         formData.username,
@@ -45,24 +43,19 @@ function Register() {
       );
       console.log('Registration successful:', response);
       
-      // Hiển thị thông báo thành công và ẩn lỗi nếu có
       setError('');
       setSuccess(true);
       
-      // Tự động chuyển đến trang đăng nhập sau 2.5 giây
       setTimeout(() => {
         navigate('/login');
       }, 2500);
     } catch (err) {
-      // Xử lý lỗi từ API
       let errorMessage = 'Đăng ký thất bại. Vui lòng thử lại.';
       
       if (err.response) {
-        // Lỗi từ server (Spring Boot)
         const status = err.response.status;
         const data = err.response.data;
         
-        // Kiểm tra message trong response
         if (data?.message) {
           errorMessage = data.message;
         } else if (data && typeof data === 'string') {
@@ -70,14 +63,11 @@ function Register() {
         } else if (status === 400) {
           errorMessage = 'Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.';
         } else if (status === 409 || status === 500) {
-          // 409 Conflict thường là username đã tồn tại
           errorMessage = data?.message || 'Tài khoản đã tồn tại hoặc có lỗi xảy ra.';
         }
       } else if (err.request) {
-        // Request được gửi nhưng không nhận được response
         errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra lại kết nối.';
       } else {
-        // Lỗi khi setup request
         errorMessage = err.message || errorMessage;
       }
       
