@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import api from '../../services/api';
 import './Dashboard.css';
 
 function NewDeployment({ onDeploySuccess }) {
@@ -16,6 +17,9 @@ function NewDeployment({ onDeploySuccess }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState('success'); // 'success' or 'error'
+  const [modalData, setModalData] = useState(null);
   const [isFrameworkDropdownOpen, setIsFrameworkDropdownOpen] = useState(false);
   const frameworkDropdownRef = useRef(null);
 
@@ -107,6 +111,23 @@ function NewDeployment({ onDeploySuccess }) {
 
   const selectedFramework = frameworkPresets.find(p => p.value === frameworkPreset) || frameworkPresets[frameworkPresets.length - 1];
 
+  // Map framework preset từ frontend sang backend format
+  const mapFrameworkType = (preset) => {
+    const mapping = {
+      'react': 'react',
+      'vue': 'vue',
+      'angular': 'angular',
+      'nextjs': 'react',
+      'nuxt': 'vue',
+      'gatsby': 'react',
+      'vite': 'react',
+      'svelte': 'node',
+      'vanilla': 'node',
+      'other': 'node'
+    };
+    return mapping[preset] || 'node';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -134,12 +155,55 @@ function NewDeployment({ onDeploySuccess }) {
       }
     }
 
+    // Get username from localStorage
+    const userData = localStorage.getItem('user');
+    if (!userData) {
+      setError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+      return;
+    }
+    const user = JSON.parse(userData);
+    const username = user.username;
+
     setLoading(true);
+    setError('');
+    setSuccess(false);
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      let response;
+
+      if (deploymentType === 'docker') {
+        // Gọi API deploy-docker cho Docker deployment
+        const requestBody = {
+          name: projectName.trim(),
+          frameworkType: mapFrameworkType(frameworkPreset),
+          deploymentType: 'docker',
+          dockerImage: dockerImage.trim(),
+          username: username
+        };
+
+        response = await api.post('/apps/deploy-docker', requestBody);
+      } else {
+        // Gọi API deploy cho File deployment
+        const requestBody = {
+          name: projectName.trim(),
+          frameworkType: mapFrameworkType(frameworkPreset),
+          deploymentType: 'file',
+          filePath: selectedFile ? selectedFile.name : '',
+          username: username
+        };
+
+        response = await api.post('/apps/deploy', requestBody);
+      }
       
+      console.log('Deployment successful:', response.data);
+      
+      // Hiển thị modal thành công với dữ liệu từ response
+      setModalType('success');
+      setModalData(response.data);
+      setShowModal(true);
       setSuccess(true);
+      
+      // Reset form
       setDockerImage('');
       setSelectedFile(null);
       setProjectName('');
@@ -149,15 +213,44 @@ function NewDeployment({ onDeploySuccess }) {
       setInstallCommand('npm install');
       setEnvVariables([{ key: '', value: '' }]);
       
-      if (onDeploySuccess) {
-        onDeploySuccess();
+      // KHÔNG gọi onDeploySuccess() ở đây, sẽ gọi sau khi người dùng đóng modal
+      
+    } catch (err) {
+      console.error('Deployment error:', err);
+      
+      // Xác định thông báo lỗi
+      let errorMessage = 'Đã xảy ra lỗi khi triển khai. Vui lòng thử lại.';
+      let errorDetails = null;
+      
+      if (err.response) {
+        const status = err.response.status;
+        const data = err.response.data;
+        
+        if (data?.message) {
+          errorMessage = data.message;
+        } else if (data && typeof data === 'string') {
+          errorMessage = data;
+        } else if (status === 400) {
+          errorMessage = 'Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.';
+        } else if (status === 500) {
+          errorMessage = 'Lỗi server. Vui lòng thử lại sau.';
+        }
+        
+        errorDetails = data;
+      } else if (err.request) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra lại kết nối.';
+      } else {
+        errorMessage = err.message || errorMessage;
       }
       
-      setTimeout(() => {
-        setSuccess(false);
-      }, 3000);
-    } catch (err) {
-      setError('Đã xảy ra lỗi khi triển khai. Vui lòng thử lại.');
+      // Hiển thị modal lỗi
+      setModalType('error');
+      setModalData({
+        message: errorMessage,
+        details: errorDetails
+      });
+      setShowModal(true);
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -547,6 +640,156 @@ function NewDeployment({ onDeploySuccess }) {
           )}
         </button>
       </form>
+
+      {/* Modal hiển thị kết quả */}
+      {showModal && (
+        <div className="modal-overlay" onClick={() => {
+          // Khi click overlay, chỉ đóng modal, không tự động chuyển trang
+          // Người dùng cần chọn một trong 2 nút trong modal
+          if (modalType === 'error') {
+            setShowModal(false);
+            setError('');
+          }
+        }}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className={`modal-content ${modalType}`}>
+              <button 
+                className="modal-close-btn" 
+                onClick={() => {
+                  // Khi click nút X, chỉ đóng modal, không tự động chuyển trang
+                  if (modalType === 'error') {
+                    setShowModal(false);
+                    setError('');
+                  } else {
+                    // Với modal success, chỉ đóng modal khi click X
+                    setShowModal(false);
+                    setSuccess(false);
+                  }
+                }}
+                aria-label="Đóng modal"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+
+              {modalType === 'success' ? (
+                <>
+                  <div className="modal-icon success-icon-wrapper">
+                    <svg className="success-icon" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
+                      <path d="M8 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                  <h2 className="modal-title">Triển khai thành công!</h2>
+                  <p className="modal-description">Ứng dụng của bạn đã được triển khai thành công.</p>
+                  
+                  {modalData && (
+                    <div className="modal-results">
+                      {modalData.url && (
+                        <div className="result-item">
+                          <div className="result-label">
+                            <svg viewBox="0 0 24 24" fill="none">
+                              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                            URL:
+                          </div>
+                          <div className="result-value">
+                            <a 
+                              href={modalData.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="result-link"
+                            >
+                              {modalData.url}
+                            </a>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {modalData.status && (
+                        <div className="result-item">
+                          <div className="result-label">
+                            <svg viewBox="0 0 24 24" fill="none">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
+                              <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                            </svg>
+                            Status:
+                          </div>
+                          <div className="result-value">
+                            <span className={`status-badge status-${modalData.status}`}>
+                              {modalData.status}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="modal-actions-group">
+                    <button 
+                      className="modal-action-btn secondary-btn"
+                      onClick={() => {
+                        setShowModal(false);
+                        setSuccess(false);
+                        // Ở lại trang, không gọi onDeploySuccess
+                      }}
+                    >
+                      Ở lại trang
+                    </button>
+                    <button 
+                      className="modal-action-btn primary-btn"
+                      onClick={() => {
+                        setShowModal(false);
+                        setSuccess(false);
+                        // Chuyển hướng về ProjectsList
+                        if (onDeploySuccess) {
+                          onDeploySuccess();
+                        }
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" strokeWidth="2" fill="none"/>
+                        <polyline points="9 22 9 12 15 12 15 22" stroke="currentColor" strokeWidth="2"/>
+                      </svg>
+                      Danh sách dự án
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="modal-icon error-icon-wrapper">
+                    <svg className="error-icon" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
+                      <path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                  </div>
+                  <h2 className="modal-title">Triển khai thất bại</h2>
+                  <p className="modal-description">{modalData?.message || 'Đã xảy ra lỗi khi triển khai.'}</p>
+                  
+                  {modalData?.details && (
+                    <div className="modal-error-details">
+                      <pre>{JSON.stringify(modalData.details, null, 2)}</pre>
+                    </div>
+                  )}
+
+                  <button 
+                    className="modal-action-btn error-btn"
+                    onClick={() => {
+                      setShowModal(false);
+                      setError('');
+                      // KHÔNG gọi onDeploySuccess cho modal error
+                    }}
+                  >
+                    Đóng
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

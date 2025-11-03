@@ -503,7 +503,7 @@ public class AppServiceImpl implements AppService {
 
             // Cập nhật status và URL
             appEntity.setStatus("running");
-            String generatedUrl = "http://" + ssh_host + "/" + appName;
+            String generatedUrl = "http://" + appName + ".local.test";
 
             DeployAppDockerResponse response = new DeployAppDockerResponse();
             response.setUrl(generatedUrl);

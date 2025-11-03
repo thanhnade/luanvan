@@ -629,6 +629,364 @@
   }
 }
 
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+  padding: 20px;
+}
+
+.modal-container {
+  width: 100%;
+  max-width: 520px;
+  animation: modalSlideIn 0.3s ease-out;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  position: relative;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content.success {
+  border-top: 4px solid #10b981;
+}
+
+.modal-content.error {
+  border-top: 4px solid #ef4444;
+}
+
+.modal-close-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #6b7280;
+  padding: 0;
+}
+
+.modal-close-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+  transform: scale(1.1);
+}
+
+.modal-close-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.modal-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.success-icon-wrapper {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-radius: 50%;
+  animation: scaleIn 0.4s ease-out;
+}
+
+.success-icon-wrapper .success-icon {
+  width: 48px;
+  height: 48px;
+  color: white;
+  animation: checkmarkDraw 0.6s ease-out 0.2s both;
+}
+
+.error-icon-wrapper {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #fee2e2 0%, #fef2f2 100%);
+  border-radius: 50%;
+  animation: scaleIn 0.4s ease-out;
+}
+
+.error-icon-wrapper .error-icon {
+  width: 48px;
+  height: 48px;
+  color: #dc2626;
+  animation: shake 0.5s ease-out;
+}
+
+.modal-title {
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 12px 0;
+  color: #111827;
+}
+
+.modal-content.success .modal-title {
+  color: #059669;
+}
+
+.modal-content.error .modal-title {
+  color: #dc2626;
+}
+
+.modal-description {
+  font-size: 16px;
+  color: #6b7280;
+  text-align: center;
+  margin: 0 0 24px 0;
+  line-height: 1.6;
+}
+
+.modal-results {
+  background: #f9fafb;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  border: 1px solid #e5e7eb;
+}
+
+.result-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.result-item:last-child {
+  margin-bottom: 0;
+}
+
+.result-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.result-label svg {
+  width: 18px;
+  height: 18px;
+  color: #6b7280;
+}
+
+.result-value {
+  flex: 1;
+  word-break: break-all;
+}
+
+.result-link {
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease;
+  display: inline-block;
+}
+
+.result-link:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.status-running {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #10b981;
+}
+
+.status-badge.status-building {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #3b82f6;
+}
+
+.status-badge.status-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #ef4444;
+}
+
+.status-badge.status-stopped {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #9ca3af;
+}
+
+.modal-error-details {
+  background: #1f2937;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 24px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.modal-error-details pre {
+  margin: 0;
+  font-size: 12px;
+  color: #f3f4f6;
+  font-family: 'Monaco', 'Courier New', monospace;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.modal-actions-group {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.modal-action-btn {
+  flex: 1;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.modal-action-btn.primary-btn {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.modal-action-btn.primary-btn:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
+}
+
+.modal-action-btn.primary-btn:active {
+  transform: translateY(0);
+}
+
+.modal-action-btn.primary-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.modal-action-btn.secondary-btn {
+  background: white;
+  color: #374151;
+  border: 2px solid #e5e7eb;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.modal-action-btn.secondary-btn:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.modal-action-btn.secondary-btn:active {
+  transform: translateY(0);
+}
+
+.modal-action-btn.error-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
+.modal-action-btn.error-btn:hover {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.5);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
 /* Build and Output Settings */
 .settings-section {
   margin-top: 32px;
