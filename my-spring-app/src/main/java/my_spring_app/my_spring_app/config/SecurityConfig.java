@@ -49,6 +49,7 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/users/**").permitAll()
+                .requestMatchers("/api/ssh/**").permitAll()
                 .anyRequest().authenticated()
             );
         return http.build();
