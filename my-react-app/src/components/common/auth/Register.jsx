@@ -28,7 +28,7 @@ function Register() {
     setError('');
 
     if (formData.password !== formData.confirmPassword) {
-      setError('Mật khẩu xác nhận không khớp!');
+      setError('Password confirmation does not match!');
       return;
     }
 
@@ -50,7 +50,7 @@ function Register() {
         navigate('/login');
       }, 2500);
     } catch (err) {
-      let errorMessage = 'Đăng ký thất bại. Vui lòng thử lại.';
+      let errorMessage = 'Registration failed. Please try again.';
       
       if (err.response) {
         const status = err.response.status;
@@ -61,12 +61,12 @@ function Register() {
         } else if (data && typeof data === 'string') {
           errorMessage = data;
         } else if (status === 400) {
-          errorMessage = 'Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.';
+          errorMessage = 'Invalid data. Please check your input.';
         } else if (status === 409 || status === 500) {
-          errorMessage = data?.message || 'Tài khoản đã tồn tại hoặc có lỗi xảy ra.';
+          errorMessage = data?.message || 'Account already exists or an error occurred.';
         }
       } else if (err.request) {
-        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra lại kết nối.';
+        errorMessage = 'Cannot connect to server. Please check your connection.';
       } else {
         errorMessage = err.message || errorMessage;
       }
@@ -81,8 +81,8 @@ function Register() {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <h1>Đăng Ký</h1>
-          <p>Tạo tài khoản mới để bắt đầu sử dụng dịch vụ của chúng tôi.</p>
+          <h1>Create Account</h1>
+          <p>Create a new account to start using our service.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
@@ -93,76 +93,76 @@ function Register() {
                 <path d="M8 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
               <div>
-                <strong>Đăng ký thành công!</strong>
-                <p>Đang chuyển đến trang đăng nhập...</p>
+                <strong>Registration successful!</strong>
+                <p>Redirecting to the sign-in page…</p>
               </div>
             </div>
           )}
           {error && <div className="error-message">{error}</div>}
 
           <div className="form-group">
-            <label htmlFor="fullname">Họ và tên</label>
+            <label htmlFor="fullname">Full name</label>
             <input
               type="text"
               id="fullname"
               name="fullname"
               value={formData.fullname}
               onChange={handleChange}
-              placeholder="Nhập họ và tên"
+              placeholder="Enter your full name"
               required
               autoFocus
             />
           </div>
 
           <div className="form-group">
-            <label htmlFor="username">Tên đăng nhập</label>
+            <label htmlFor="username">Username</label>
             <input
               type="text"
               id="username"
               name="username"
               value={formData.username}
               onChange={handleChange}
-              placeholder="Nhập tên đăng nhập"
+              placeholder="Enter a username"
               required
             />
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">Mật khẩu</label>
+            <label htmlFor="password">Password</label>
             <input
               type="password"
               id="password"
               name="password"
               value={formData.password}
               onChange={handleChange}
-              placeholder="Nhập mật khẩu"
+              placeholder="Enter a password"
               required
             />
           </div>
 
           <div className="form-group">
-            <label htmlFor="confirmPassword">Xác nhận mật khẩu</label>
+            <label htmlFor="confirmPassword">Confirm password</label>
             <input
               type="password"
               id="confirmPassword"
               name="confirmPassword"
               value={formData.confirmPassword}
               onChange={handleChange}
-              placeholder="Nhập lại mật khẩu"
+              placeholder="Re-enter your password"
               required
             />
           </div>
 
           <button type="submit" className="auth-button" disabled={loading || success}>
-            {loading ? 'Đang xử lý...' : success ? 'Đăng ký thành công!' : 'Đăng Ký'}
+            {loading ? 'Processing…' : success ? 'Registered!' : 'Create account'}
           </button>
         </form>
 
         <div className="auth-footer">
           <p>
-            Đã có tài khoản?{' '}
+            Already have an account?{' '}
             <Link to="/login" className="auth-link">
-              Đăng nhập ngay
+              Sign in
             </Link>
           </p>
         </div>

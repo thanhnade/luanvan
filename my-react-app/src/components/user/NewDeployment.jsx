@@ -134,23 +134,23 @@ function NewDeployment({ onDeploySuccess }) {
     setSuccess(false);
 
     if (!projectName.trim()) {
-      setError('Vui lòng nhập tên dự án');
+      setError('Please enter a project name');
       return;
     }
 
     if (deploymentType === 'docker') {
       if (!dockerImage.trim()) {
-        setError('Vui lòng nhập đường dẫn Docker Hub image');
+        setError('Please enter the Docker Hub image path');
         return;
       }
       const dockerImagePattern = /^[a-zA-Z0-9._\/-]+(:[a-zA-Z0-9._-]+)?$/;
       if (!dockerImagePattern.test(dockerImage)) {
-        setError('Định dạng Docker Hub image không hợp lệ. Ví dụ: username/image:tag');
+        setError('Invalid Docker Hub image format. Example: username/image:tag');
         return;
       }
     } else {
       if (!selectedFile) {
-        setError('Vui lòng chọn file để upload');
+        setError('Please choose a file to upload');
         return;
       }
     }
@@ -158,7 +158,7 @@ function NewDeployment({ onDeploySuccess }) {
     // Get username from localStorage
     const userData = localStorage.getItem('user');
     if (!userData) {
-      setError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+      setError('Session expired. Please sign in again.');
       return;
     }
     const user = JSON.parse(userData);
@@ -218,8 +218,8 @@ function NewDeployment({ onDeploySuccess }) {
     } catch (err) {
       console.error('Deployment error:', err);
       
-      // Xác định thông báo lỗi
-      let errorMessage = 'Đã xảy ra lỗi khi triển khai. Vui lòng thử lại.';
+      // Determine error message
+      let errorMessage = 'Deployment failed. Please try again.';
       let errorDetails = null;
       
       if (err.response) {
@@ -231,14 +231,14 @@ function NewDeployment({ onDeploySuccess }) {
         } else if (data && typeof data === 'string') {
           errorMessage = data;
         } else if (status === 400) {
-          errorMessage = 'Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.';
+          errorMessage = 'Invalid data. Please check your input.';
         } else if (status === 500) {
-          errorMessage = 'Lỗi server. Vui lòng thử lại sau.';
+          errorMessage = 'Server error. Please try again later.';
         }
         
         errorDetails = data;
       } else if (err.request) {
-        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra lại kết nối.';
+        errorMessage = 'Cannot connect to server. Please check your connection.';
       } else {
         errorMessage = err.message || errorMessage;
       }
@@ -259,8 +259,8 @@ function NewDeployment({ onDeploySuccess }) {
   return (
     <div className="dashboard-card">
       <div className="card-header">
-        <h2>Triển khai ứng dụng mới</h2>
-        <p>Upload file hoặc sử dụng Docker Hub image để triển khai web tự động</p>
+        <h2>Deploy a new application</h2>
+        <p>Upload a file or use a Docker Hub image to deploy automatically</p>
       </div>
 
       <form onSubmit={handleSubmit} className="deployment-form">
@@ -271,8 +271,8 @@ function NewDeployment({ onDeploySuccess }) {
               <path d="M8 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
             <div>
-              <strong>Triển khai thành công!</strong>
-              <p>Ứng dụng của bạn đang được triển khai...</p>
+              <strong>Deployment successful!</strong>
+              <p>Your application is being deployed...</p>
             </div>
           </div>
         )}
@@ -280,13 +280,13 @@ function NewDeployment({ onDeploySuccess }) {
         {error && <div className="error-message">{error}</div>}
 
         <div className="form-group">
-          <label htmlFor="projectName">Tên dự án *</label>
+          <label htmlFor="projectName">Project name *</label>
           <input
             type="text"
             id="projectName"
             value={projectName}
             onChange={(e) => setProjectName(e.target.value)}
-            placeholder="Nhập tên dự án"
+            placeholder="Enter project name"
             required
             disabled={loading || success}
           />
@@ -334,12 +334,12 @@ function NewDeployment({ onDeploySuccess }) {
             )}
           </div>
           <small className="form-hint">
-            Chọn framework để tự động cấu hình build settings
+            Select a framework to auto-configure build settings
           </small>
         </div>
 
         <div className="form-group">
-          <label>Phương thức triển khai *</label>
+          <label>Deployment method *</label>
           <div className="deployment-options">
             <label className="option-radio">
               <input
@@ -355,7 +355,7 @@ function NewDeployment({ onDeploySuccess }) {
                   <path d="M13.984 6.016v12.469c0 .563-.281.984-.656 1.219-.375.281-.75.375-1.219.375-.516 0-.891-.188-1.266-.516l-2.484-2.156c-.188-.141-.469-.141-.656 0l-2.484 2.156c-.375.328-.75.516-1.266.516-.469 0-.844-.094-1.219-.375C2.298 19.469 2 19.048 2 18.516V5.531c0-.563.298-.984.656-1.219C3.031 4.031 3.406 3.938 3.875 3.938c.516 0 .891.188 1.266.516l2.484 2.156c.188.141.469.141.656 0L10.75 4.453c.375-.328.75-.516 1.266-.516.469 0 .844.094 1.219.375C13.594 4.547 13.984 4.969 13.984 5.531v.485z" fill="currentColor"/>
                 </svg>
                 <span>Docker Hub Image</span>
-                <p>Nhập đường dẫn image từ Docker Hub</p>
+                <p>Enter image path from Docker Hub</p>
               </div>
             </label>
 
@@ -373,7 +373,7 @@ function NewDeployment({ onDeploySuccess }) {
                   <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" fill="currentColor"/>
                 </svg>
                 <span>Upload File</span>
-                <p>Upload file dự án của bạn</p>
+                <p>Upload your project archive</p>
               </div>
             </label>
           </div>
@@ -387,17 +387,17 @@ function NewDeployment({ onDeploySuccess }) {
               id="dockerImage"
               value={dockerImage}
               onChange={(e) => setDockerImage(e.target.value)}
-              placeholder="username/image:tag hoặc username/image"
+              placeholder="username/image:tag or username/image"
               required
               disabled={loading || success}
             />
             <small className="form-hint">
-              Ví dụ: nginx:latest, node:18-alpine, username/my-app:v1.0
+              Examples: nginx:latest, node:18-alpine, username/my-app:v1.0
             </small>
           </div>
         ) : (
           <div className="form-group">
-            <label htmlFor="fileUpload">Chọn file *</label>
+            <label htmlFor="fileUpload">Choose file *</label>
             <div className="file-upload-area">
               <input
                 type="file"
@@ -420,8 +420,8 @@ function NewDeployment({ onDeploySuccess }) {
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" fill="currentColor"/>
                     </svg>
-                    <p>Kéo thả file vào đây hoặc click để chọn</p>
-                    <small>Hỗ trợ: ZIP, TAR, GZ (tối đa 100MB)</small>
+                    <p>Drag & drop a file here or click to choose</p>
+                    <small>Supported: ZIP, TAR, GZ (max 100MB)</small>
                   </div>
                 )}
               </div>
@@ -631,12 +631,12 @@ function NewDeployment({ onDeploySuccess }) {
           {loading ? (
             <>
               <span className="spinner"></span>
-              Đang triển khai...
+              Deploying...
             </>
           ) : success ? (
-            'Đã triển khai thành công!'
+            'Deployed successfully!'
           ) : (
-            'Triển khai ngay'
+            'Deploy now'
           )}
         </button>
       </form>
@@ -666,7 +666,7 @@ function NewDeployment({ onDeploySuccess }) {
                     setSuccess(false);
                   }
                 }}
-                aria-label="Đóng modal"
+                aria-label="Close modal"
               >
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -681,8 +681,8 @@ function NewDeployment({ onDeploySuccess }) {
                       <path d="M8 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   </div>
-                  <h2 className="modal-title">Triển khai thành công!</h2>
-                  <p className="modal-description">Ứng dụng của bạn đã được triển khai thành công.</p>
+                  <h2 className="modal-title">Deployment successful</h2>
+                  <p className="modal-description">Your application was deployed successfully.</p>
                   
                   {modalData && (
                     <div className="modal-results">
@@ -736,7 +736,7 @@ function NewDeployment({ onDeploySuccess }) {
                         // Ở lại trang, không gọi onDeploySuccess
                       }}
                     >
-                      Ở lại trang
+                      Stay on this page
                     </button>
                     <button 
                       className="modal-action-btn primary-btn"
@@ -753,7 +753,7 @@ function NewDeployment({ onDeploySuccess }) {
                         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" strokeWidth="2" fill="none"/>
                         <polyline points="9 22 9 12 15 12 15 22" stroke="currentColor" strokeWidth="2"/>
                       </svg>
-                      Danh sách dự án
+                      Projects list
                     </button>
                   </div>
                 </>
@@ -765,8 +765,8 @@ function NewDeployment({ onDeploySuccess }) {
                       <path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                     </svg>
                   </div>
-                  <h2 className="modal-title">Triển khai thất bại</h2>
-                  <p className="modal-description">{modalData?.message || 'Đã xảy ra lỗi khi triển khai.'}</p>
+                  <h2 className="modal-title">Deployment failed</h2>
+                  <p className="modal-description">{modalData?.message || 'An error occurred during deployment.'}</p>
                   
                   {modalData?.details && (
                     <div className="modal-error-details">
@@ -782,7 +782,7 @@ function NewDeployment({ onDeploySuccess }) {
                       // KHÔNG gọi onDeploySuccess cho modal error
                     }}
                   >
-                    Đóng
+                    Close
                   </button>
                 </>
               )}

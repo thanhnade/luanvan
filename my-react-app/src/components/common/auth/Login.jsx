@@ -32,14 +32,14 @@ function Login() {
       localStorage.setItem('user', JSON.stringify(response));
       localStorage.setItem('isAuthenticated', 'true');
       
-      // Chuyển đến dashboard dựa trên role
+      // Navigate to dashboard based on role
       if (response.role === 'admin') {
         navigate('/admin/dashboard');
       } else {
         navigate('/dashboard');
       }
     } catch (err) {
-      let errorMessage = 'Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.';
+      let errorMessage = 'Login failed. Please check your credentials.';
       
       if (err.response) {
         const status = err.response.status;
@@ -50,12 +50,12 @@ function Login() {
         } else if (data && typeof data === 'string') {
           errorMessage = data;
         } else if (status === 401 || status === 403) {
-          errorMessage = 'Tài khoản hoặc mật khẩu không đúng.';
+          errorMessage = 'Incorrect username or password.';
         } else if (status === 500) {
-          errorMessage = 'Lỗi server. Vui lòng thử lại sau.';
+          errorMessage = 'Server error. Please try again later.';
         }
       } else if (err.request) {
-        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra lại kết nối.';
+        errorMessage = 'Cannot connect to server. Please check your connection.';
       } else {
         errorMessage = err.message || errorMessage;
       }
@@ -70,50 +70,50 @@ function Login() {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <h1>Đăng Nhập</h1>
-          <p>Chào mừng trở lại! Vui lòng đăng nhập vào tài khoản của bạn.</p>
+          <h1>Sign In</h1>
+          <p>Welcome back! Please sign in to your account.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
           {error && <div className="error-message">{error}</div>}
 
           <div className="form-group">
-            <label htmlFor="username">Tên đăng nhập</label>
+            <label htmlFor="username">Username</label>
             <input
               type="text"
               id="username"
               name="username"
               value={formData.username}
               onChange={handleChange}
-              placeholder="Nhập tên đăng nhập"
+              placeholder="Enter your username"
               required
               autoFocus
             />
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">Mật khẩu</label>
+            <label htmlFor="password">Password</label>
             <input
               type="password"
               id="password"
               name="password"
               value={formData.password}
               onChange={handleChange}
-              placeholder="Nhập mật khẩu"
+              placeholder="Enter your password"
               required
             />
           </div>
 
           <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? 'Đang xử lý...' : 'Đăng Nhập'}
+            {loading ? 'Processing…' : 'Sign In'}
           </button>
         </form>
 
         <div className="auth-footer">
           <p>
-            Chưa có tài khoản?{' '}
+            Don’t have an account?{' '}
             <Link to="/register" className="auth-link">
-              Đăng ký ngay
+              Create one
             </Link>
           </p>
         </div>

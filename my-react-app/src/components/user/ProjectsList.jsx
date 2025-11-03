@@ -151,13 +151,13 @@ function ProjectsList({ user, onRefresh }) {
   const getStatusLabel = (status) => {
     switch (status) {
       case 'running':
-        return 'Đang chạy';
+        return 'Running';
       case 'stopped':
-        return 'Đã dừng';
+        return 'Stopped';
       case 'building':
-        return 'Đang xây dựng';
+        return 'Building';
       case 'error':
-        return 'Lỗi';
+        return 'Error';
       default:
         return status;
     }
@@ -165,7 +165,7 @@ function ProjectsList({ user, onRefresh }) {
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString('vi-VN', {
+    return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -178,7 +178,7 @@ function ProjectsList({ user, onRefresh }) {
     return (
       <div className="projects-loading">
         <span className="spinner"></span>
-        <p>Đang tải danh sách dự án...</p>
+        <p>Loading projects...</p>
       </div>
     );
   }
@@ -189,8 +189,8 @@ function ProjectsList({ user, onRefresh }) {
         <svg viewBox="0 0 24 24" fill="none">
           <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" fill="currentColor"/>
         </svg>
-        <h3>Chưa có dự án nào</h3>
-        <p>Bắt đầu bằng cách tạo triển khai mới</p>
+        <h3>No projects yet</h3>
+        <p>Start by creating a new deployment</p>
       </div>
     );
   }
@@ -198,7 +198,7 @@ function ProjectsList({ user, onRefresh }) {
   return (
     <div className="projects-list">
       <div className="projects-header">
-        <h2>Dự án của bạn ({filteredProjects.length})</h2>
+        <h2>Your projects ({filteredProjects.length})</h2>
         <div className="projects-header-actions">
           <div className="search-wrapper">
             <svg className="search-icon" viewBox="0 0 24 24" fill="none">
@@ -208,7 +208,7 @@ function ProjectsList({ user, onRefresh }) {
             <input
               type="text"
               className="search-input"
-              placeholder="Tìm kiếm theo tên dự án..."
+              placeholder="Search by project name..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -230,7 +230,7 @@ function ProjectsList({ user, onRefresh }) {
               <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Làm mới
+            Refresh
           </button>
         </div>
       </div>
@@ -241,8 +241,8 @@ function ProjectsList({ user, onRefresh }) {
             <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" fill="none"/>
             <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
           </svg>
-          <h3>Không tìm thấy dự án</h3>
-          <p>Không có dự án nào khớp với từ khóa "{searchTerm}"</p>
+          <h3>No projects found</h3>
+          <p>No projects match the keyword "{searchTerm}"</p>
         </div>
       ) : (
         <>
@@ -303,14 +303,14 @@ function ProjectsList({ user, onRefresh }) {
                   {stoppingId === project.id ? (
                     <>
                       <span className="spinner-small"></span>
-                      Đang dừng...
+                      Stopping...
                     </>
                   ) : (
                     <>
                       <svg viewBox="0 0 24 24" fill="none">
                         <rect x="6" y="6" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="2" fill="none"/>
                       </svg>
-                      Dừng
+                      Stop
                     </>
                   )}
                 </button>
@@ -323,14 +323,14 @@ function ProjectsList({ user, onRefresh }) {
                   {stoppingId === project.id ? (
                     <>
                       <span className="spinner-small"></span>
-                      Đang khởi động...
+                      Starting...
                     </>
                   ) : (
                     <>
                       <svg viewBox="0 0 24 24" fill="none">
                         <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
                       </svg>
-                      Khởi động
+                      Start
                     </>
                   )}
                 </button>
@@ -344,7 +344,7 @@ function ProjectsList({ user, onRefresh }) {
                 {deletingId === project.id ? (
                   <>
                     <span className="spinner-small"></span>
-                    Đang xóa...
+                    Deleting...
                   </>
                 ) : (
                   <>
@@ -352,7 +352,7 @@ function ProjectsList({ user, onRefresh }) {
                       <polyline points="3 6 5 6 21 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                     </svg>
-                    Xóa
+                    Delete
                   </>
                 )}
               </button>
@@ -372,7 +372,7 @@ function ProjectsList({ user, onRefresh }) {
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
-                Trước
+                Prev
               </button>
               
               <div className="pagination-pages">
@@ -424,7 +424,7 @@ function ProjectsList({ user, onRefresh }) {
                 onClick={() => handlePageChange(currentPage + 1)}
                 disabled={currentPage === totalPages}
               >
-                Sau
+                Next
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
