@@ -7,8 +7,10 @@ import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.DeployAppDockerResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeployAppResponse;
+import my_spring_app.my_spring_app.dto.reponse.ListAppsResponse;
 import my_spring_app.my_spring_app.dto.request.DeployAppDockerRequest;
 import my_spring_app.my_spring_app.dto.request.DeployAppRequest;
+import my_spring_app.my_spring_app.dto.request.GetAppsByUserRequest;
 import my_spring_app.my_spring_app.entity.AppEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.AppRepository;
@@ -531,6 +533,27 @@ public class AppServiceImpl implements AppService {
             }
         }
 
+    }
+
+    @Override
+    public ListAppsResponse getAppsByUser(GetAppsByUserRequest request) {
+        if (request.getUsername() == null || request.getUsername().trim().isEmpty()) {
+            throw new RuntimeException("Username không được để trống");
+        }
+
+        var apps = appRepository.findByUser_Username(request.getUsername());
+
+        var items = apps.stream().map(app -> new ListAppsResponse.AppItem(
+                app.getId(),
+                app.getName(),
+                app.getFrameworkType(),
+                app.getDeploymentType(),
+                app.getUrl(),
+                app.getStatus(),
+                app.getCreatedAt()
+        )).toList();
+
+        return new ListAppsResponse(items);
     }
 
 }

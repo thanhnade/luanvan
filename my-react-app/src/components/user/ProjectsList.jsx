@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import api from '../../services/api';
 import './Dashboard.css';
 
 function ProjectsList({ user, onRefresh }) {
@@ -22,109 +23,41 @@ function ProjectsList({ user, onRefresh }) {
   const loadProjects = async () => {
     setLoading(true);
     try {
-      // TODO: Gọi API để lấy danh sách projects
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Mock data - thêm nhiều hơn để demo phân trang
-      const mockProjects = [
-        {
-          id: 1,
-          name: 'my-react-app',
-          status: 'running',
-          url: 'https://my-react-app.example.com',
-          framework: 'React',
-          createdAt: '2024-01-15T10:30:00',
-          updatedAt: '2024-01-15T10:35:00'
-        },
-        {
-          id: 2,
-          name: 'portfolio-site',
-          status: 'stopped',
-          url: 'https://portfolio.example.com',
-          framework: 'Next.js',
-          createdAt: '2024-01-10T14:20:00',
-          updatedAt: '2024-01-14T09:15:00'
-        },
-        {
-          id: 3,
-          name: 'api-service',
-          status: 'running',
-          url: 'https://api.example.com',
-          framework: 'Node.js',
-          createdAt: '2024-01-08T08:00:00',
-          updatedAt: '2024-01-12T16:45:00'
-        },
-        {
-          id: 4,
-          name: 'e-commerce-platform',
-          status: 'running',
-          url: 'https://shop.example.com',
-          framework: 'Vue.js',
-          createdAt: '2024-01-20T09:00:00',
-          updatedAt: '2024-01-22T14:30:00'
-        },
-        {
-          id: 5,
-          name: 'blog-app',
-          status: 'building',
-          url: 'https://blog.example.com',
-          framework: 'Next.js',
-          createdAt: '2024-01-18T11:15:00',
-          updatedAt: '2024-01-23T10:00:00'
-        },
-        {
-          id: 6,
-          name: 'landing-page',
-          status: 'running',
-          url: 'https://landing.example.com',
-          framework: 'React',
-          createdAt: '2024-01-12T16:00:00',
-          updatedAt: '2024-01-16T09:20:00'
-        },
-        {
-          id: 7,
-          name: 'dashboard-app',
-          status: 'stopped',
-          url: 'https://dashboard.example.com',
-          framework: 'Angular',
-          createdAt: '2024-01-05T08:30:00',
-          updatedAt: '2024-01-11T15:45:00'
-        },
-        {
-          id: 8,
-          name: 'mobile-backend',
-          status: 'running',
-          url: 'https://api-mobile.example.com',
-          framework: 'Node.js',
-          createdAt: '2024-01-07T10:00:00',
-          updatedAt: '2024-01-19T12:00:00'
-        },
-        {
-          id: 9,
-          name: 'admin-panel',
-          status: 'running',
-          url: 'https://admin.example.com',
-          framework: 'React',
-          createdAt: '2024-01-14T13:20:00',
-          updatedAt: '2024-01-21T11:30:00'
-        },
-        {
-          id: 10,
-          name: 'documentation-site',
-          status: 'stopped',
-          url: 'https://docs.example.com',
-          framework: 'Vite',
-          createdAt: '2024-01-09T14:00:00',
-          updatedAt: '2024-01-17T10:15:00'
-        }
-      ];
-      
-      setProjects(mockProjects);
+      // Gọi API thật để lấy danh sách apps theo username
+      if (user && user.username) {
+        const res = await api.post('/apps/by-user', { username: user.username });
+        const items = Array.isArray(res.data?.apps) ? res.data.apps : [];
+        const mapped = items.map(item => ({
+          id: item.id,
+          name: item.name,
+          status: item.status,
+          url: item.url,
+          framework: formatFramework(item.frameworkType),
+          createdAt: item.createdAt,
+          updatedAt: item.createdAt
+        }));
+        setProjects(mapped);
+        return; // Không chạy mock phía dưới
+      }
+      // Không có user hợp lệ
+      setProjects([]);
     } catch (err) {
       console.error('Error loading projects:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const formatFramework = (type) => {
+    if (!type) return '';
+    const t = String(type).toLowerCase();
+    switch (t) {
+      case 'react': return 'React';
+      case 'vue': return 'Vue.js';
+      case 'angular': return 'Angular';
+      case 'spring': return 'Spring';
+      case 'node': return 'Node.js';
+      default: return type;
     }
   };
 
