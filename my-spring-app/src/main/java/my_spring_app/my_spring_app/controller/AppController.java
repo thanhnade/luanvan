@@ -1,7 +1,9 @@
 package my_spring_app.my_spring_app.controller;
 
 import jakarta.validation.Valid;
+import my_spring_app.my_spring_app.dto.reponse.DeployAppDockerResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeployAppResponse;
+import my_spring_app.my_spring_app.dto.request.DeployAppDockerRequest;
 import my_spring_app.my_spring_app.dto.request.DeployAppRequest;
 import my_spring_app.my_spring_app.service.AppService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +21,12 @@ public class AppController {
     @PostMapping("/deploy")
     public ResponseEntity<DeployAppResponse> deployApp(@Valid @RequestBody DeployAppRequest request) {
         DeployAppResponse response = appService.deployApp(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PostMapping("/deploy-docker")
+    public ResponseEntity<DeployAppDockerResponse> deployAppDocker(@Valid @RequestBody DeployAppDockerRequest request) {
+        DeployAppDockerResponse response = appService.deployAppDocker(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 }
