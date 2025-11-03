@@ -1,5 +1,9 @@
 package my_spring_app.my_spring_app.service.impl;
 
+import com.jcraft.jsch.Channel;
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.DeployAppResponse;
 import my_spring_app.my_spring_app.dto.request.DeployAppRequest;
 import my_spring_app.my_spring_app.entity.AppEntity;
@@ -11,7 +15,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.Properties;
 
 @Service
 @Transactional
@@ -52,7 +60,7 @@ public class AppServiceImpl implements AppService {
             appEntity.setDockerImage(request.getDockerImage());
             
             // Gọi hàm triển khai docker
-            response = deployWithDocker(appEntity);
+            response = deployWithDocker(appEntity, request);
         } else if ("file".equalsIgnoreCase(request.getDeploymentType())) {
             // Validate filePath
             if (request.getFilePath() == null || request.getFilePath().trim().isEmpty()) {
@@ -79,28 +87,126 @@ public class AppServiceImpl implements AppService {
     /**
      * Hàm triển khai ứng dụng với Docker image
      */
-    private DeployAppResponse deployWithDocker(AppEntity appEntity) {
-        // TODO: Implement logic triển khai Docker
-        // Ví dụ: Pull Docker image, chạy container, expose port, etc.
+    private DeployAppResponse deployWithDocker(AppEntity appEntity, DeployAppRequest request) {
+        Session session = null;
+        ChannelSftp sftpChannel = null;
         
-        // Simulate deployment process
         try {
-            // Giả lập quá trình deploy Docker
-            // Trong thực tế sẽ gọi Docker API hoặc Kubernetes API
-            System.out.println("Đang triển khai Docker image: " + appEntity.getDockerImage());
+            // Kiểm tra thông tin SSH
+            if (request.getSshHost() == null || request.getSshHost().trim().isEmpty() ||
+                request.getSshUsername() == null || request.getSshUsername().trim().isEmpty() ||
+                request.getSshPassword() == null || request.getSshPassword().trim().isEmpty()) {
+                throw new RuntimeException("Thông tin SSH không đầy đủ. Vui lòng cung cấp sshHost, sshUsername, sshPassword");
+            }
+
+            int sshPort = request.getSshPort() != null ? request.getSshPort() : 22;
+
+            System.out.println("Đang kết nối đến Ubuntu server: " + request.getSshHost() + ":" + sshPort);
+
+            // Bước 1: Tạo kết nối SSH đến máy ảo Ubuntu
+            JSch jsch = new JSch();
+            session = jsch.getSession(request.getSshUsername(), request.getSshHost(), sshPort);
+            session.setPassword(request.getSshPassword());
+
+            // Tắt kiểm tra strict host key
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            session.setConfig(config);
+
+            // Thiết lập thời gian chờ kết nối
+            session.setTimeout(5000);
+
+            // Kết nối
+            session.connect();
+            System.out.println("Kết nối SSH thành công!");
+
+            // Bước 2: Tạo file với tên từ appEntity.getName()
+            String fileName = appEntity.getName().toLowerCase()
+                    .replaceAll("\\s+", "-")
+                    .replaceAll("[^a-z0-9-]", "") + ".yaml";
             
-            // Simulate: sau khi deploy thành công
+            System.out.println("Đang tạo file: " + fileName);
+
+            // Bước 3: Tạo nội dung file từ dockerImage.md (dòng 2-34)
+            // Chuẩn hóa tên app để dùng trong YAML
+            String appName = appEntity.getName().toLowerCase()
+                    .replaceAll("\\s+", "-")
+                    .replaceAll("[^a-z0-9-]", "");
+            
+            String fileContent = "apiVersion: apps/v1\n" +
+                    "kind: Deployment\n" +
+                    "metadata:\n" +
+                    "  name: " + appName + "\n" +
+                    "  namespace: web\n" +
+                    "spec:\n" +
+                    "  replicas: 2\n" +
+                    "  selector:\n" +
+                    "    matchLabels:\n" +
+                    "      app: " + appName + "\n" +
+                    "  template:\n" +
+                    "    metadata:\n" +
+                    "      labels:\n" +
+                    "        app: " + appName + "\n" +
+                    "    spec:\n" +
+                    "      containers:\n" +
+                    "        - name: " + appName + "\n" +
+                    "          image: " + appEntity.getDockerImage() + "\n" +
+                    "          ports:\n" +
+                    "            - containerPort: 80\n" +
+                    "---\n" +
+                    "apiVersion: v1\n" +
+                    "kind: Service\n" +
+                    "metadata:\n" +
+                    "  name: " + appName + "-svc\n" +
+                    "  namespace: web\n" +
+                    "spec:\n" +
+                    "  type: ClusterIP\n" +
+                    "  selector:\n" +
+                    "    app: " + appName + "\n" +
+                    "  ports:\n" +
+                    "    - port: 80\n" +
+                    "      targetPort: 80\n";
+
+            // Bước 4: Mở SFTP channel để upload file
+            Channel channel = session.openChannel("sftp");
+            channel.connect();
+            sftpChannel = (ChannelSftp) channel;
+
+            // Upload file lên server
+            InputStream fileInputStream = new ByteArrayInputStream(fileContent.getBytes(StandardCharsets.UTF_8));
+            String remotePath = "/tmp/" + fileName; // Lưu file vào thư mục /tmp
+            sftpChannel.put(fileInputStream, remotePath);
+            
+            System.out.println("Đã tạo file thành công tại: " + remotePath);
+
+            // Đóng SFTP channel
+            sftpChannel.disconnect();
+            sftpChannel = null;
+
+            // Cập nhật status và URL
             appEntity.setStatus("running");
-            String generatedUrl = "https://" + appEntity.getName().toLowerCase().replaceAll("\\s+", "-") + ".example.com";
+            String generatedUrl = "http://" + request.getSshHost() + "/" + appName;
             
             DeployAppResponse response = new DeployAppResponse();
             response.setUrl(generatedUrl);
             response.setStatus(appEntity.getStatus());
-            
+
+            System.out.println("Triển khai Docker thành công! File: " + fileName);
             return response;
+
         } catch (Exception e) {
             appEntity.setStatus("error");
-            throw new RuntimeException("Lỗi khi triển khai Docker: " + e.getMessage());
+            System.err.println("Lỗi khi triển khai Docker: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Lỗi khi triển khai Docker: " + e.getMessage(), e);
+        } finally {
+            // Đóng kết nối
+            if (sftpChannel != null && sftpChannel.isConnected()) {
+                sftpChannel.disconnect();
+            }
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
         }
     }
 

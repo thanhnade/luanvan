@@ -26,5 +26,11 @@ public class DeployAppRequest {
     
     @NotBlank(message = "username không được để trống")
     private String username;
+
+    // SSH connection info
+    private String sshHost;
+    private Integer sshPort;
+    private String sshUsername;
+    private String sshPassword;
 }
 
