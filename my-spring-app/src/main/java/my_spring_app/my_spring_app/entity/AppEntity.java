@@ -34,6 +34,9 @@ public class AppEntity {
     @Column(name = "file_path", nullable = true)
     private String filePath = null;
 
+    @Column(name = "url", nullable = true)
+    private String url = null;
+
     @Column(nullable = false)
     private String status; // running, stopped, building, error
 

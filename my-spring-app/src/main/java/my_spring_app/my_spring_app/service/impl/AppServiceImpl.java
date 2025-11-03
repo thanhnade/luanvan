@@ -504,10 +504,14 @@ public class AppServiceImpl implements AppService {
             // Cập nhật status và URL
             appEntity.setStatus("running");
             String generatedUrl = "http://" + appName + ".local.test";
+            appEntity.setUrl(generatedUrl);
 
             DeployAppDockerResponse response = new DeployAppDockerResponse();
             response.setUrl(generatedUrl);
             response.setStatus(appEntity.getStatus());
+
+            // Lưu AppEntity vào database
+            AppEntity savedAppEntity = appRepository.save(appEntity);
 
             System.out.println("Triển khai Docker thành công! File: " + fileName);
             return response;
