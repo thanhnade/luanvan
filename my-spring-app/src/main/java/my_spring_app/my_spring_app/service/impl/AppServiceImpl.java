@@ -1,6 +1,7 @@
 package my_spring_app.my_spring_app.service.impl;
 
 import com.jcraft.jsch.Channel;
+import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
@@ -172,16 +173,61 @@ public class AppServiceImpl implements AppService {
             channel.connect();
             sftpChannel = (ChannelSftp) channel;
 
-            // Upload file lên server
+            // Upload file đầu tiên (Deployment + Service) lên server
             InputStream fileInputStream = new ByteArrayInputStream(fileContent.getBytes(StandardCharsets.UTF_8));
-            String remotePath = "/tmp/" + fileName; // Lưu file vào thư mục /tmp
+            String remotePath = "/home/" + request.getSshUsername() + "/" + fileName;
             sftpChannel.put(fileInputStream, remotePath);
             
-            System.out.println("Đã tạo file thành công tại: " + remotePath);
+            System.out.println("Đã tạo file " + fileName + "thành công tại: " + remotePath);
+
+            // Bước 5: Tạo file Ingress thứ hai
+            String ingressFileName = appName + "-ingress.yaml";
+            System.out.println("Đang tạo file Ingress: " + ingressFileName);
+            
+            // Tạo nội dung file Ingress từ dockerImage.md (dòng 40-59)
+            String ingressContent = "apiVersion: networking.k8s.io/v1\n" +
+                    "kind: Ingress\n" +
+                    "metadata:\n" +
+                    "  name: " + appName + "-ing\n" +
+                    "  namespace: web\n" +
+                    "  annotations:\n" +
+                    "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
+                    "spec:\n" +
+                    "  ingressClassName: nginx\n" +
+                    "  rules:\n" +
+                    "    - host: " + appName + ".local.test\n" +
+                    "      http:\n" +
+                    "        paths:\n" +
+                    "          - path: /\n" +
+                    "            pathType: Prefix\n" +
+                    "            backend:\n" +
+                    "              service:\n" +
+                    "                name: " + appName + "-svc\n" +
+                    "                port:\n" +
+                    "                  number: 80\n";
+            
+            // Upload file Ingress lên server
+            InputStream ingressInputStream = new ByteArrayInputStream(ingressContent.getBytes(StandardCharsets.UTF_8));
+            String ingressRemotePath = "/home/" + request.getSshUsername() + "/" + ingressFileName;
+            sftpChannel.put(ingressInputStream, ingressRemotePath);
+            
+            System.out.println("Đã tạo file " + ingressFileName + "thành công tại: " + ingressRemotePath);
 
             // Đóng SFTP channel
             sftpChannel.disconnect();
             sftpChannel = null;
+
+            // Bước 6: Thực thi lệnh kubectl apply cho file đầu tiên
+            String homeDirectory = "/home/" + request.getSshUsername();
+            
+            System.out.println("Đang thực thi: kubectl apply -f " + fileName);
+            String kubectlResult1 = executeCommand(session, "cd " + homeDirectory + " && kubectl apply -f " + fileName);
+            System.out.println("Kết quả apply file Deployment/Service: " + kubectlResult1);
+
+            // Bước 7: Thực thi lệnh kubectl apply cho file Ingress
+            System.out.println("Đang thực thi: kubectl apply -f " + ingressFileName);
+            String kubectlResult2 = executeCommand(session, "cd " + homeDirectory + " && kubectl apply -f " + ingressFileName);
+            System.out.println("Kết quả apply file Ingress: " + kubectlResult2);
 
             // Cập nhật status và URL
             appEntity.setStatus("running");
@@ -235,6 +281,65 @@ public class AppServiceImpl implements AppService {
         } catch (Exception e) {
             appEntity.setStatus("error");
             throw new RuntimeException("Lỗi khi triển khai File: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Helper method để thực thi lệnh qua SSH và trả về output
+     */
+    private String executeCommand(Session session, String command) throws Exception {
+        ChannelExec channelExec = null;
+        
+        try {
+            Channel channel = session.openChannel("exec");
+            channelExec = (ChannelExec) channel;
+            
+            channelExec.setCommand(command);
+            channelExec.setErrStream(System.err);
+            
+            InputStream inputStream = channelExec.getInputStream();
+            channelExec.connect();
+            
+            // Đọc output
+            StringBuilder output = new StringBuilder();
+            byte[] buffer = new byte[1024];
+            
+            while (true) {
+                while (inputStream.available() > 0) {
+                    int bytesRead = inputStream.read(buffer, 0, 1024);
+                    if (bytesRead < 0) {
+                        break;
+                    }
+                    output.append(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
+                }
+                
+                if (channelExec.isClosed()) {
+                    if (inputStream.available() > 0) {
+                        continue;
+                    }
+                    break;
+                }
+                
+                try {
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    // Bỏ qua
+                }
+            }
+            
+            int exitStatus = channelExec.getExitStatus();
+            String result = output.toString().trim();
+            
+            if (exitStatus != 0) {
+                throw new RuntimeException("Command exited with status: " + exitStatus + ". Output: " + result);
+            }
+            
+            return result;
+            
+        } finally {
+            if (channelExec != null && channelExec.isConnected()) {
+                channelExec.disconnect();
+            }
         }
     }
 }
