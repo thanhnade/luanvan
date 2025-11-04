@@ -3,6 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import '../user/Dashboard.css';
 import UserAccounts from './UserAccounts';
 import UserServices from './UserServices';
+import ClusterOverview from './ClusterOverview';
+import Namespace from './Namespace';
+import Nodes from './Nodes';
+import Pods from './Pods';
+import Services from './Services';
+import Deployments from './Deployments';
+import Servers from './Servers';
+import Cluster from './Cluster';
 
 function AdminDashboard() {
   const navigate = useNavigate();
@@ -14,6 +22,7 @@ function AdminDashboard() {
     system: true,
     analytics: false,
     cluster: false,
+    operate: false,
   });
 
   useEffect(() => {
@@ -77,6 +86,16 @@ function AdminDashboard() {
 
             
 
+            {/* Operate Section */}
+            <Section
+              title="Operate"
+              expanded={expanded.operate}
+              onToggle={() => setExpanded(prev => ({ ...prev, operate: !prev.operate }))}
+            >
+              <MenuItem label="Server" active={activeItem === 'operate-server'} onClick={() => setActiveItem('operate-server')} />
+              <MenuItem label="Cluster" active={activeItem === 'operate-cluster'} onClick={() => setActiveItem('operate-cluster')} />
+            </Section>
+
             {/* Cluster Section */}
             <Section
               title="Cluster"
@@ -87,6 +106,7 @@ function AdminDashboard() {
               <MenuItem label="Namespaces" active={activeItem === 'cluster-namespaces'} onClick={() => setActiveItem('cluster-namespaces')} />
               <MenuItem label="Nodes" active={activeItem === 'cluster-nodes'} onClick={() => setActiveItem('cluster-nodes')} />
               <MenuItem label="Pods" active={activeItem === 'cluster-pods'} onClick={() => setActiveItem('cluster-pods')} />
+              <MenuItem label="Deployments" active={activeItem === 'cluster-deployments'} onClick={() => setActiveItem('cluster-deployments')} />
               <MenuItem label="Services" active={activeItem === 'cluster-services'} onClick={() => setActiveItem('cluster-services')} />
             </Section>
           </nav>
@@ -179,7 +199,10 @@ function getTitle(key) {
     case 'cluster-namespaces': return 'Cluster • Namespaces';
     case 'cluster-nodes': return 'Cluster • Nodes';
     case 'cluster-pods': return 'Cluster • Pods';
+    case 'cluster-deployments': return 'Cluster • Deployments';
     case 'cluster-services': return 'Cluster • Services';
+    case 'operate-server': return 'Operate • Server';
+    case 'operate-cluster': return 'Operate • Cluster';
     default: return 'Orverview';
   }
 }
@@ -236,25 +259,21 @@ function renderContent(key) {
         <EmptyState title="Alerts" description="Monitor real-time alerts and configure notification rules." />
       );
     case 'cluster-overview':
-      return (
-        <EmptyState title="Cluster Overview" description="Tổng quan tài nguyên, trạng thái và phiên bản Kubernetes." />
-      );
+      return <ClusterOverview />;
     case 'cluster-namespaces':
-      return (
-        <EmptyState title="Namespaces" description="Quản lý namespace: tạo, xóa, và xem tài nguyên theo không gian tên." />
-      );
+      return <Namespace />;
     case 'cluster-nodes':
-      return (
-        <EmptyState title="Nodes" description="Danh sách node, trạng thái, tài nguyên khả dụng và nhãn." />
-      );
+      return <Nodes />;
     case 'cluster-pods':
-      return (
-        <EmptyState title="Pods" description="Theo dõi pods theo namespace, trạng thái, log và sự kiện." />
-      );
+      return <Pods />;
+    case 'cluster-deployments':
+      return <Deployments />;
     case 'cluster-services':
-      return (
-        <EmptyState title="Services" description="Danh sách services, clusterIP/LoadBalancer/NodePort và mapping ports." />
-      );
+      return <Services />;
+    case 'operate-server':
+      return <Servers />;
+    case 'operate-cluster':
+      return <Cluster />;
     default:
       return (
         <EmptyState title="Overview" description="Pick a section from the left navigation to get started." />
