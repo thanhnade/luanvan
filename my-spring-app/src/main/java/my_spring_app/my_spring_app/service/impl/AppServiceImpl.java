@@ -9,8 +9,10 @@ import my_spring_app.my_spring_app.dto.request.DeployAppFileRequest;
 import my_spring_app.my_spring_app.dto.request.GetAppsByUserRequest;
 import my_spring_app.my_spring_app.entity.AppEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
+import my_spring_app.my_spring_app.entity.FileEntity;
 import my_spring_app.my_spring_app.repository.AppRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
+import my_spring_app.my_spring_app.repository.FileRepository;
 import my_spring_app.my_spring_app.service.AppService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,6 +58,9 @@ public class AppServiceImpl implements AppService {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private FileRepository fileRepository;
 
 //    @Override
 //    public DeployAppResponse deployApp(DeployAppRequest request) {
@@ -557,7 +562,220 @@ public class AppServiceImpl implements AppService {
     }
 
     public DeployAppFileResponse deployAppFile(DeployAppFileRequest request) {
-        return null;
+        System.out.println("[deployAppFile] Bắt đầu triển khai từ file nén .zip");
+        if (request == null || request.getUsername() == null || request.getUsername().isBlank()) {
+            throw new RuntimeException("Username không được để trống");
+        }
+        if (request.getFile() == null || request.getFile().isEmpty()) {
+            throw new RuntimeException("File upload trống hoặc không hợp lệ");
+        }
+
+        System.out.println("[deployAppFile] Validate tham số thành công. username=" + request.getUsername());
+        Optional<UserEntity> userOptional = userRepository.findByUsername(request.getUsername());
+        if (userOptional.isEmpty()) {
+            throw new RuntimeException("User không tồn tại");
+        }
+        UserEntity user = userOptional.get();
+        System.out.println("[deployAppFile] Tìm thấy user id=" + user.getId());
+
+        // Khởi tạo AppEntity ở trạng thái building
+        AppEntity appEntity = new AppEntity();
+        appEntity.setName(request.getName());
+        appEntity.setFrameworkType(request.getFrameworkType());
+        appEntity.setDeploymentType(request.getDeploymentType());
+        appEntity.setStatus("building");
+        appEntity.setUser(user);
+
+        Session session = null;            // phiên SSH tới máy build/push image (docker_image_*)
+        ChannelSftp sftp = null;           // SFTP trên máy build/push image
+        Session clusterSession = null;     // phiên SSH tới máy cluster để upload/apply YAML (cluster_*)
+        ChannelSftp sftpYaml = null;       // SFTP trên máy cluster để upload YAML
+        try {
+            System.out.println("[deployAppFile] Kết nối SSH tới server build/push image: " + docker_image_ip + ":" + docker_image_port);
+            // 1) Kết nối SSH tới server docker_image_* (đã cấu hình)
+            JSch jsch = new JSch();
+            session = jsch.getSession(docker_image_username, docker_image_ip, docker_image_port);
+            session.setPassword(docker_image_password);
+            Properties cfg = new Properties();
+            cfg.put("StrictHostKeyChecking", "no");
+            session.setConfig(cfg);
+            session.setTimeout(7000);
+            session.connect();
+            System.out.println("[deployAppFile] Đã kết nối SSH server build thành công");
+
+            // 2) Upload file .zip vào /home/<user>/uploads/devops
+            Channel ch = session.openChannel("sftp");
+            ch.connect();
+            sftp = (ChannelSftp) ch;
+
+            String remoteBase = "/home/" + docker_image_username + "/uploads/devops";
+            System.out.println("[deployAppFile] Tạo/cd thư mục đích: " + remoteBase);
+            // Đảm bảo thư mục tồn tại
+            String[] parts = remoteBase.split("/");
+            String cur = "";
+            for (String p : parts) {
+                if (p == null || p.isBlank()) continue;
+                cur += "/" + p;
+                try { sftp.cd(cur); } catch (Exception e) { sftp.mkdir(cur); sftp.cd(cur); }
+            }
+
+            String originalName = request.getFile().getOriginalFilename();
+            String safeName = originalName != null ? originalName.replaceAll("[^a-zA-Z0-9._-]", "_") : (request.getName() + ".zip");
+            String remoteZipPath = remoteBase + "/" + safeName;
+            System.out.println("[deployAppFile] Upload file lên: " + remoteZipPath);
+            sftp.put(request.getFile().getInputStream(), remoteZipPath);
+
+            // Lưu FileEntity sau khi upload thành công
+            FileEntity fileEntity = new FileEntity();
+            fileEntity.setName(safeName);
+            fileEntity.setPath(remoteZipPath);
+            fileEntity.setUser(user);
+            fileRepository.save(fileEntity);
+            System.out.println("[deployAppFile] Lưu FileEntity thành công, name=" + safeName);
+
+            // 3) Giải nén file .zip
+            String unzipCmd = "cd " + remoteBase + " && unzip -o '" + safeName + "'";
+            System.out.println("[deployAppFile] Giải nén: " + unzipCmd);
+            executeCommand(session, unzipCmd);
+
+            // 4) Build & push Docker image nếu tồn tại Dockerfile
+            String extractedDir = safeName.endsWith(".zip") ? safeName.substring(0, safeName.length() - 4) : safeName;
+            String projectDir = remoteBase + "/" + extractedDir;
+            // Kiểm tra Dockerfile
+            String checkDockerfile = "test -f '" + projectDir + "/Dockerfile' && echo OK || echo NO";
+            System.out.println("[deployAppFile] Kiểm tra Dockerfile: " + checkDockerfile);
+            String check = executeCommand(session, checkDockerfile);
+            if (!"OK".equals(check.trim())) {
+                throw new RuntimeException("Không tìm thấy Dockerfile trong gói source đã giải nén");
+            }
+
+            // Tạo tag image và build + push
+            String appName = request.getName().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
+            String imageTag = "nguyengiabao1203" + "/" + appName + ":latest";
+            String buildCmd = "cd '" + projectDir + "' && docker build -t '" + imageTag + "' .";
+            System.out.println("[deployAppFile] Docker build: " + buildCmd);
+            executeCommand(session, buildCmd);
+            String pushCmd = "docker push '" + imageTag + "'";
+            System.out.println("[deployAppFile] Docker push: " + pushCmd);
+            executeCommand(session, pushCmd);
+
+            // 5) Tạo YAML (Deployment, Service, Ingress), upload và apply trên server CLUSTER
+            System.out.println("[deployAppFile] Chuyển sang server cluster để upload/apply YAML: " + cluster_ip + ":" + cluster_port);
+            appEntity.setDockerImage(imageTag);
+
+            // Nội dung YAML
+            String fileName = appName + ".yaml";
+            String yamlDepSvc = "apiVersion: apps/v1\n" +
+                    "kind: Deployment\n" +
+                    "metadata:\n" +
+                    "  name: " + appName + "\n" +
+                    "  namespace: web\n" +
+                    "spec:\n" +
+                    "  replicas: 2\n" +
+                    "  selector:\n" +
+                    "    matchLabels:\n" +
+                    "      app: " + appName + "\n" +
+                    "  template:\n" +
+                    "    metadata:\n" +
+                    "      labels:\n" +
+                    "        app: " + appName + "\n" +
+                    "    spec:\n" +
+                    "      containers:\n" +
+                    "        - name: " + appName + "\n" +
+                    "          image: " + imageTag + "\n" +
+                    "          ports:\n" +
+                    "            - containerPort: 80\n" +
+                    "---\n" +
+                    "apiVersion: v1\n" +
+                    "kind: Service\n" +
+                    "metadata:\n" +
+                    "  name: " + appName + "-svc\n" +
+                    "  namespace: web\n" +
+                    "spec:\n" +
+                    "  type: ClusterIP\n" +
+                    "  selector:\n" +
+                    "    app: " + appName + "\n" +
+                    "  ports:\n" +
+                    "    - port: 80\n" +
+                    "      targetPort: 80\n";
+
+            // Tạo phiên kết nối tới server cluster
+            JSch jschCluster = new JSch();
+            clusterSession = jschCluster.getSession(cluster_username, cluster_ip, cluster_port);
+            clusterSession.setPassword(cluster_password);
+            Properties cfgCluster = new Properties();
+            cfgCluster.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(cfgCluster);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[deployAppFile] Kết nối SSH tới cluster thành công");
+
+            Channel sftpYamlCh = clusterSession.openChannel("sftp");
+            sftpYamlCh.connect();
+            sftpYaml = (ChannelSftp) sftpYamlCh;
+            InputStream yamlStream = new ByteArrayInputStream(yamlDepSvc.getBytes(StandardCharsets.UTF_8));
+            String yamlRemotePath = "/home/" + cluster_username + "/" + fileName;
+            sftpYaml.put(yamlStream, yamlRemotePath);
+            System.out.println("[deployAppFile] Upload Deployment/Service YAML: " + yamlRemotePath);
+
+            String ingressFileName = appName + "-ingress.yaml";
+            String ingressYaml = "apiVersion: networking.k8s.io/v1\n" +
+                    "kind: Ingress\n" +
+                    "metadata:\n" +
+                    "  name: " + appName + "-ing\n" +
+                    "  namespace: web\n" +
+                    "  annotations:\n" +
+                    "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
+                    "spec:\n" +
+                    "  ingressClassName: nginx\n" +
+                    "  rules:\n" +
+                    "    - host: " + appName + ".local.test\n" +
+                    "      http:\n" +
+                    "        paths:\n" +
+                    "          - path: /\n" +
+                    "            pathType: Prefix\n" +
+                    "            backend:\n" +
+                    "              service:\n" +
+                    "                name: " + appName + "-svc\n" +
+                    "                port:\n" +
+                    "                  number: 80\n";
+
+            InputStream ingressStream = new ByteArrayInputStream(ingressYaml.getBytes(StandardCharsets.UTF_8));
+            String ingressRemotePath = "/home/" + cluster_username + "/" + ingressFileName;
+            sftpYaml.put(ingressStream, ingressRemotePath);
+            System.out.println("[deployAppFile] Upload Ingress YAML: " + ingressRemotePath);
+
+            // Apply
+            String homeDir = "/home/" + cluster_username;
+            System.out.println("[deployAppFile] kubectl apply Deployment/Service");
+            executeCommand(clusterSession, "cd " + homeDir + " && kubectl apply -f '" + fileName + "'");
+            System.out.println("[deployAppFile] kubectl apply Ingress");
+            executeCommand(clusterSession, "cd " + homeDir + " && kubectl apply -f '" + ingressFileName + "'");
+
+            // Thành công
+            appEntity.setStatus("running");
+            String generatedUrl = "http://" + appName + ".local.test";
+            appEntity.setUrl(generatedUrl);
+            appRepository.save(appEntity);
+            System.out.println("[deployAppFile] Hoàn tất triển khai từ file, appName=" + appName + ", url=" + generatedUrl);
+
+            DeployAppFileResponse resp = new DeployAppFileResponse();
+            resp.setUrl(generatedUrl);
+            resp.setStatus(appEntity.getStatus());
+            return resp;
+
+        } catch (Exception ex) {
+            System.err.println("[deployAppFile] Lỗi: " + ex.getMessage());
+            appEntity.setStatus("error");
+            appRepository.save(appEntity);
+            throw new RuntimeException("Lỗi khi triển khai từ file: " + ex.getMessage(), ex);
+        } finally {
+            if (sftp != null && sftp.isConnected()) sftp.disconnect();
+            if (session != null && session.isConnected()) session.disconnect();
+            if (sftpYaml != null && sftpYaml.isConnected()) sftpYaml.disconnect();
+            if (clusterSession != null && clusterSession.isConnected()) clusterSession.disconnect();
+            System.out.println("[deployAppFile] Đã đóng các kết nối SSH/SFTP");
+        }
     }
 
     @Override

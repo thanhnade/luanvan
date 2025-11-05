@@ -12,6 +12,7 @@ import my_spring_app.my_spring_app.dto.request.GetAppsByUserRequest;
 import my_spring_app.my_spring_app.service.AppService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,9 +37,15 @@ public class AppController {
 
 //    @PostMapping("/deploy-file")
 //    public ResponseEntity<DeployAppFileResponse> deployAppFile(@Valid @RequestBody DeployAppFileRequest request) {
-//        DeployAppDockerResponse response = appService.deployAppFile(request);
+//        DeployAppFileResponse response = appService.deployAppFile(request);
 //        return ResponseEntity.status(HttpStatus.CREATED).body(response);
 //    }
+
+   @PostMapping(value = "/deploy-file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<DeployAppFileResponse> deployAppFileWithFile(@ModelAttribute @Valid DeployAppFileRequest request) {
+        DeployAppFileResponse response = appService.deployAppFile(request);
+    return ResponseEntity.status(HttpStatus.CREATED).body(response);
+}
 
     @PostMapping("/by-user")
     public ResponseEntity<ListAppsResponse> getAppsByUser(@Valid @RequestBody GetAppsByUserRequest request) {

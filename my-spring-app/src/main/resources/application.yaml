@@ -2,6 +2,11 @@ spring:
   application:
     name: my-spring-app
 
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
   # Database Configuration
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/luanvan?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
