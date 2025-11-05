@@ -19,9 +19,14 @@ spring:
         dialect: org.hibernate.dialect.MySQL8Dialect
         format_sql: true
 
+# environment variables
 app:
   vars:
     cluster_ip: 172.16.123.200
     cluster_port: 22
+    cluster_username: devops
+    cluster_password: devops
     docker_image_ip: 172.16.123.100
     docker_image_port: 22
+    docker_image_username: devops
+    docker_image_password: devops

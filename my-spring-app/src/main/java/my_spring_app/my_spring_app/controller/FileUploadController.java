@@ -2,6 +2,8 @@ package my_spring_app.my_spring_app.controller;
 
 import my_spring_app.my_spring_app.dto.request.UploadFileRequest;
 import my_spring_app.my_spring_app.dto.reponse.UploadFileResponse;
+import my_spring_app.my_spring_app.dto.request.RemoteUploadRequest;
+import my_spring_app.my_spring_app.dto.reponse.RemoteUploadResponse;
 import my_spring_app.my_spring_app.service.FileStorageService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -20,6 +22,13 @@ public class FileUploadController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<UploadFileResponse> upload(@ModelAttribute UploadFileRequest form) {
         UploadFileResponse response = fileStorageService.store(form);
+        HttpStatus status = response.isSuccess() ? HttpStatus.CREATED : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status).body(response);
+    }
+
+    @PostMapping(value = "/upload-remote", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<RemoteUploadResponse> uploadRemote(@ModelAttribute RemoteUploadRequest form) {
+        RemoteUploadResponse response = fileStorageService.storeRemote(form);
         HttpStatus status = response.isSuccess() ? HttpStatus.CREATED : HttpStatus.BAD_REQUEST;
         return ResponseEntity.status(status).body(response);
     }
