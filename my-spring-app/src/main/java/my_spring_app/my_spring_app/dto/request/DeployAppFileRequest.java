@@ -23,7 +23,7 @@ public class DeployAppFileRequest {
     private String dockerImage; // docker image
     
     // File nén (.zip) người dùng upload khi deploymentType = file
-    private MultipartFile file; 
+    private MultipartFile file;
     
     @NotBlank(message = "username không được để trống")
     private String username;
