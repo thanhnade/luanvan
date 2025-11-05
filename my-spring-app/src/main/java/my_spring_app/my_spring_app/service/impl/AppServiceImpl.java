@@ -33,11 +33,23 @@ public class AppServiceImpl implements AppService {
     @Value("${app.vars.cluster_port}")
     private int cluster_port;
 
+    @Value("${app.vars.cluster_username}")
+    private String cluster_username;
+
+    @Value("${app.vars.cluster_password}")
+    private String cluster_password;
+
     @Value("${app.vars.docker_image_ip}")
     private String docker_image_ip;
 
     @Value("${app.vars.docker_image_port}")
     private int docker_image_port;
+
+    @Value("${app.vars.docker_image_username}")
+    private String docker_image_username;
+
+    @Value("${app.vars.docker_image_password}")
+    private String docker_image_password;
 
     @Autowired
     private AppRepository appRepository;
@@ -544,9 +556,9 @@ public class AppServiceImpl implements AppService {
 
     }
 
-//    public DeployAppFileResponse deployAppFile(DeployAppFileRequest request) {
-//
-//    }
+    public DeployAppFileResponse deployAppFile(DeployAppFileRequest request) {
+        return null;
+    }
 
     @Override
     public ListAppsResponse getAppsByUser(GetAppsByUserRequest request) {

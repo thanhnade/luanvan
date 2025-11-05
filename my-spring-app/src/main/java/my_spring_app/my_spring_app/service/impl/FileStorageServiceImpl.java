@@ -24,7 +24,7 @@ import java.util.UUID;
 
 /**
  * Service phụ trách lưu trữ file.
- * - Lưu local: ~/uploads/<yyyy-MM-dd>/<targetDir>/UUID.ext
+ * - Lưu local: ~/uploads/<targetDir>/UUID.ext
  * - Lưu remote: SFTP tới máy Ubuntu (IP/Port/User/Password cấu hình trong application.yaml)
  */
 @Service
@@ -56,7 +56,6 @@ public class FileStorageServiceImpl implements FileStorageService {
      * Lưu file vào ổ đĩa local của server hiện tại.
      * Quy ước lưu trữ:
      *  - Thư mục gốc: ~/uploads
-     *  - Phân lớp theo ngày: yyyy-MM-dd
      *  - Thư mục con do client gửi: targetDir (mặc định "archives")
      *  - Tên file: UUID + phần mở rộng gốc (đảm bảo không trùng lặp và an toàn)
      *
@@ -87,8 +86,8 @@ public class FileStorageServiceImpl implements FileStorageService {
                 ? form.getTargetDir()
                 : "archives";
 
-        // ~/uploads/yyyy-MM-dd/<subDir>
-        Path targetDir = Paths.get(DEFAULT_ROOT, LocalDate.now().toString(), subDir).toAbsolutePath().normalize();
+        // ~/uploads/<subDir>
+        Path targetDir = Paths.get(DEFAULT_ROOT, subDir).toAbsolutePath().normalize();
 
         try {
             // Tạo thư mục đích nếu chưa tồn tại
@@ -115,7 +114,7 @@ public class FileStorageServiceImpl implements FileStorageService {
      * Upload file lên máy chủ Ubuntu từ xa thông qua SFTP.
      * Nguồn file nhận từ multipart (form.getFile()).
      * IP và port của máy đích đọc từ application.yaml (docker_image_ip, docker_image_port).
-     * Cấu trúc thư mục lưu trên máy đích: /home/ubuntu/uploads/<yyyy-MM-dd>/<targetDir>/UUID.ext
+     * Cấu trúc thư mục lưu trên máy đích: /home/<user>/uploads/<targetDir>/UUID.ext
      */
     @Override
     public RemoteUploadResponse storeRemote(RemoteUploadRequest form) {
@@ -134,7 +133,7 @@ public class FileStorageServiceImpl implements FileStorageService {
         // Username lấy trực tiếp từ cấu hình
         String user = remoteUsername;
         String remoteBase = "/home/" + user + "/uploads";
-        String remoteDir = remoteBase + "/" + LocalDate.now() + "/" + subDir;
+        String remoteDir = remoteBase + "/" + subDir;
 
         Session session = null;
         ChannelSftp sftp = null;
@@ -154,7 +153,7 @@ public class FileStorageServiceImpl implements FileStorageService {
             ch.connect();
             sftp = (ChannelSftp) ch;
 
-            // Đảm bảo tồn tại cây thư mục từ remoteBase → yyyy-MM-dd → targetDir
+            // Đảm bảo tồn tại cây thư mục từ remoteBase → targetDir
             String[] parts = remoteDir.split("/");
             String cur = "";
             for (String p : parts) {

@@ -34,8 +34,8 @@ public class AppController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-//    @PostMapping("/deploy-docker")
-//    public ResponseEntity<DeployAppFileResponse> deployAppDocker(@Valid @RequestBody DeployAppFileRequest request) {
+//    @PostMapping("/deploy-file")
+//    public ResponseEntity<DeployAppFileResponse> deployAppFile(@Valid @RequestBody DeployAppFileRequest request) {
 //        DeployAppDockerResponse response = appService.deployAppFile(request);
 //        return ResponseEntity.status(HttpStatus.CREATED).body(response);
 //    }
