@@ -35,3 +35,4 @@ app:
     docker_image_port: 22
     docker_image_username: devops
     docker_image_password: devops
+    dockerhub_username: nguyengiabao1203

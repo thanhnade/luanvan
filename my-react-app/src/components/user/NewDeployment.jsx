@@ -7,7 +7,7 @@ function NewDeployment({ onDeploySuccess }) {
   const [dockerImage, setDockerImage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [projectName, setProjectName] = useState('');
-  const [frameworkPreset, setFrameworkPreset] = useState('other');
+  const [frameworkPreset, setFrameworkPreset] = useState('react');
   const [buildCommand, setBuildCommand] = useState('npm run build');
   const [outputDirectory, setOutputDirectory] = useState('build');
   const [installCommand, setInstallCommand] = useState('npm install');
@@ -24,16 +24,11 @@ function NewDeployment({ onDeploySuccess }) {
   const frameworkDropdownRef = useRef(null);
 
   const frameworkPresets = [
-    { value: 'nextjs', label: 'Next.js' },
     { value: 'react', label: 'React' },
     { value: 'vue', label: 'Vue.js' },
     { value: 'angular', label: 'Angular' },
-    { value: 'svelte', label: 'Svelte' },
-    { value: 'nuxt', label: 'Nuxt.js' },
-    { value: 'gatsby', label: 'Gatsby' },
-    { value: 'vite', label: 'Vite' },
-    { value: 'vanilla', label: 'Vanilla JS' },
-    { value: 'other', label: 'Other / Custom' },
+    { value: 'spring', label: 'Spring Boot' },
+    { value: 'nodejs', label: 'Node.js' },
   ];
 
   const handleFileChange = (e) => {
@@ -117,13 +112,8 @@ function NewDeployment({ onDeploySuccess }) {
       'react': 'react',
       'vue': 'vue',
       'angular': 'angular',
-      'nextjs': 'react',
-      'nuxt': 'vue',
-      'gatsby': 'react',
-      'vite': 'react',
-      'svelte': 'node',
-      'vanilla': 'node',
-      'other': 'node'
+      'spring': 'spring',
+      'nodejs': 'node'
     };
     return mapping[preset] || 'node';
   };
@@ -183,16 +173,27 @@ function NewDeployment({ onDeploySuccess }) {
 
         response = await api.post('/apps/deploy-docker', requestBody);
       } else {
-        // Gọi API deploy cho File deployment
-        const requestBody = {
-          name: projectName.trim(),
-          frameworkType: mapFrameworkType(frameworkPreset),
-          deploymentType: 'file',
-          filePath: selectedFile ? selectedFile.name : '',
-          username: username
-        };
+        // Gọi API deploy cho File deployment - sử dụng FormData để gửi file
+        const formData = new FormData();
+        formData.append('name', projectName.trim());
+        formData.append('frameworkType', mapFrameworkType(frameworkPreset));
+        formData.append('deploymentType', 'file');
+        formData.append('file', selectedFile);
+        formData.append('username', username);
 
-        response = await api.post('/apps/deploy', requestBody);
+        // Debug: Log FormData contents
+        console.log('FormData contents:');
+        for (let pair of formData.entries()) {
+          console.log(pair[0] + ': ', pair[1]);
+        }
+
+        // Gọi API deploy-file với FormData
+        // Không set Content-Type để axios tự động set multipart/form-data với boundary
+        response = await api.post('/apps/deploy-file', formData, {
+          headers: {
+            'Content-Type': undefined,
+          },
+        });
       }
       
       console.log('Deployment successful:', response.data);
@@ -207,7 +208,7 @@ function NewDeployment({ onDeploySuccess }) {
       setDockerImage('');
       setSelectedFile(null);
       setProjectName('');
-      setFrameworkPreset('other');
+      setFrameworkPreset('react');
       setBuildCommand('npm run build');
       setOutputDirectory('build');
       setInstallCommand('npm install');
@@ -405,8 +406,17 @@ function NewDeployment({ onDeploySuccess }) {
                 onChange={handleFileChange}
                 accept=".zip,.tar,.gz"
                 disabled={loading || success}
+                style={{ display: 'none' }}
               />
-              <div className="file-upload-display">
+              <div 
+                className="file-upload-display"
+                onClick={() => {
+                  if (!loading && !success) {
+                    document.getElementById('fileUpload')?.click();
+                  }
+                }}
+                style={{ cursor: loading || success ? 'not-allowed' : 'pointer' }}
+              >
                 {selectedFile ? (
                   <div className="file-selected">
                     <svg viewBox="0 0 24 24" fill="none">
@@ -428,204 +438,6 @@ function NewDeployment({ onDeploySuccess }) {
             </div>
           </div>
         )}
-
-        {/* Build and Output Settings */}
-        <div className="settings-section">
-          <div className="settings-header">
-            <h3>Build and Output Settings</h3>
-            <button
-              type="button"
-              className="toggle-section-btn"
-              onClick={() => setBuildSettingsExpanded(!buildSettingsExpanded)}
-              aria-label={buildSettingsExpanded ? 'Collapse' : 'Expand'}
-            >
-              <svg 
-                className={`toggle-icon ${buildSettingsExpanded ? 'expanded' : ''}`}
-                viewBox="0 0 24 24" 
-                fill="none"
-              >
-                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-          </div>
-          
-          {buildSettingsExpanded && (
-            <div className="settings-content">
-              <div className="setting-field">
-                <label htmlFor="buildCommand">
-                  Build Command
-                  <svg className="info-icon" viewBox="0 0 24 24" fill="none" title="Command to build your project">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
-                    <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </label>
-                <div className="input-with-edit">
-                  <input
-                    type="text"
-                    id="buildCommand"
-                    value={buildCommand}
-                    onChange={(e) => setBuildCommand(e.target.value)}
-                    placeholder="npm run build"
-                    disabled={loading || success}
-                  />
-                  <button type="button" className="edit-btn" title="Edit">
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div className="setting-field">
-                <label htmlFor="outputDirectory">
-                  Output Directory
-                  <svg className="info-icon" viewBox="0 0 24 24" fill="none" title="Directory containing build output">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
-                    <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </label>
-                <div className="input-with-edit">
-                  <input
-                    type="text"
-                    id="outputDirectory"
-                    value={outputDirectory}
-                    onChange={(e) => setOutputDirectory(e.target.value)}
-                    placeholder="build"
-                    disabled={loading || success}
-                  />
-                  <button type="button" className="edit-btn" title="Edit">
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div className="setting-field">
-                <label htmlFor="installCommand">
-                  Install Command
-                  <svg className="info-icon" viewBox="0 0 24 24" fill="none" title="Command to install dependencies">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
-                    <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </label>
-                <div className="input-with-edit">
-                  <input
-                    type="text"
-                    id="installCommand"
-                    value={installCommand}
-                    onChange={(e) => setInstallCommand(e.target.value)}
-                    placeholder="npm install"
-                    disabled={loading || success}
-                  />
-                  <button type="button" className="edit-btn" title="Edit">
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Environment Variables */}
-        <div className="settings-section">
-          <div className="settings-header">
-            <h3>Environment Variables</h3>
-            <button
-              type="button"
-              className="toggle-section-btn"
-              onClick={() => setEnvVarsExpanded(!envVarsExpanded)}
-              aria-label={envVarsExpanded ? 'Collapse' : 'Expand'}
-            >
-              <svg 
-                className={`toggle-icon ${envVarsExpanded ? 'expanded' : ''}`}
-                viewBox="0 0 24 24" 
-                fill="none"
-              >
-                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-          </div>
-          
-          {envVarsExpanded && (
-            <div className="settings-content">
-              <div className="env-table">
-                <div className="env-table-header">
-                  <div className="env-col-key">Key</div>
-                  <div className="env-col-value">Value</div>
-                  <div className="env-col-action"></div>
-                </div>
-                
-                {envVariables.map((env, index) => (
-                  <div key={index} className="env-table-row">
-                    <div className="env-col-key">
-                      <input
-                        type="text"
-                        value={env.key}
-                        onChange={(e) => handleEnvVariableChange(index, 'key', e.target.value)}
-                        placeholder="KEY_NAME"
-                        disabled={loading || success}
-                      />
-                    </div>
-                    <div className="env-col-value">
-                      <input
-                        type="text"
-                        value={env.value}
-                        onChange={(e) => handleEnvVariableChange(index, 'value', e.target.value)}
-                        placeholder="value"
-                        disabled={loading || success}
-                      />
-                    </div>
-                    <div className="env-col-action">
-                      <button
-                        type="button"
-                        className="remove-env-btn"
-                        onClick={() => handleRemoveEnvVariable(index)}
-                        disabled={loading || success || envVariables.length === 1}
-                        title="Remove"
-                      >
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                          <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="env-actions">
-                <button
-                  type="button"
-                  className="add-env-btn"
-                  onClick={handleAddEnvVariable}
-                  disabled={loading || success}
-                >
-                  + Add More
-                </button>
-                <label className="import-env-btn" htmlFor="envFileInput">
-                  Import .env
-                  <input
-                    type="file"
-                    id="envFileInput"
-                    accept=".env,.env.*"
-                    onChange={handleImportEnv}
-                    disabled={loading || success}
-                    style={{ display: 'none' }}
-                  />
-                </label>
-              </div>
-              <p className="env-hint">
-                or paste the .env contents above. <a href="#" onClick={(e) => { e.preventDefault(); }}>Learn more</a>
-              </p>
-            </div>
-          )}
-        </div>
 
         <button type="submit" className="deploy-button" disabled={loading || success}>
           {loading ? (
