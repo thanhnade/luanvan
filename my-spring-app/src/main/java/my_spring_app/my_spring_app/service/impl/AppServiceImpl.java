@@ -246,7 +246,7 @@ public class AppServiceImpl implements AppService {
                     "spec:\n" +
                     "  ingressClassName: nginx\n" +
                     "  rules:\n" +
-                    "    - host: " + appName +
+                    "    - host: " + appName + "\n" +
                     "      http:\n" +
                     "        paths:\n" +
                     "          - path: /\n" +
