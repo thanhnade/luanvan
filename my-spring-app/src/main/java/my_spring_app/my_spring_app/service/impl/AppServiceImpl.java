@@ -19,6 +19,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.web.multipart.MultipartFile;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -56,6 +58,18 @@ public class AppServiceImpl implements AppService {
     @Value("${app.vars.dockerhub_username}")
     private String dockerhub_username;
 
+    @Value("${app.vars.database_ip}")
+    private String database_ip;
+
+    @Value("${app.vars.database_port}")
+    private int database_port;
+
+    @Value("${app.vars.database_username}")
+    private String database_username;
+
+    @Value("${app.vars.database_password}")
+    private String database_password;
+
     @Autowired
     private AppRepository appRepository;
 
@@ -71,9 +85,10 @@ public class AppServiceImpl implements AppService {
      * @param appName Tên app đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag
      * @param frameworkType Loại framework (react, vue, angular, spring, node)
+     * @param databaseName Tên database (chắc chắn có giá trị cho spring/node)
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateKubernetesYaml(String appName, String dockerImage, String frameworkType) {
+    private String generateKubernetesYaml(String appName, String dockerImage, String frameworkType, String databaseName) {
         switch (frameworkType.toLowerCase()) {
             case "react":
                 return generateReactYaml(appName, dockerImage);
@@ -84,8 +99,7 @@ public class AppServiceImpl implements AppService {
                 // TODO: Thêm nội dung YAML cho Angular
                 return generateReactYaml(appName, dockerImage); // Tạm thời dùng mẫu React
             case "spring":
-                // TODO: Thêm nội dung YAML cho Spring Boot
-                return generateReactYaml(appName, dockerImage); // Tạm thời dùng mẫu React
+                return generateSpringYaml(appName, dockerImage, databaseName);
             case "node":
                 // TODO: Thêm nội dung YAML cho Node.js
                 return generateReactYaml(appName, dockerImage); // Tạm thời dùng mẫu React
@@ -142,7 +156,81 @@ public class AppServiceImpl implements AppService {
                 "spec:\n" +
                 "  ingressClassName: nginx\n" +
                 "  rules:\n" +
-                "    - host: " + appName + "\n" +
+                "    - host: " + appName + ".ctu\n" +
+                "      http:\n" +
+                "        paths:\n" +
+                "          - path: /\n" +
+                "            pathType: Prefix\n" +
+                "            backend:\n" +
+                "              service:\n" +
+                "                name: " + appName + "-svc\n" +
+                "                port:\n" +
+                "                  number: 80\n";
+    }
+
+    /**
+     * Tạo YAML mẫu cho Spring Boot (Deployment + Service + Ingress gộp thành 1 file)
+     * @param appName Tên app đã được chuẩn hóa
+     * @param dockerImage Docker image tag
+     * @param databaseName Tên database (chắc chắn có giá trị)
+     */
+    private String generateSpringYaml(String appName, String dockerImage, String databaseName) {
+        // Chuẩn hóa databaseName
+        String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
+        
+        return "apiVersion: apps/v1\n" +
+                "kind: Deployment\n" +
+                "metadata:\n" +
+                "  name: " + appName + "\n" +
+                "  namespace: web\n" +
+                "spec:\n" +
+                "  replicas: 2\n" +
+                "  selector:\n" +
+                "    matchLabels:\n" +
+                "      app: " + appName + "\n" +
+                "  template:\n" +
+                "    metadata:\n" +
+                "      labels:\n" +
+                "        app: " + appName + "\n" +
+                "    spec:\n" +
+                "      containers:\n" +
+                "        - name: " + appName + "\n" +
+                "          image: " + dockerImage + "\n" +
+                "          imagePullPolicy: IfNotPresent\n" +
+                "          env:\n" +
+                "            - name: SPRING_DATASOURCE_URL\n" +
+                "              value: 'jdbc:mysql://" + database_ip + ":" + database_port + "/" + dbName + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC'\n" +
+                "            - name: SPRING_DATASOURCE_USERNAME\n" +
+                "              value: '" + database_username + "'\n" +
+                "            - name: SPRING_DATASOURCE_PASSWORD\n" +
+                "              value: '" + database_password + "'\n" +
+                "          ports:\n" +
+                "            - containerPort: 8080\n" +
+                "---\n" +
+                "apiVersion: v1\n" +
+                "kind: Service\n" +
+                "metadata:\n" +
+                "  name: " + appName + "-svc\n" +
+                "  namespace: web\n" +
+                "spec:\n" +
+                "  type: ClusterIP\n" +
+                "  selector:\n" +
+                "    app: " + appName + "\n" +
+                "  ports:\n" +
+                "    - port: 80\n" +
+                "      targetPort: 8080\n" +
+                "---\n" +
+                "apiVersion: networking.k8s.io/v1\n" +
+                "kind: Ingress\n" +
+                "metadata:\n" +
+                "  name: " + appName + "-ing\n" +
+                "  namespace: web\n" +
+                "  annotations:\n" +
+                "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
+                "spec:\n" +
+                "  ingressClassName: nginx\n" +
+                "  rules:\n" +
+                "    - host: " + appName + ".ctu\n" +
                 "      http:\n" +
                 "        paths:\n" +
                 "          - path: /\n" +
@@ -158,22 +246,26 @@ public class AppServiceImpl implements AppService {
      * Helper method để thực thi lệnh qua SSH và trả về output
      */
     private String executeCommand(Session session, String command) throws Exception {
+        return executeCommand(session, command, false);
+    }
+
+    private String executeCommand(Session session, String command, boolean ignoreNonZeroExit) throws Exception {
         ChannelExec channelExec = null;
-        
+
         try {
             Channel channel = session.openChannel("exec");
             channelExec = (ChannelExec) channel;
-            
+
             channelExec.setCommand(command);
             channelExec.setErrStream(System.err);
-            
+
             InputStream inputStream = channelExec.getInputStream();
             channelExec.connect();
-            
+
             // Đọc output
             StringBuilder output = new StringBuilder();
             byte[] buffer = new byte[1024];
-            
+
             while (true) {
                 while (inputStream.available() > 0) {
                     int bytesRead = inputStream.read(buffer, 0, 1024);
@@ -182,33 +274,137 @@ public class AppServiceImpl implements AppService {
                     }
                     output.append(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
                 }
-                
+
                 if (channelExec.isClosed()) {
                     if (inputStream.available() > 0) {
                         continue;
                     }
                     break;
                 }
-                
+
                 try {
                     Thread.sleep(100);
                 } catch (Exception e) {
                     // Bỏ qua
                 }
             }
-            
+
             int exitStatus = channelExec.getExitStatus();
             String result = output.toString().trim();
-            
+
             if (exitStatus != 0) {
-                throw new RuntimeException("Command exited with status: " + exitStatus + ". Output: " + result);
+                if (ignoreNonZeroExit) {
+                    System.err.println("[executeCommand] Command exited with status: " + exitStatus + ". Output: " + result + ". Command: " + command);
+                } else {
+                    throw new RuntimeException("Command exited with status: " + exitStatus + ". Output: " + result);
+                }
             }
-            
+
             return result;
-            
+
         } finally {
             if (channelExec != null && channelExec.isConnected()) {
                 channelExec.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Helper method để xử lý database file trên database server: upload, tạo database, giải nén và import SQL
+     * @param databaseFile File database (.zip hoặc .sql) cần xử lý
+     * @param databaseName Tên database (chắc chắn có giá trị)
+     * @param username Username của user (để tạo thư mục riêng cho mỗi user)
+     * @param logPrefix Prefix cho log messages (ví dụ: "[deployAppDocker]" hoặc "[deployAppFile]")
+     * @throws Exception Nếu có lỗi trong quá trình xử lý
+     */
+    private void processDatabaseFileOnDatabaseServer(MultipartFile databaseFile, String databaseName, 
+                                                     String username, String logPrefix) throws Exception {
+        if (databaseFile == null || databaseFile.isEmpty()) {
+            return;
+        }
+
+        System.out.println(logPrefix + " Xử lý database file trên database server: " + databaseFile.getOriginalFilename());
+        
+        // Kết nối SSH đến database server
+        JSch jsch = new JSch();
+        Session dbSession = jsch.getSession(docker_image_username, docker_image_ip, docker_image_port);
+        dbSession.setPassword(docker_image_password);
+        Properties config = new Properties();
+        config.put("StrictHostKeyChecking", "no");
+        dbSession.setConfig(config);
+        dbSession.setTimeout(7000);
+        dbSession.connect();
+        System.out.println(logPrefix + " Kết nối SSH đến database server thành công");
+        
+        try {
+            // Upload database file lên database server
+            Channel channelDb = dbSession.openChannel("sftp");
+            channelDb.connect();
+            ChannelSftp sftpDb = (ChannelSftp) channelDb;
+
+            String dbFileName = databaseFile.getOriginalFilename();
+            String remoteDbBase = "/home/" + docker_image_username + "/uploads/" + username + "/db";
+
+            // Đảm bảo thư mục tồn tại
+            String[] parts = remoteDbBase.split("/");
+            String cur = "";
+            for (String p : parts) {
+                if (p == null || p.isBlank()) continue;
+                cur += "/" + p;
+                try { sftpDb.cd(cur); } catch (Exception e) { sftpDb.mkdir(cur); sftpDb.cd(cur); }
+            }
+
+            String dbRemotePath = remoteDbBase + "/" + dbFileName;
+            sftpDb.put(databaseFile.getInputStream(), dbRemotePath);
+            System.out.println(logPrefix + " Đã upload database file lên database server: " + dbRemotePath);
+
+            // Giải nén file database (nếu là .zip) để lấy đường dẫn file SQL trước
+            String sqlFilePath = null;
+            if (dbFileName != null && dbFileName.endsWith(".zip")) {
+                String unzipCmd = "cd " + remoteDbBase + " && unzip -o '" + dbFileName + "'";
+                System.out.println(logPrefix + " Giải nén database file");
+                executeCommand(dbSession, unzipCmd);
+
+                String findSqlCmd = "cd " + remoteDbBase + " && find . -name '*.sql' -type f | head -1";
+                String sqlFile = executeCommand(dbSession, findSqlCmd).trim();
+                if (!sqlFile.isEmpty()) {
+                    sqlFile = sqlFile.replaceFirst("^\\./", "");
+                    sqlFilePath = remoteDbBase + "/" + sqlFile;
+                }
+            } else if (dbFileName != null && dbFileName.endsWith(".sql")) {
+                sqlFilePath = dbRemotePath;
+            }
+
+            sftpDb.disconnect();
+
+            // Chuẩn hóa database name
+            String dbName = databaseName.trim().toLowerCase()
+                    .replaceAll("\\s+", "-")
+                    .replaceAll("[^a-z0-9-]", "");
+
+            // Xây dựng script mysql để tạo database và import trong cùng một phiên
+            StringBuilder mysqlScript = new StringBuilder();
+            mysqlScript.append("CREATE DATABASE IF NOT EXISTS ").append(dbName)
+                    .append(" CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n");
+            if (sqlFilePath != null) {
+                mysqlScript.append("USE ").append(dbName).append(";\n");
+                mysqlScript.append("SOURCE ").append(sqlFilePath).append(";\n");
+            }
+            mysqlScript.append("EXIT;\n");
+
+            String mysqlCmd = "sudo mysql <<'EOF'\n" + mysqlScript + "EOF";
+            System.out.println(logPrefix + " Thực thi script mysql trong một phiên");
+            executeCommand(dbSession, mysqlCmd, true);
+
+            // Kiểm tra lại database đã được tạo thành công hay chưa
+            String verifyDbCmd = "sudo mysql -N -e \"SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='" + dbName + "';\"";
+            String verifyResult = executeCommand(dbSession, verifyDbCmd);
+            if (verifyResult.isBlank() || verifyResult.trim().equals("0")) {
+                throw new RuntimeException("Database " + dbName + " chưa được tạo thành công");
+            }
+        } finally {
+            if (dbSession != null && dbSession.isConnected()) {
+                dbSession.disconnect();
             }
         }
     }
@@ -232,22 +428,27 @@ public class AppServiceImpl implements AppService {
 
         appEntity.setDockerImage(request.getDockerImage());
 
-        String ssh_host = cluster_ip;
-        int ssh_port = cluster_port;
-        String ssh_username = user.getUsername();
-        String ssh_password = user.getUsername();
+        String appName = appEntity.getName().toLowerCase()
+                .replaceAll("\\s+", "-")
+                .replaceAll("[^a-z0-9-]", "");
 
         Session session = null;
         ChannelSftp sftpChannel = null;
 
         try {
 
-            System.out.println("[deployAppDocker] Đang kết nối đến Ubuntu server: " + ssh_host + ":" + ssh_port);
+            // Xử lý database file nếu có (cho Spring Boot và Node.js) - trên database server, thực hiện trước khi kết nối cluster
+            if (request.getDatabaseFile() != null && !request.getDatabaseFile().isEmpty()) {
+                processDatabaseFileOnDatabaseServer(request.getDatabaseFile(), request.getDatabaseName(),
+                        user.getUsername(), "[deployAppDocker]");
+            }
+
+            System.out.println("[deployAppDocker] Đang kết nối đến Ubuntu server: " + cluster_ip + ":" + cluster_port);
 
             // Bước 1: Tạo kết nối SSH đến máy ảo Ubuntu
             JSch jsch = new JSch();
-            session = jsch.getSession(ssh_username, ssh_host, ssh_port);
-            session.setPassword(ssh_password);
+            session = jsch.getSession(cluster_username, cluster_ip, cluster_port);
+            session.setPassword(cluster_password);
 
             // Tắt kiểm tra strict host key
             Properties config = new Properties();
@@ -261,11 +462,6 @@ public class AppServiceImpl implements AppService {
             session.connect();
             System.out.println("[deployAppDocker] Kết nối SSH thành công!");
 
-            // Bước 2: Chuẩn hóa tên app để dùng trong YAML
-            String appName = appEntity.getName().toLowerCase()
-                    .replaceAll("\\s+", "-")
-                    .replaceAll("[^a-z0-9-]", "");
-            
             // Bước 3: Tạo file YAML gộp (Deployment + Service + Ingress) sử dụng hàm helper
             String fileName = appName + ".yaml";
             System.out.println("[deployAppDocker] Đang tạo file: " + fileName);
@@ -273,7 +469,8 @@ public class AppServiceImpl implements AppService {
             String fileContent = generateKubernetesYaml(
                     appName, 
                     appEntity.getDockerImage(), 
-                    appEntity.getFrameworkType()
+                    appEntity.getFrameworkType(),
+                    request.getDatabaseName()
             );
 
             // Bước 4: Mở SFTP channel để upload file
@@ -283,7 +480,7 @@ public class AppServiceImpl implements AppService {
 
             // Upload file YAML (gộp Deployment + Service + Ingress) lên server
             InputStream fileInputStream = new ByteArrayInputStream(fileContent.getBytes(StandardCharsets.UTF_8));
-            String remotePath = "/home/" + ssh_username + "/" + fileName;
+            String remotePath = "/home/" + cluster_username + "/" + fileName;
             sftpChannel.put(fileInputStream, remotePath);
             
             System.out.println("[deployAppDocker] Đã tạo file " + fileName + " thành công tại: " + remotePath);
@@ -293,7 +490,7 @@ public class AppServiceImpl implements AppService {
             sftpChannel = null;
 
             // Bước 5: Thực thi lệnh kubectl apply cho file YAML (gộp tất cả)
-            String homeDirectory = "/home/" + ssh_username;
+            String homeDirectory = "/home/" + cluster_username;
             
             System.out.println("[deployAppDocker] Đang thực thi: kubectl apply -f " + fileName);
             String kubectlResult = executeCommand(session, "cd " + homeDirectory + " && kubectl apply -f " + fileName);
@@ -301,7 +498,7 @@ public class AppServiceImpl implements AppService {
 
             // Cập nhật status và URL
             appEntity.setStatus("running");
-            String generatedUrl = "http://" + appName;
+            String generatedUrl = "http://" + appName + ".ctu";
             appEntity.setUrl(generatedUrl);
 
             DeployAppDockerResponse response = new DeployAppDockerResponse();
@@ -373,12 +570,13 @@ public class AppServiceImpl implements AppService {
             session.connect();
             System.out.println("[deployAppFile] Đã kết nối SSH server build thành công");
 
-            // 2) Upload file .zip vào /home/<user>/uploads/devops
+            // 2) Upload file .zip vào /home/<docker_image_username>/uploads/<user>/apps
             Channel ch = session.openChannel("sftp");
             ch.connect();
             sftp = (ChannelSftp) ch;
 
-            String remoteBase = "/home/" + docker_image_username + "/uploads/devops";
+            // Đường dẫn cho file dự án
+            String remoteBase = "/home/" + docker_image_username + "/uploads/" + user.getUsername() + "/apps";
             System.out.println("[deployAppFile] Tạo/cd thư mục đích: " + remoteBase);
             // Đảm bảo thư mục tồn tại
             String[] parts = remoteBase.split("/");
@@ -387,6 +585,18 @@ public class AppServiceImpl implements AppService {
                 if (p == null || p.isBlank()) continue;
                 cur += "/" + p;
                 try { sftp.cd(cur); } catch (Exception e) { sftp.mkdir(cur); sftp.cd(cur); }
+            }
+
+            // Đường dẫn cho file database
+            String remoteDbBase = "/home/" + docker_image_username + "/uploads/" + user.getUsername() + "/db";
+            System.out.println("[deployAppFile] Tạo/cd thư mục database: " + remoteDbBase);
+            // Đảm bảo thư mục database tồn tại
+            String[] dbParts = remoteDbBase.split("/");
+            String dbCur = "";
+            for (String p : dbParts) {
+                if (p == null || p.isBlank()) continue;
+                dbCur += "/" + p;
+                try { sftp.cd(dbCur); } catch (Exception e) { sftp.mkdir(dbCur); sftp.cd(dbCur); }
             }
 
             String originalName = request.getFile().getOriginalFilename();
@@ -429,6 +639,12 @@ public class AppServiceImpl implements AppService {
             System.out.println("[deployAppFile] Docker push: " + pushCmd);
             executeCommand(session, pushCmd);
 
+            // 4.5) Xử lý database file nếu có (cho Spring Boot và Node.js) - trên database server
+            if (request.getDatabaseFile() != null && !request.getDatabaseFile().isEmpty()) {
+                processDatabaseFileOnDatabaseServer(request.getDatabaseFile(), request.getDatabaseName(), 
+                                                    user.getUsername(), "[deployAppFile]");
+            }
+
             // 5) Tạo YAML (Deployment, Service, Ingress gộp thành 1 file), upload và apply trên server CLUSTER
             System.out.println("[deployAppFile] Chuyển sang server cluster để upload/apply YAML: " + cluster_ip + ":" + cluster_port);
             appEntity.setDockerImage(imageTag);
@@ -438,7 +654,8 @@ public class AppServiceImpl implements AppService {
             String yamlContent = generateKubernetesYaml(
                     appName, 
                     imageTag, 
-                    request.getFrameworkType()
+                    request.getFrameworkType(),
+                    request.getDatabaseName()
             );
 
             // Tạo phiên kết nối tới server cluster
@@ -467,7 +684,7 @@ public class AppServiceImpl implements AppService {
 
             // Thành công
             appEntity.setStatus("running");
-            String generatedUrl = "http://" + appName;
+            String generatedUrl = "http://" + appName + ".ctu";
             appEntity.setUrl(generatedUrl);
             appRepository.save(appEntity);
             System.out.println("[deployAppFile] Hoàn tất triển khai từ file, appName=" + appName + ", url=" + generatedUrl);

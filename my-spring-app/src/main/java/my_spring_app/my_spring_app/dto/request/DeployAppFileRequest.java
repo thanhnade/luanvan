@@ -15,7 +15,7 @@ public class DeployAppFileRequest {
     private String name;
 
     @NotBlank(message = "Framework type không được để trống")
-    private String frameworkType; // react, vue, angular, spring, node
+    private String frameworkType; // react, vue, angular, spring, nodejs
     
     @NotBlank(message = "Deployment type không được để trống")
     private String deploymentType; // docker, file
@@ -24,6 +24,11 @@ public class DeployAppFileRequest {
     
     // File nén (.zip) người dùng upload khi deploymentType = file
     private MultipartFile file;
+
+    private String databaseName; // database name
+
+    // File database (.zip) người dùng upload khi deploymentType = file và frameworkType = spring, nodejs
+    private MultipartFile databaseFile; 
     
     @NotBlank(message = "username không được để trống")
     private String username;

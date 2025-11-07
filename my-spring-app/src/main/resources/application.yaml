@@ -36,3 +36,7 @@ app:
     docker_image_username: devops
     docker_image_password: devops
     dockerhub_username: nguyengiabao1203
+    database_ip: 172.16.123.100
+    database_port: 3306
+    database_username: root
+    database_password: baong

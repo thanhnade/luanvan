@@ -21,8 +21,8 @@ public class AppController {
     @Autowired
     private AppService appService;
 
-    @PostMapping("/deploy-docker")
-    public ResponseEntity<DeployAppDockerResponse> deployAppDocker(@Valid @RequestBody DeployAppDockerRequest request) {
+    @PostMapping(value = "/deploy-docker", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<DeployAppDockerResponse> deployAppDockerMultipart(@ModelAttribute @Valid DeployAppDockerRequest request) {
         DeployAppDockerResponse response = appService.deployAppDocker(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }

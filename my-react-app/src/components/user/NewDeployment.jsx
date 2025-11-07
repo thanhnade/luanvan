@@ -12,6 +12,8 @@ function NewDeployment({ onDeploySuccess }) {
   const [outputDirectory, setOutputDirectory] = useState('build');
   const [installCommand, setInstallCommand] = useState('npm install');
   const [envVariables, setEnvVariables] = useState([{ key: '', value: '' }]);
+  const [databaseName, setDatabaseName] = useState('');
+  const [databaseFile, setDatabaseFile] = useState(null);
   const [buildSettingsExpanded, setBuildSettingsExpanded] = useState(true);
   const [envVarsExpanded, setEnvVarsExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -35,6 +37,14 @@ function NewDeployment({ onDeploySuccess }) {
     const file = e.target.files[0];
     if (file) {
       setSelectedFile(file);
+      setError('');
+    }
+  };
+
+  const handleDatabaseFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setDatabaseFile(file);
       setError('');
     }
   };
@@ -99,6 +109,14 @@ function NewDeployment({ onDeploySuccess }) {
     }
   }, [isFrameworkDropdownOpen]);
 
+  // Reset database fields khi framework thay đổi và không phải spring hoặc nodejs
+  useEffect(() => {
+    if (frameworkPreset !== 'spring' && frameworkPreset !== 'nodejs') {
+      setDatabaseName('');
+      setDatabaseFile(null);
+    }
+  }, [frameworkPreset]);
+
   const handleFrameworkSelect = (value) => {
     setFrameworkPreset(value);
     setIsFrameworkDropdownOpen(false);
@@ -162,16 +180,55 @@ function NewDeployment({ onDeploySuccess }) {
       let response;
 
       if (deploymentType === 'docker') {
-        // Gọi API deploy-docker cho Docker deployment
-        const requestBody = {
-          name: projectName.trim(),
-          frameworkType: mapFrameworkType(frameworkPreset),
-          deploymentType: 'docker',
-          dockerImage: dockerImage.trim(),
-          username: username
-        };
+        // Kiểm tra xem có databaseFile không để quyết định dùng FormData hay JSON
+        const mappedFramework = mapFrameworkType(frameworkPreset);
+        const hasDatabaseFile = (mappedFramework === 'spring' || mappedFramework === 'node') && databaseFile;
+        
+        if (hasDatabaseFile) {
+          // Dùng FormData nếu có databaseFile
+          const formData = new FormData();
+          formData.append('name', projectName.trim());
+          formData.append('frameworkType', mappedFramework);
+          formData.append('deploymentType', 'docker');
+          formData.append('dockerImage', dockerImage.trim());
+          formData.append('username', username);
+          
+          if (databaseName.trim()) {
+            formData.append('databaseName', databaseName.trim());
+          }
+          if (databaseFile) {
+            formData.append('databaseFile', databaseFile);
+          }
+          
+          // Debug: Log FormData contents
+          console.log('FormData contents (docker with databaseFile):');
+          for (let pair of formData.entries()) {
+            console.log(pair[0] + ': ', pair[1]);
+          }
+          
+          // Gọi API deploy-docker với FormData
+          response = await api.post('/apps/deploy-docker', formData, {
+            headers: {
+              'Content-Type': undefined,
+            },
+          });
+        } else {
+          // Dùng JSON nếu không có databaseFile
+          const requestBody = {
+            name: projectName.trim(),
+            frameworkType: mappedFramework,
+            deploymentType: 'docker',
+            dockerImage: dockerImage.trim(),
+            username: username
+          };
 
-        response = await api.post('/apps/deploy-docker', requestBody);
+          // Thêm database name nếu có (không có file)
+          if ((mappedFramework === 'spring' || mappedFramework === 'node') && databaseName.trim()) {
+            requestBody.databaseName = databaseName.trim();
+          }
+
+          response = await api.post('/apps/deploy-docker', requestBody);
+        }
       } else {
         // Gọi API deploy cho File deployment - sử dụng FormData để gửi file
         const formData = new FormData();
@@ -180,6 +237,17 @@ function NewDeployment({ onDeploySuccess }) {
         formData.append('deploymentType', 'file');
         formData.append('file', selectedFile);
         formData.append('username', username);
+
+        // Thêm database name và database file nếu framework là spring hoặc node
+        const mappedFramework = mapFrameworkType(frameworkPreset);
+        if (mappedFramework === 'spring' || mappedFramework === 'node') {
+          if (databaseName.trim()) {
+            formData.append('databaseName', databaseName.trim());
+          }
+          if (databaseFile) {
+            formData.append('databaseFile', databaseFile);
+          }
+        }
 
         // Debug: Log FormData contents
         console.log('FormData contents:');
@@ -213,6 +281,8 @@ function NewDeployment({ onDeploySuccess }) {
       setOutputDirectory('build');
       setInstallCommand('npm install');
       setEnvVariables([{ key: '', value: '' }]);
+      setDatabaseName('');
+      setDatabaseFile(null);
       
       // KHÔNG gọi onDeploySuccess() ở đây, sẽ gọi sau khi người dùng đóng modal
       
@@ -281,7 +351,7 @@ function NewDeployment({ onDeploySuccess }) {
         {error && <div className="error-message">{error}</div>}
 
         <div className="form-group">
-          <label htmlFor="projectName">Project name *</label>
+          <label htmlFor="projectName">Project name</label>
           <input
             type="text"
             id="projectName"
@@ -340,7 +410,7 @@ function NewDeployment({ onDeploySuccess }) {
         </div>
 
         <div className="form-group">
-          <label>Deployment method *</label>
+          <label>Deployment method</label>
           <div className="deployment-options">
             <label className="option-radio">
               <input
@@ -382,7 +452,7 @@ function NewDeployment({ onDeploySuccess }) {
 
         {deploymentType === 'docker' ? (
           <div className="form-group">
-            <label htmlFor="dockerImage">Docker Hub Image *</label>
+            <label htmlFor="dockerImage">Docker Hub Image</label>
             <input
               type="text"
               id="dockerImage"
@@ -398,7 +468,7 @@ function NewDeployment({ onDeploySuccess }) {
           </div>
         ) : (
           <div className="form-group">
-            <label htmlFor="fileUpload">Choose file *</label>
+            <label htmlFor="fileUpload">Project file (.zip)</label>
             <div className="file-upload-area">
               <input
                 type="file"
@@ -431,12 +501,73 @@ function NewDeployment({ onDeploySuccess }) {
                       <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" fill="currentColor"/>
                     </svg>
                     <p>Drag & drop a file here or click to choose</p>
-                    <small>Supported: ZIP, TAR, GZ (max 100MB)</small>
+                    <small>Supported: ZIP (max 100MB)</small>
                   </div>
                 )}
               </div>
             </div>
           </div>
+        )}
+
+        {/* Database fields cho Spring Boot và Node.js */}
+        {(frameworkPreset === 'spring' || frameworkPreset === 'nodejs') && (
+          <>
+            <div className="form-group">
+              <label htmlFor="databaseName">Database Name</label>
+              <input
+                type="text"
+                id="databaseName"
+                value={databaseName}
+                onChange={(e) => setDatabaseName(e.target.value)}
+                placeholder="Enter database name"
+                disabled={loading || success}
+              />
+              <small className="form-hint">
+                Name of the database to be created
+              </small>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="databaseFileUpload">Database File (.zip or .sql)</label>
+              <div className="file-upload-area">
+                <input
+                  type="file"
+                  id="databaseFileUpload"
+                  onChange={handleDatabaseFileChange}
+                  accept=".zip,.sql"
+                  disabled={loading || success}
+                  style={{ display: 'none' }}
+                />
+                <div 
+                  className="file-upload-display"
+                  onClick={() => {
+                    if (!loading && !success) {
+                      document.getElementById('databaseFileUpload')?.click();
+                    }
+                  }}
+                  style={{ cursor: loading || success ? 'not-allowed' : 'pointer' }}
+                >
+                  {databaseFile ? (
+                    <div className="file-selected">
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" fill="currentColor"/>
+                      </svg>
+                      <span>{databaseFile.name}</span>
+                      <span className="file-size">{(databaseFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                    </div>
+                  ) : (
+                    <div className="file-placeholder">
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" fill="currentColor"/>
+                      </svg>
+                      <p>Click to upload database file (.zip or .sql)</p>
+                      <small>Upload ZIP or SQL file to initialize database</small>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         <button type="submit" className="deploy-button" disabled={loading || success}>
