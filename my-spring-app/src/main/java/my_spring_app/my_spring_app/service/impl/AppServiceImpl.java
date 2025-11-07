@@ -84,8 +84,8 @@ public class AppServiceImpl implements AppService {
      * gộp thành 1 file dựa trên frameworkType
      * @param appName Tên app đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag
-     * @param frameworkType Loại framework (react, vue, angular, spring, node)
-     * @param databaseName Tên database (chắc chắn có giá trị cho spring/node)
+     * @param frameworkType Loại framework (react, vue, angular, spring, nodejs)
+     * @param databaseName Tên database (chắc chắn có giá trị cho spring/nodejs)
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
     private String generateKubernetesYaml(String appName, String dockerImage, String frameworkType, String databaseName) {
@@ -558,7 +558,15 @@ public class AppServiceImpl implements AppService {
         Session clusterSession = null;     // phiên SSH tới máy cluster để upload/apply YAML (cluster_*)
         ChannelSftp sftpYaml = null;       // SFTP trên máy cluster để upload YAML
         try {
+
+            // Ưu tiên xử lý database file trước (nếu có) trên database server
+            if (request.getDatabaseFile() != null && !request.getDatabaseFile().isEmpty()) {
+                processDatabaseFileOnDatabaseServer(request.getDatabaseFile(), request.getDatabaseName(),
+                        user.getUsername(), "[deployAppFile]");
+            }
+
             System.out.println("[deployAppFile] Kết nối SSH tới server build/push image: " + docker_image_ip + ":" + docker_image_port);
+            
             // 1) Kết nối SSH tới server docker_image_* (đã cấu hình)
             JSch jsch = new JSch();
             session = jsch.getSession(docker_image_username, docker_image_ip, docker_image_port);
@@ -638,12 +646,6 @@ public class AppServiceImpl implements AppService {
             String pushCmd = "docker push '" + imageTag + "'";
             System.out.println("[deployAppFile] Docker push: " + pushCmd);
             executeCommand(session, pushCmd);
-
-            // 4.5) Xử lý database file nếu có (cho Spring Boot và Node.js) - trên database server
-            if (request.getDatabaseFile() != null && !request.getDatabaseFile().isEmpty()) {
-                processDatabaseFileOnDatabaseServer(request.getDatabaseFile(), request.getDatabaseName(), 
-                                                    user.getUsername(), "[deployAppFile]");
-            }
 
             // 5) Tạo YAML (Deployment, Service, Ingress gộp thành 1 file), upload và apply trên server CLUSTER
             System.out.println("[deployAppFile] Chuyển sang server cluster để upload/apply YAML: " + cluster_ip + ":" + cluster_port);
