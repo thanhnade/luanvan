@@ -39,6 +39,9 @@ public class ProjectDatabaseEntity {
     @Column(name = "database_password", nullable = false)
     private String databasePassword;
 
+    @Column(name = "database_name", nullable = false)
+    private String databaseName;
+
     @Column(name = "database_file", nullable = true)
     private String databaseFile;
 

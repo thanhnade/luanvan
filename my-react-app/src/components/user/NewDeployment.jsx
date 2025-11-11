@@ -130,13 +130,14 @@ function NewDeployment({ onDeploySuccess }) {
       // DNS không còn bắt buộc cho frontend/backend
 
       if (singleProjectType === 'database') {
-        if (!singleProject.databaseFile) {
-          throw new Error('Please upload database file');
+        // File database là optional, nếu có thì validate
+        if (singleProject.databaseFile) {
+          const fileValidation = validateFile(singleProject.databaseFile);
+          if (!fileValidation.valid) {
+            throw new Error(fileValidation.error);
+          }
         }
-        const fileValidation = validateFile(singleProject.databaseFile);
-        if (!fileValidation.valid) {
-          throw new Error(fileValidation.error);
-        }
+        // Database name, username, password sẽ được hệ thống tự động tạo
       } else if (singleProjectType === 'backend' && (singleProject.framework === 'spring' || singleProject.framework === 'nodejs')) {
         // Validate database environment variables for backend
         if (!singleProject.databaseIp.trim()) {
@@ -234,16 +235,20 @@ function NewDeployment({ onDeploySuccess }) {
           headers: { 'Content-Type': undefined },
         });
       } else if (singleProjectType === 'database') {
-        // Database-only deployment
-        const formData = new FormData();
-        formData.append('name', singleProject.name.trim());
-        formData.append('frameworkType', 'node');
-        formData.append('deploymentType', 'docker');
-        formData.append('dockerImage', 'nginx:latest');
-        formData.append('username', username);
-        formData.append('databaseFile', singleProject.databaseFile);
+        // Deploy Database Project
+        const databaseTypeValue = singleProject.framework.trim().toUpperCase(); // MYSQL hoặc MONGODB
+        
+        const databaseFormData = new FormData();
+        databaseFormData.append('projectName', singleProject.name.trim());
+        databaseFormData.append('databaseType', databaseTypeValue);
+        databaseFormData.append('username', username);
+        
+        // File database là optional (có thể không có)
+        if (singleProject.databaseFile) {
+          databaseFormData.append('file', singleProject.databaseFile);
+        }
 
-        response = await api.post('/apps/deploy-docker', formData, {
+        response = await api.post('/project-databases/deploy', databaseFormData, {
           headers: { 'Content-Type': undefined },
         });
       } else if (singleProject.deploymentType === 'docker') {
@@ -317,7 +322,11 @@ function NewDeployment({ onDeploySuccess }) {
       }
 
       setModalType('success');
-      setModalData(response.data);
+      // Lưu thêm singleProjectType vào modalData để biết loại deployment
+      setModalData({
+        ...response.data,
+        deploymentType: singleProjectType // 'frontend', 'backend', hoặc 'database'
+      });
       setShowModal(true);
       setSuccess(true);
 
@@ -414,6 +423,7 @@ function NewDeployment({ onDeploySuccess }) {
                 </div>
                 <h2 className="modal-title">Deployment successful</h2>
                 <p className="modal-description">Your project was deployed successfully.</p>
+                {/* Hiển thị URL cho frontend/backend */}
                 {modalData?.url && (
                   <div className="modal-results">
                     <div className="result-item">
@@ -423,6 +433,210 @@ function NewDeployment({ onDeploySuccess }) {
                           {modalData.url}
                         </a>
                       </div>
+                    </div>
+                  </div>
+                )}
+                {/* Hiển thị thông tin database cho database deployment */}
+                {(singleProjectType === 'database' || modalData?.deploymentType === 'database') && modalData && modalData.databaseIp && (
+                  <div className="modal-results" style={{ marginTop: '16px' }}>
+                    <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '600', color: '#111827' }}>
+                      📊 Database Connection Information
+                    </h3>
+                    <div className="result-item">
+                      <div className="result-label">Database IP:</div>
+                      <div className="result-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <code style={{ 
+                          backgroundColor: '#f3f4f6', 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          fontFamily: 'monospace',
+                          flex: 1
+                        }}>{modalData.databaseIp}</code>
+                        <button
+                          onClick={async (e) => {
+                            try {
+                              await navigator.clipboard.writeText(modalData.databaseIp);
+                              const originalText = e.target.textContent;
+                              e.target.textContent = 'Copied!';
+                              setTimeout(() => {
+                                e.target.textContent = originalText;
+                              }, 2000);
+                            } catch (err) {
+                              console.error('Failed to copy:', err);
+                            }
+                          }}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <div className="result-item">
+                      <div className="result-label">Database Port:</div>
+                      <div className="result-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <code style={{ 
+                          backgroundColor: '#f3f4f6', 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          fontFamily: 'monospace',
+                          flex: 1
+                        }}>{modalData.databasePort}</code>
+                        <button
+                          onClick={async (e) => {
+                            try {
+                              await navigator.clipboard.writeText(String(modalData.databasePort));
+                              const originalText = e.target.textContent;
+                              e.target.textContent = 'Copied!';
+                              setTimeout(() => {
+                                e.target.textContent = originalText;
+                              }, 2000);
+                            } catch (err) {
+                              console.error('Failed to copy:', err);
+                            }
+                          }}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <div className="result-item">
+                      <div className="result-label">Database Name:</div>
+                      <div className="result-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <code style={{ 
+                          backgroundColor: '#f3f4f6', 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          fontFamily: 'monospace',
+                          flex: 1
+                        }}>{modalData.databaseName}</code>
+                        <button
+                          onClick={async (e) => {
+                            try {
+                              await navigator.clipboard.writeText(modalData.databaseName);
+                              const originalText = e.target.textContent;
+                              e.target.textContent = 'Copied!';
+                              setTimeout(() => {
+                                e.target.textContent = originalText;
+                              }, 2000);
+                            } catch (err) {
+                              console.error('Failed to copy:', err);
+                            }
+                          }}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <div className="result-item">
+                      <div className="result-label">Database Username:</div>
+                      <div className="result-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <code style={{ 
+                          backgroundColor: '#f3f4f6', 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          fontFamily: 'monospace',
+                          flex: 1
+                        }}>{modalData.databaseUsername}</code>
+                        <button
+                          onClick={async (e) => {
+                            try {
+                              await navigator.clipboard.writeText(modalData.databaseUsername);
+                              const originalText = e.target.textContent;
+                              e.target.textContent = 'Copied!';
+                              setTimeout(() => {
+                                e.target.textContent = originalText;
+                              }, 2000);
+                            } catch (err) {
+                              console.error('Failed to copy:', err);
+                            }
+                          }}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <div className="result-item">
+                      <div className="result-label">Database Password:</div>
+                      <div className="result-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <code style={{ 
+                          backgroundColor: '#f3f4f6', 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          fontFamily: 'monospace',
+                          flex: 1
+                        }}>{modalData.databasePassword}</code>
+                        <button
+                          onClick={async (e) => {
+                            try {
+                              await navigator.clipboard.writeText(modalData.databasePassword);
+                              const originalText = e.target.textContent;
+                              e.target.textContent = 'Copied!';
+                              setTimeout(() => {
+                                e.target.textContent = originalText;
+                              }, 2000);
+                            } catch (err) {
+                              console.error('Failed to copy:', err);
+                            }
+                          }}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{
+                      marginTop: '16px',
+                      padding: '12px',
+                      backgroundColor: '#eff6ff',
+                      border: '1px solid #3b82f6',
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      color: '#1e40af'
+                    }}>
+                      <strong>💡 Lưu ý:</strong> Hãy lưu lại thông tin database này để sử dụng khi triển khai Backend.
                     </div>
                   </div>
                 )}
@@ -499,27 +713,15 @@ function NewDeployment({ onDeploySuccess }) {
       }
 
       if (singleProjectType === 'database') {
-        if (!singleProject.databaseName.trim()) {
-          setError('Please enter database name');
-          return false;
+        // File database là optional, nếu có thì validate
+        if (singleProject.databaseFile) {
+          const dbFileValidation = validateFile(singleProject.databaseFile);
+          if (!dbFileValidation.valid) {
+            setError(dbFileValidation.error);
+            return false;
+          }
         }
-        if (!singleProject.databaseUsername.trim()) {
-          setError('Please enter database username');
-          return false;
-        }
-        if (!singleProject.databasePassword.trim()) {
-          setError('Please enter database password');
-          return false;
-        }
-        if (!singleProject.databaseFile) {
-          setError('Please upload database file');
-          return false;
-        }
-        const dbFileValidation = validateFile(singleProject.databaseFile);
-        if (!dbFileValidation.valid) {
-          setError(dbFileValidation.error);
-          return false;
-        }
+        // Database name, username, password sẽ được hệ thống tự động tạo
       }
 
       return true;
@@ -1244,7 +1446,7 @@ DB_PASSWORD=...`}</pre>
                 <>
                   <div className="form-row form-row-two">
                     <div className="form-group">
-                      <label htmlFor="databaseFile">Database File (.zip) *</label>
+                      <label htmlFor="databaseFile">Database File (.zip) (Optional)</label>
                       <input
                         type="file"
                         id="databaseFile"
@@ -1259,9 +1461,11 @@ DB_PASSWORD=...`}</pre>
                             } else {
                               setError(validation.error);
                             }
+                          } else {
+                            // Cho phép xóa file
+                            setSingleProject(prev => ({ ...prev, databaseFile: null }));
                           }
                         }}
-                        required
                         disabled={loading || success}
                       />
                       {singleProject.databaseFile && (
@@ -1270,6 +1474,9 @@ DB_PASSWORD=...`}</pre>
                           ({(singleProject.databaseFile.size / (1024 * 1024)).toFixed(2)} MB)
                         </small>
                       )}
+                      <small style={{ color: '#6b7280', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        File .zip chứa file .sql (MySQL) hoặc .bson (MongoDB). Nếu không có file, hệ thống sẽ chỉ tạo database trống.
+                      </small>
                     </div>
                   </div>
                 </>

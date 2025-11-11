@@ -25,6 +25,7 @@ public class ListProjectDatabaseResponse {
         private Integer databasePort;
         private String databaseUsername;
         private String databasePassword;
+        private String databaseName;
         private String databaseFile;
         private String status;
         private LocalDateTime createdAt;

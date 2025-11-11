@@ -15,13 +15,7 @@ public class DeployDatabaseRequest {
     private String projectName;
 
     @NotBlank(message = "Framework type không được để trống")
-    private String databseType; // MYSQL, MONGODB
-
-    private String databaseName;
-
-    private String databaseUsername;
-
-    private String databasePassword;
+    private String databaseType; // MYSQL, MONGODB
 
     private MultipartFile file;
 
