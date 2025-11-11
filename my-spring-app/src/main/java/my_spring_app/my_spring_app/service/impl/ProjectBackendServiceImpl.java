@@ -91,7 +91,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * Helper method để tạo nội dung YAML Kubernetes cho backend Spring Boot
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
      * 
-     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
      * @param databaseName Database name
@@ -101,9 +101,11 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * @param databasePassword Database password (có thể null)
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateBackendSpringBootYaml(String projectName, String dockerImage, String domainName, 
+    private String generateBackendSpringBootYaml(String deploymentUuid, String dockerImage, String domainName, 
                                                   String databaseName, String databaseIp, int databasePort, 
                                                   String databaseUsername, String databasePassword) {
+        // K8s Service/Ingress dùng DNS-1035: phải bắt đầu bằng chữ cái -> prefix 'app-'
+        String resourceName = "app-" + deploymentUuid;
         // Chỉ chuẩn hóa databaseName, không chuẩn hóa databaseIp, databaseUsername, databasePassword
         String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
         // Sử dụng trực tiếp databaseIp, databaseUsername, databasePassword từ request (có thể chứa ký tự đặc biệt)
@@ -112,20 +114,20 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "\n" +
+                "  name: " + resourceName + "\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  replicas: 2\n" +
                 "  selector:\n" +
                 "    matchLabels:\n" +
-                "      app: " + projectName + "\n" +
+                "      app: " + resourceName + "\n" +
                 "  template:\n" +
                 "    metadata:\n" +
                 "      labels:\n" +
-                "        app: " + projectName + "\n" +
+                "        app: " + resourceName + "\n" +
                 "    spec:\n" +
                 "      containers:\n" +
-                "        - name: " + projectName + "\n" +
+                "        - name: " + resourceName + "\n" +
                 "          image: " + dockerImage + "\n" +
                 "          imagePullPolicy: IfNotPresent\n" +
                 "          env:\n" +
@@ -141,12 +143,12 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "apiVersion: v1\n" +
                 "kind: Service\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-svc\n" +
+                "  name: " + resourceName + "-svc\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +
                 "  selector:\n" +
-                "    app: " + projectName + "\n" +
+                "    app: " + resourceName + "\n" +
                 "  ports:\n" +
                 "    - port: 80\n" +
                 "      targetPort: 8080\n" +
@@ -154,7 +156,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "apiVersion: networking.k8s.io/v1\n" +
                 "kind: Ingress\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-ing\n" +
+                "  name: " + resourceName + "-ing\n" +
                 "  namespace: web\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
@@ -168,7 +170,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "            pathType: Prefix\n" +
                 "            backend:\n" +
                 "              service:\n" +
-                "                name: " + projectName + "-svc\n" +
+                "                name: " + resourceName + "-svc\n" +
                 "                port:\n" +
                 "                  number: 80\n";
     }
@@ -177,7 +179,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * Helper method để tạo nội dung YAML Kubernetes cho backend Node.js
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
      * 
-     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
      * @param databaseName Database name
@@ -187,9 +189,10 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * @param databasePassword Database password (có thể null)
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateBackendNodeJsYaml(String projectName, String dockerImage, String domainName,
+    private String generateBackendNodeJsYaml(String deploymentUuid, String dockerImage, String domainName,
                                              String databaseName, String databaseIp, int databasePort,
                                              String databaseUsername, String databasePassword) {
+        String resourceName = "app-" + deploymentUuid;
         // Chỉ chuẩn hóa databaseName
         String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
         String dbPassword = databasePassword != null ? databasePassword : "";
@@ -197,20 +200,20 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "\n" +
+                "  name: " + resourceName + "\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  replicas: 2\n" +
                 "  selector:\n" +
                 "    matchLabels:\n" +
-                "      app: " + projectName + "\n" +
+                "      app: " + resourceName + "\n" +
                 "  template:\n" +
                 "    metadata:\n" +
                 "      labels:\n" +
-                "        app: " + projectName + "\n" +
+                "        app: " + resourceName + "\n" +
                 "    spec:\n" +
                 "      containers:\n" +
-                "        - name: " + projectName + "\n" +
+                "        - name: " + resourceName + "\n" +
                 "          image: " + dockerImage + "\n" +
                 "          imagePullPolicy: IfNotPresent\n" +
                 "          env:\n" +
@@ -230,12 +233,12 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "apiVersion: v1\n" +
                 "kind: Service\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-svc\n" +
+                "  name: " + resourceName + "-svc\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +
                 "  selector:\n" +
-                "    app: " + projectName + "\n" +
+                "    app: " + resourceName + "\n" +
                 "  ports:\n" +
                 "    - port: 80\n" +
                 "      targetPort: 3000\n" +
@@ -243,7 +246,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "apiVersion: networking.k8s.io/v1\n" +
                 "kind: Ingress\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-ing\n" +
+                "  name: " + resourceName + "-ing\n" +
                 "  namespace: web\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
@@ -257,7 +260,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "            pathType: Prefix\n" +
                 "            backend:\n" +
                 "              service:\n" +
-                "                name: " + projectName + "-svc\n" +
+                "                name: " + resourceName + "-svc\n" +
                 "                port:\n" +
                 "                  number: 80\n";
     }
@@ -408,20 +411,6 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 .replaceAll("\\s+", "-")
                 .replaceAll("[^a-z0-9-]", "");
 
-        // Validate và xử lý domain name system từ request
-        if (request.getDomainNameSystem() == null || request.getDomainNameSystem().trim().isEmpty()) {
-            throw new RuntimeException("Domain name system không được để trống");
-        }
-        
-        String domainName = request.getDomainNameSystem().trim();
-        
-        // Kiểm tra domain name đã tồn tại chưa (không cho phép trùng)
-        if (projectBackendRepository.existsByDomainNameSystem(domainName)) {
-            throw new RuntimeException("Domain name '" + domainName + "' đã được sử dụng. Vui lòng chọn domain name khác.");
-        }
-        
-        projectEntity.setDomainNameSystem(domainName);
-
         // Lưu thông tin database vào entity (backend sẽ sử dụng thông tin này để kết nối database)
         projectEntity.setDatabaseIp(request.getDatabaseIp());
         projectEntity.setDatabasePort(request.getDatabasePort());
@@ -432,6 +421,12 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         // Tạo UUID để đảm bảo tính duy nhất cho thư mục và file, tránh trùng tên
         String deploymentUuid = UUID.randomUUID().toString();
         System.out.println("[deployBackend] Tạo UUID cho deployment: " + deploymentUuid);
+        // Lưu UUID vào entity để truy vết và dùng đặt tên resource K8s
+        projectEntity.setDeploymentUuid(deploymentUuid);
+
+        // Sử dụng deploymentUuid làm domain cho Ingress và lưu vào entity
+        String domainName = deploymentUuid;
+        projectEntity.setDomainNameSystem(domainName);
 
         // ========== BƯỚC 2: LẤY THÔNG TIN SERVER TỪ DATABASE ==========
         
@@ -482,11 +477,12 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 System.out.println("[deployBackend] Kết nối SSH đến MASTER server thành công");
 
                 // Tạo nội dung YAML file (Deployment + Service + Ingress)
-                String fileName = projectName + ".yaml";
+                // Sử dụng UUID để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
+                String fileName = deploymentUuid + ".yaml";
                 String yamlContent;
                 if ("SPRINGBOOT".equals(framework)) {
                     yamlContent = generateBackendSpringBootYaml(
-                        projectName, 
+                        deploymentUuid, 
                         request.getDockerImage(), 
                         domainName,
                         request.getDatabaseName(),
@@ -498,7 +494,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 } else {
                     // NODEJS
                     yamlContent = generateBackendNodeJsYaml(
-                        projectName, 
+                        deploymentUuid, 
                         request.getDockerImage(), 
                         domainName,
                         request.getDatabaseName(),
@@ -634,11 +630,12 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 System.out.println("[deployBackend] Chuyển sang MASTER server để upload/apply YAML: " + master_server.getIp() + ":" + master_server.getPort());
 
                 // Tạo nội dung YAML file
-                String fileName = projectName + ".yaml";
+                // Sử dụng UUID để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
+                String fileName = deploymentUuid + ".yaml";
                 String yamlContent;
                 if ("SPRINGBOOT".equals(framework)) {
                     yamlContent = generateBackendSpringBootYaml(
-                        projectName, 
+                        deploymentUuid, 
                         imageTag, 
                         domainName,
                         request.getDatabaseName(),
@@ -650,7 +647,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 } else {
                     // NODEJS
                     yamlContent = generateBackendNodeJsYaml(
-                        projectName, 
+                        deploymentUuid, 
                         imageTag, 
                         domainName,
                         request.getDatabaseName(),

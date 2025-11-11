@@ -85,30 +85,32 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
      * Helper method để tạo nội dung YAML Kubernetes cho frontend
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
      * 
-     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateFrontendReactYaml(String projectName, String dockerImage, String domainName) {
+    private String generateFrontendReactYaml(String deploymentUuid, String dockerImage, String domainName) {
+        // K8s Service/Ingress dùng DNS-1035: phải bắt đầu bằng chữ cái -> prefix 'app-'
+        String resourceName = "app-" + deploymentUuid;
         // Tạo YAML với 3 phần: Deployment, Service, Ingress
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "\n" +
+                "  name: " + resourceName + "\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  replicas: 2\n" +  // Số lượng pod replica
                 "  selector:\n" +
                 "    matchLabels:\n" +
-                "      app: " + projectName + "\n" +
+                "      app: " + resourceName + "\n" +
                 "  template:\n" +
                 "    metadata:\n" +
                 "      labels:\n" +
-                "        app: " + projectName + "\n" +
+                "        app: " + resourceName + "\n" +
                 "    spec:\n" +
                 "      containers:\n" +
-                "        - name: " + projectName + "\n" +
+                "        - name: " + resourceName + "\n" +
                 "          image: " + dockerImage + "\n" +
                 "          ports:\n" +
                 "            - containerPort: 80\n" +  // Port container frontend
@@ -116,12 +118,12 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "apiVersion: v1\n" +
                 "kind: Service\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-svc\n" +
+                "  name: " + resourceName + "-svc\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +  // Service type ClusterIP để expose trong cluster
                 "  selector:\n" +
-                "    app: " + projectName + "\n" +
+                "    app: " + resourceName + "\n" +
                 "  ports:\n" +
                 "    - port: 80\n" +  // Port service
                 "      targetPort: 80\n" +  // Port container
@@ -129,7 +131,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "apiVersion: networking.k8s.io/v1\n" +
                 "kind: Ingress\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-ing\n" +
+                "  name: " + resourceName + "-ing\n" +
                 "  namespace: web\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +  // Rewrite path cho nginx ingress
@@ -143,7 +145,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "            pathType: Prefix\n" +
                 "            backend:\n" +
                 "              service:\n" +
-                "                name: " + projectName + "-svc\n" +
+                "                name: " + resourceName + "-svc\n" +
                 "                port:\n" +
                 "                  number: 80\n";
     }
@@ -152,30 +154,31 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
      * Helper method để tạo nội dung YAML Kubernetes cho frontend
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
      * 
-     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateFrontendVueYaml(String projectName, String dockerImage, String domainName) {
+    private String generateFrontendVueYaml(String deploymentUuid, String dockerImage, String domainName) {
+        String resourceName = "app-" + deploymentUuid;
         // Tạo YAML với 3 phần: Deployment, Service, Ingress
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "\n" +
+                "  name: " + resourceName + "\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  replicas: 2\n" +  // Số lượng pod replica
                 "  selector:\n" +
                 "    matchLabels:\n" +
-                "      app: " + projectName + "\n" +
+                "      app: " + resourceName + "\n" +
                 "  template:\n" +
                 "    metadata:\n" +
                 "      labels:\n" +
-                "        app: " + projectName + "\n" +
+                "        app: " + resourceName + "\n" +
                 "    spec:\n" +
                 "      containers:\n" +
-                "        - name: " + projectName + "\n" +
+                "        - name: " + resourceName + "\n" +
                 "          image: " + dockerImage + "\n" +
                 "          ports:\n" +
                 "            - containerPort: 80\n" +  // Port container frontend
@@ -183,12 +186,12 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "apiVersion: v1\n" +
                 "kind: Service\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-svc\n" +
+                "  name: " + resourceName + "-svc\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +  // Service type ClusterIP để expose trong cluster
                 "  selector:\n" +
-                "    app: " + projectName + "\n" +
+                "    app: " + resourceName + "\n" +
                 "  ports:\n" +
                 "    - port: 80\n" +  // Port service
                 "      targetPort: 80\n" +  // Port container
@@ -196,7 +199,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "apiVersion: networking.k8s.io/v1\n" +
                 "kind: Ingress\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-ing\n" +
+                "  name: " + resourceName + "-ing\n" +
                 "  namespace: web\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +  // Rewrite path cho nginx ingress
@@ -210,7 +213,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "            pathType: Prefix\n" +
                 "            backend:\n" +
                 "              service:\n" +
-                "                name: " + projectName + "-svc\n" +
+                "                name: " + resourceName + "-svc\n" +
                 "                port:\n" +
                 "                  number: 80\n";
     }
@@ -219,30 +222,31 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
      * Helper method để tạo nội dung YAML Kubernetes cho frontend
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
      * 
-     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateFrontendAngularYaml(String projectName, String dockerImage, String domainName) {
+    private String generateFrontendAngularYaml(String deploymentUuid, String dockerImage, String domainName) {
+        String resourceName = "app-" + deploymentUuid;
         // Tạo YAML với 3 phần: Deployment, Service, Ingress
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "\n" +
+                "  name: " + resourceName + "\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  replicas: 2\n" +  // Số lượng pod replica
                 "  selector:\n" +
                 "    matchLabels:\n" +
-                "      app: " + projectName + "\n" +
+                "      app: " + resourceName + "\n" +
                 "  template:\n" +
                 "    metadata:\n" +
                 "      labels:\n" +
-                "        app: " + projectName + "\n" +
+                "        app: " + resourceName + "\n" +
                 "    spec:\n" +
                 "      containers:\n" +
-                "        - name: " + projectName + "\n" +
+                "        - name: " + resourceName + "\n" +
                 "          image: " + dockerImage + "\n" +
                 "          ports:\n" +
                 "            - containerPort: 80\n" +  // Port container frontend
@@ -250,12 +254,12 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "apiVersion: v1\n" +
                 "kind: Service\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-svc\n" +
+                "  name: " + resourceName + "-svc\n" +
                 "  namespace: web\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +  // Service type ClusterIP để expose trong cluster
                 "  selector:\n" +
-                "    app: " + projectName + "\n" +
+                "    app: " + resourceName + "\n" +
                 "  ports:\n" +
                 "    - port: 80\n" +  // Port service
                 "      targetPort: 80\n" +  // Port container
@@ -263,7 +267,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "apiVersion: networking.k8s.io/v1\n" +
                 "kind: Ingress\n" +
                 "metadata:\n" +
-                "  name: " + projectName + "-ing\n" +
+                "  name: " + resourceName + "-ing\n" +
                 "  namespace: web\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +  // Rewrite path cho nginx ingress
@@ -277,7 +281,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 "            pathType: Prefix\n" +
                 "            backend:\n" +
                 "              service:\n" +
-                "                name: " + projectName + "-svc\n" +
+                "                name: " + resourceName + "-svc\n" +
                 "                port:\n" +
                 "                  number: 80\n";
     }
@@ -427,23 +431,15 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 .replaceAll("\\s+", "-")
                 .replaceAll("[^a-z0-9-]", "");
 
-        // Validate và xử lý domain name system
-        if (request.getDomainNameSystem() == null || request.getDomainNameSystem().trim().isEmpty()) {
-            throw new RuntimeException("Domain name system không được để trống");
-        }
-        
-        String domainName = request.getDomainNameSystem().trim();
-        
-        // Kiểm tra domain name đã tồn tại chưa (không cho phép trùng)
-        if (projectFrontendRepository.existsByDomainNameSystem(domainName)) {
-            throw new RuntimeException("Domain name '" + domainName + "' đã được sử dụng. Vui lòng chọn domain name khác.");
-        }
-        
-        projectEntity.setDomainNameSystem(domainName);
-
         // Tạo UUID để đảm bảo tính duy nhất cho thư mục và file, tránh trùng tên
         String deploymentUuid = UUID.randomUUID().toString();
         System.out.println("[deployFrontend] Tạo UUID cho deployment: " + deploymentUuid);
+        // Lưu UUID vào entity để truy vết và tránh trùng tên resource trên K8s
+        projectEntity.setDeploymentUuid(deploymentUuid);
+
+        // Sử dụng deploymentUuid làm domain cho Ingress và cũng lưu vào entity
+        String domainName = deploymentUuid;
+        projectEntity.setDomainNameSystem(domainName);
 
         // ========== BƯỚC 2: LẤY THÔNG TIN SERVER TỪ DATABASE ==========
         
@@ -499,14 +495,15 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 System.out.println("[deployFrontend] Kết nối SSH đến MASTER server thành công");
 
                 // Tạo nội dung YAML file (Deployment + Service + Ingress)
-                String fileName = projectName + ".yaml";
+                // Sử dụng UUID để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
+                String fileName = deploymentUuid + ".yaml";
                 String yamlContent = "";
                 if ("REACT".equals(framework)) {
-                    yamlContent = generateFrontendReactYaml(projectName, request.getDockerImage(), domainName);
+                    yamlContent = generateFrontendReactYaml(deploymentUuid, request.getDockerImage(), domainName);
                 } else if ("VUE".equals(framework)) {
-                    yamlContent = generateFrontendVueYaml(projectName, request.getDockerImage(), domainName);
+                    yamlContent = generateFrontendVueYaml(deploymentUuid, request.getDockerImage(), domainName);
                 } else if ("ANGULAR".equals(framework)) {
-                    yamlContent = generateFrontendAngularYaml(projectName, request.getDockerImage(), domainName);
+                    yamlContent = generateFrontendAngularYaml(deploymentUuid, request.getDockerImage(), domainName);
                 }
 
                 // Mở SFTP channel để upload YAML file
@@ -634,14 +631,15 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 System.out.println("[deployFrontend] Chuyển sang MASTER server để upload/apply YAML: " + master_server.getIp() + ":" + master_server.getPort());
 
                 // Tạo nội dung YAML file
-                String fileName = projectName + ".yaml";    
+                // Sử dụng UUID để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
+                String fileName = deploymentUuid + ".yaml";    
                 String yamlContent = "";
                 if ("REACT".equals(framework)) {
-                    yamlContent = generateFrontendReactYaml(projectName, imageTag, domainName);
+                    yamlContent = generateFrontendReactYaml(deploymentUuid, imageTag, domainName);
                 } else if ("VUE".equals(framework)) {
-                    yamlContent = generateFrontendVueYaml(projectName, imageTag, domainName);
+                    yamlContent = generateFrontendVueYaml(deploymentUuid, imageTag, domainName);
                 } else if ("ANGULAR".equals(framework)) {
-                    yamlContent = generateFrontendAngularYaml(projectName, imageTag, domainName);
+                    yamlContent = generateFrontendAngularYaml(deploymentUuid, imageTag, domainName);
                 }
 
                 // Kết nối SSH đến MASTER server

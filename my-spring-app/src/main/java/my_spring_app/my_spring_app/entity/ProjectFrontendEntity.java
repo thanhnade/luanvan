@@ -18,6 +18,9 @@ public class ProjectFrontendEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "deployment_uuid", nullable = false)
+    private String deploymentUuid;
+
     @Column(name = "project_name", nullable = false)
     private String projectName;
 

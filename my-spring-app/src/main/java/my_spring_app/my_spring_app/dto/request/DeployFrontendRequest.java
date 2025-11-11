@@ -24,9 +24,6 @@ public class DeployFrontendRequest {
 
     private MultipartFile file; // deploymentType = FILE
 
-    @NotBlank(message = "Domain name system không được để trống")
-    private String domainNameSystem; // domain name system
-
     @NotBlank(message = "Username không được để trống")
     private String username;
 }

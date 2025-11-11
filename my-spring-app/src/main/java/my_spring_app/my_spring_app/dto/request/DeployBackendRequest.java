@@ -38,9 +38,6 @@ public class DeployBackendRequest {
     @NotBlank(message = "Database password không được để trống")
     private String databasePassword; // database password
 
-    @NotBlank(message = "Domain name system không được để trống")
-    private String domainNameSystem; // domain name system
-
     @NotBlank(message = "Username không được để trống")
     private String username; // username
 
