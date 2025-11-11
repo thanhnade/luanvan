@@ -1,0 +1,743 @@
+package my_spring_app.my_spring_app.service.impl;
+
+import com.jcraft.jsch.*;
+import my_spring_app.my_spring_app.dto.reponse.DeployBackendResponse;
+import my_spring_app.my_spring_app.dto.reponse.ListProjectBackendResponse;
+import my_spring_app.my_spring_app.dto.request.DeployBackendRequest;
+import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
+import my_spring_app.my_spring_app.entity.ServerEntity;
+import my_spring_app.my_spring_app.entity.UserEntity;
+import my_spring_app.my_spring_app.repository.ProjectBackendRepository;
+import my_spring_app.my_spring_app.repository.ServerRepository;
+import my_spring_app.my_spring_app.repository.UserRepository;
+import my_spring_app.my_spring_app.service.ProjectBackendService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Optional;
+import java.util.Properties;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+/**
+ * Service implementation cho ProjectBackend
+ * Xử lý các nghiệp vụ liên quan đến triển khai backend projects
+ */
+
+@Service
+@Transactional
+public class ProjectBackendServiceImpl implements ProjectBackendService {
+
+    // Username DockerHub để push images
+    @Value("${app.vars.dockerhub_username}")
+    private String dockerhub_username;
+
+    // Repository để truy vấn ProjectBackend entities
+    @Autowired
+    private ProjectBackendRepository projectBackendRepository;
+
+    // Repository để truy vấn User entities
+    @Autowired
+    private UserRepository userRepository;
+
+    // Repository để truy vấn Server entities (MASTER, DOCKER, DATABASE)
+    @Autowired
+    private ServerRepository serverRepository;
+
+    /**
+     * Lấy tất cả project backend từ database
+     * @return Danh sách tất cả project backend đã được chuyển đổi sang DTO response
+     */
+    @Override
+    public ListProjectBackendResponse getAllProjectBackends() {
+        // Lấy tất cả entities từ database
+        List<ProjectBackendEntity> entities = projectBackendRepository.findAll();
+        
+        // Chuyển đổi entities sang DTO items
+        List<ListProjectBackendResponse.ProjectBackendItem> items = entities.stream()
+                .map(entity -> {
+                    // Tạo DTO item và map các thuộc tính từ entity
+                    ListProjectBackendResponse.ProjectBackendItem item = new ListProjectBackendResponse.ProjectBackendItem();
+                    item.setId(entity.getId());
+                    item.setProjectName(entity.getProjectName());
+                    item.setFramework(entity.getFrameworkType());
+                    item.setDeploymentMethod(entity.getDeploymentMethod());
+                    item.setDomainNameSystem(entity.getDomainNameSystem());
+                    item.setDockerImage(entity.getDockerImage());
+                    item.setSourcePath(entity.getSourcePath());
+                    item.setDeploymentPath(entity.getDeploymentPath()); 
+                    item.setDatabaseIp(entity.getDatabaseIp());
+                    item.setDatabasePort(entity.getDatabasePort());
+                    item.setDatabaseName(entity.getDatabaseName());
+                    item.setDatabaseUsername(entity.getDatabaseUsername());
+                    item.setDatabasePassword(entity.getDatabasePassword());
+                    item.setStatus(entity.getStatus());
+                    item.setCreatedAt(entity.getCreatedAt());
+                    return item;
+                })
+                .collect(Collectors.toList());
+
+        // Trả về response chứa danh sách items
+        return new ListProjectBackendResponse(items);
+    }
+
+    /**
+     * Helper method để tạo nội dung YAML Kubernetes cho backend Spring Boot
+     * Tạo file YAML bao gồm: Deployment, Service, và Ingress
+     * 
+     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param dockerImage Docker image tag để deploy
+     * @param domainName Domain name để cấu hình Ingress
+     * @param databaseName Database name
+     * @param databaseIp Database IP address
+     * @param databasePort Database port
+     * @param databaseUsername Database username
+     * @param databasePassword Database password (có thể null)
+     * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
+     */
+    private String generateBackendSpringBootYaml(String projectName, String dockerImage, String domainName, 
+                                                  String databaseName, String databaseIp, int databasePort, 
+                                                  String databaseUsername, String databasePassword) {
+        // Chỉ chuẩn hóa databaseName, không chuẩn hóa databaseIp, databaseUsername, databasePassword
+        String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
+        // Sử dụng trực tiếp databaseIp, databaseUsername, databasePassword từ request (có thể chứa ký tự đặc biệt)
+        String dbPassword = databasePassword != null ? databasePassword : "";
+        
+        return "apiVersion: apps/v1\n" +
+                "kind: Deployment\n" +
+                "metadata:\n" +
+                "  name: " + projectName + "\n" +
+                "  namespace: web\n" +
+                "spec:\n" +
+                "  replicas: 2\n" +
+                "  selector:\n" +
+                "    matchLabels:\n" +
+                "      app: " + projectName + "\n" +
+                "  template:\n" +
+                "    metadata:\n" +
+                "      labels:\n" +
+                "        app: " + projectName + "\n" +
+                "    spec:\n" +
+                "      containers:\n" +
+                "        - name: " + projectName + "\n" +
+                "          image: " + dockerImage + "\n" +
+                "          imagePullPolicy: IfNotPresent\n" +
+                "          env:\n" +
+                "            - name: SPRING_DATASOURCE_URL\n" +
+                "              value: 'jdbc:mysql://" + databaseIp + ":" + databasePort + "/" + dbName + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC'\n" +
+                "            - name: SPRING_DATASOURCE_USERNAME\n" +
+                "              value: '" + databaseUsername + "'\n" +
+                "            - name: SPRING_DATASOURCE_PASSWORD\n" +
+                "              value: '" + dbPassword + "'\n" +
+                "          ports:\n" +
+                "            - containerPort: 8080\n" +
+                "---\n" +
+                "apiVersion: v1\n" +
+                "kind: Service\n" +
+                "metadata:\n" +
+                "  name: " + projectName + "-svc\n" +
+                "  namespace: web\n" +
+                "spec:\n" +
+                "  type: ClusterIP\n" +
+                "  selector:\n" +
+                "    app: " + projectName + "\n" +
+                "  ports:\n" +
+                "    - port: 80\n" +
+                "      targetPort: 8080\n" +
+                "---\n" +
+                "apiVersion: networking.k8s.io/v1\n" +
+                "kind: Ingress\n" +
+                "metadata:\n" +
+                "  name: " + projectName + "-ing\n" +
+                "  namespace: web\n" +
+                "  annotations:\n" +
+                "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
+                "spec:\n" +
+                "  ingressClassName: nginx\n" +
+                "  rules:\n" +
+                "    - host: " + domainName + "\n" +
+                "      http:\n" +
+                "        paths:\n" +
+                "          - path: /\n" +
+                "            pathType: Prefix\n" +
+                "            backend:\n" +
+                "              service:\n" +
+                "                name: " + projectName + "-svc\n" +
+                "                port:\n" +
+                "                  number: 80\n";
+    }
+
+    /**
+     * Helper method để tạo nội dung YAML Kubernetes cho backend Node.js
+     * Tạo file YAML bao gồm: Deployment, Service, và Ingress
+     * 
+     * @param projectName Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     * @param dockerImage Docker image tag để deploy
+     * @param domainName Domain name để cấu hình Ingress
+     * @param databaseName Database name
+     * @param databaseIp Database IP address
+     * @param databasePort Database port
+     * @param databaseUsername Database username
+     * @param databasePassword Database password (có thể null)
+     * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
+     */
+    private String generateBackendNodeJsYaml(String projectName, String dockerImage, String domainName,
+                                             String databaseName, String databaseIp, int databasePort,
+                                             String databaseUsername, String databasePassword) {
+        // Chỉ chuẩn hóa databaseName
+        String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
+        String dbPassword = databasePassword != null ? databasePassword : "";
+        
+        return "apiVersion: apps/v1\n" +
+                "kind: Deployment\n" +
+                "metadata:\n" +
+                "  name: " + projectName + "\n" +
+                "  namespace: web\n" +
+                "spec:\n" +
+                "  replicas: 2\n" +
+                "  selector:\n" +
+                "    matchLabels:\n" +
+                "      app: " + projectName + "\n" +
+                "  template:\n" +
+                "    metadata:\n" +
+                "      labels:\n" +
+                "        app: " + projectName + "\n" +
+                "    spec:\n" +
+                "      containers:\n" +
+                "        - name: " + projectName + "\n" +
+                "          image: " + dockerImage + "\n" +
+                "          imagePullPolicy: IfNotPresent\n" +
+                "          env:\n" +
+                "            - name: DB_HOST\n" +
+                "              value: '" + databaseIp + "'\n" +
+                "            - name: DB_PORT\n" +
+                "              value: '" + databasePort + "'\n" +
+                "            - name: DB_NAME\n" +
+                "              value: '" + dbName + "'\n" +
+                "            - name: DB_USERNAME\n" +
+                "              value: '" + databaseUsername + "'\n" +
+                "            - name: DB_PASSWORD\n" +
+                "              value: '" + dbPassword + "'\n" +
+                "          ports:\n" +
+                "            - containerPort: 3000\n" +
+                "---\n" +
+                "apiVersion: v1\n" +
+                "kind: Service\n" +
+                "metadata:\n" +
+                "  name: " + projectName + "-svc\n" +
+                "  namespace: web\n" +
+                "spec:\n" +
+                "  type: ClusterIP\n" +
+                "  selector:\n" +
+                "    app: " + projectName + "\n" +
+                "  ports:\n" +
+                "    - port: 80\n" +
+                "      targetPort: 3000\n" +
+                "---\n" +
+                "apiVersion: networking.k8s.io/v1\n" +
+                "kind: Ingress\n" +
+                "metadata:\n" +
+                "  name: " + projectName + "-ing\n" +
+                "  namespace: web\n" +
+                "  annotations:\n" +
+                "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
+                "spec:\n" +
+                "  ingressClassName: nginx\n" +
+                "  rules:\n" +
+                "    - host: " + domainName + "\n" +
+                "      http:\n" +
+                "        paths:\n" +
+                "          - path: /\n" +
+                "            pathType: Prefix\n" +
+                "            backend:\n" +
+                "              service:\n" +
+                "                name: " + projectName + "-svc\n" +
+                "                port:\n" +
+                "                  number: 80\n";
+    }
+
+    /**
+     * Helper method để thực thi lệnh qua SSH và trả về output
+     * @param session SSH session đã kết nối
+     * @param command Lệnh cần thực thi
+     * @return Kết quả output của lệnh
+     * @throws Exception Nếu có lỗi khi thực thi lệnh
+     */
+    private String executeCommand(Session session, String command) throws Exception {
+        return executeCommand(session, command, false);
+    }
+
+    /**
+     * Helper method để thực thi lệnh qua SSH và trả về output
+     * @param session SSH session đã kết nối
+     * @param command Lệnh cần thực thi
+     * @param ignoreNonZeroExit Nếu true, sẽ không throw exception khi lệnh trả về exit status != 0
+     * @return Kết quả output của lệnh
+     * @throws Exception Nếu có lỗi khi thực thi lệnh và ignoreNonZeroExit = false
+     */
+    private String executeCommand(Session session, String command, boolean ignoreNonZeroExit) throws Exception {
+        ChannelExec channelExec = null;
+
+        try {
+            // Mở channel thực thi lệnh (exec) từ SSH session
+            Channel channel = session.openChannel("exec");
+            channelExec = (ChannelExec) channel;
+
+            // Thiết lập lệnh cần thực thi
+            channelExec.setCommand(command);
+            // Chuyển hướng error stream ra console để dễ debug
+            channelExec.setErrStream(System.err);
+
+            // Lấy input stream để đọc output từ lệnh
+            InputStream inputStream = channelExec.getInputStream();
+            // Kết nối channel để bắt đầu thực thi lệnh
+            channelExec.connect();
+
+            // Khởi tạo biến để lưu output
+            StringBuilder output = new StringBuilder();
+            byte[] buffer = new byte[1024]; // Buffer để đọc dữ liệu
+
+            // Vòng lặp để đọc output từ lệnh
+            while (true) {
+                // Đọc tất cả dữ liệu có sẵn trong input stream
+                while (inputStream.available() > 0) {
+                    int bytesRead = inputStream.read(buffer, 0, 1024);
+                    // Nếu đọc hết dữ liệu thì dừng
+                    if (bytesRead < 0) {
+                        break;
+                    }
+                    // Chuyển đổi bytes sang string và thêm vào output
+                    output.append(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
+                }
+
+                // Kiểm tra xem channel đã đóng chưa (lệnh đã thực thi xong)
+                if (channelExec.isClosed()) {
+                    // Nếu vẫn còn dữ liệu trong stream, tiếp tục đọc
+                    if (inputStream.available() > 0) {
+                        continue;
+                    }
+                    // Nếu không còn dữ liệu và channel đã đóng thì thoát vòng lặp
+                    break;
+                }
+
+                // Nghỉ 100ms trước khi kiểm tra lại để tránh chiếm CPU
+                try {
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    // Bỏ qua lỗi sleep
+                }
+            }
+
+            // Lấy exit status của lệnh (0 = thành công, != 0 = lỗi)
+            int exitStatus = channelExec.getExitStatus();
+            // Chuyển output sang string và loại bỏ khoảng trắng đầu cuối
+            String result = output.toString().trim();
+
+            // Xử lý trường hợp lệnh thực thi không thành công (exit status != 0)
+            if (exitStatus != 0) {
+                if (ignoreNonZeroExit) {
+                    // Nếu được phép bỏ qua lỗi, chỉ in ra log
+                    System.err.println("[executeCommand] Command exited with status: " + exitStatus + ". Output: " + result + ". Command: " + command);
+                } else {
+                    // Nếu không được bỏ qua, throw exception với thông báo lỗi
+                    throw new RuntimeException("Command exited with status: " + exitStatus + ". Output: " + result);
+                }
+            }
+
+            // Trả về kết quả output của lệnh
+            return result;
+
+        } finally {
+            // Đảm bảo đóng channel sau khi thực thi xong để giải phóng tài nguyên
+            if (channelExec != null && channelExec.isConnected()) {
+                channelExec.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Triển khai backend project lên Kubernetes cluster
+     * Hỗ trợ 2 phương thức deploy: DOCKER (từ image có sẵn) và FILE (từ file zip)
+     * Backend sẽ sử dụng thông tin database từ request để kết nối, không tự động tạo database
+     * 
+     * @param request Thông tin request để deploy backend project
+     * @return Response chứa thông tin URL, status và domain name của project đã deploy
+     * @throws RuntimeException Nếu có lỗi trong quá trình deploy
+     */
+    @Override
+    public DeployBackendResponse deploy(DeployBackendRequest request) {
+        System.out.println("[deployBackend] Bắt đầu triển khai backend project");
+
+        // ========== BƯỚC 1: VALIDATE VÀ CHUẨN BỊ DỮ LIỆU ==========
+        
+        // Tìm user theo username
+        Optional<UserEntity> userOptional = userRepository.findByUsername(request.getUsername());
+        if (userOptional.isEmpty()) {
+            throw new RuntimeException("User không tồn tại");
+        }
+        UserEntity user = userOptional.get();
+
+        // Validate deployment type (chỉ hỗ trợ DOCKER hoặc FILE)
+        if (!"DOCKER".equalsIgnoreCase(request.getDeploymentType()) && 
+            !"FILE".equalsIgnoreCase(request.getDeploymentType())) {
+            throw new RuntimeException("Deployment type không hợp lệ. Chỉ hỗ trợ DOCKER hoặc FILE");
+        }
+
+        // Validate framework (chỉ hỗ trợ SPRINGBOOT, NODEJS)
+        String framework = request.getFrameworkType().toUpperCase();
+        if (!"SPRINGBOOT".equals(framework) && !"NODEJS".equals(framework)) {
+            throw new RuntimeException("Framework không hợp lệ. Chỉ hỗ trợ SPRINGBOOT, NODEJS");
+        }
+
+        // Tạo ProjectBackendEntity và thiết lập các thuộc tính cơ bản
+        ProjectBackendEntity projectEntity = new ProjectBackendEntity();
+        projectEntity.setProjectName(request.getProjectName());
+        projectEntity.setFrameworkType(framework);
+        projectEntity.setDeploymentMethod(request.getDeploymentType().toUpperCase());
+        projectEntity.setStatus("BUILDING"); // Trạng thái ban đầu là BUILDING
+        projectEntity.setUser(user);
+
+        // Chuẩn hóa tên project: chuyển sang lowercase, thay khoảng trắng bằng dấu gạch ngang, loại bỏ ký tự đặc biệt
+        String projectName = request.getProjectName().toLowerCase()
+                .replaceAll("\\s+", "-")
+                .replaceAll("[^a-z0-9-]", "");
+
+        // Validate và xử lý domain name system từ request
+        if (request.getDomainNameSystem() == null || request.getDomainNameSystem().trim().isEmpty()) {
+            throw new RuntimeException("Domain name system không được để trống");
+        }
+        
+        String domainName = request.getDomainNameSystem().trim();
+        
+        // Kiểm tra domain name đã tồn tại chưa (không cho phép trùng)
+        if (projectBackendRepository.existsByDomainNameSystem(domainName)) {
+            throw new RuntimeException("Domain name '" + domainName + "' đã được sử dụng. Vui lòng chọn domain name khác.");
+        }
+        
+        projectEntity.setDomainNameSystem(domainName);
+
+        // Lưu thông tin database vào entity (backend sẽ sử dụng thông tin này để kết nối database)
+        projectEntity.setDatabaseIp(request.getDatabaseIp());
+        projectEntity.setDatabasePort(request.getDatabasePort());
+        projectEntity.setDatabaseName(request.getDatabaseName());
+        projectEntity.setDatabaseUsername(request.getDatabaseUsername());
+        projectEntity.setDatabasePassword(request.getDatabasePassword()); // Có thể null
+
+        // Tạo UUID để đảm bảo tính duy nhất cho thư mục và file, tránh trùng tên
+        String deploymentUuid = UUID.randomUUID().toString();
+        System.out.println("[deployBackend] Tạo UUID cho deployment: " + deploymentUuid);
+
+        // ========== BƯỚC 2: LẤY THÔNG TIN SERVER TỪ DATABASE ==========
+        
+        // Lấy thông tin các server từ database: MASTER (Kubernetes cluster), DOCKER (build/push images)
+        Optional<ServerEntity> masterServerOptional = serverRepository.findByRole("MASTER");
+        Optional<ServerEntity> dockerServerOptional = serverRepository.findByRole("DOCKER");
+
+        // Validate các server bắt buộc
+        if (masterServerOptional.isEmpty()) {
+            throw new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống.");
+        }
+        if (dockerServerOptional.isEmpty()) {
+            throw new RuntimeException("Không tìm thấy server DOCKER. Vui lòng cấu hình server DOCKER trong hệ thống.");
+        }
+
+        ServerEntity master_server = masterServerOptional.get();
+        ServerEntity docker_server = dockerServerOptional.get();
+
+        // Khởi tạo các biến để quản lý SSH/SFTP connections
+        Session session = null;           // SSH session đến DOCKER server (dùng cho FILE deployment)
+        ChannelSftp sftp = null;          // SFTP channel đến DOCKER server
+        Session clusterSession = null;    // SSH session đến MASTER server (Kubernetes cluster)
+        ChannelSftp sftpYaml = null;      // SFTP channel đến MASTER server để upload YAML
+
+        try {
+            // ========== BƯỚC 3: XỬ LÝ DEPLOYMENT THEO PHƯƠNG THỨC ==========
+            
+            if ("DOCKER".equalsIgnoreCase(request.getDeploymentType())) {
+                // ========== PHƯƠNG THỨC 1: DEPLOY TỪ DOCKER IMAGE CÓ SẴN ==========
+                
+                // Validate Docker image
+                if (request.getDockerImage() == null || request.getDockerImage().trim().isEmpty()) {
+                    throw new RuntimeException("Docker image không được để trống khi deployment type là DOCKER");
+                }
+
+                projectEntity.setDockerImage(request.getDockerImage());
+
+                // Kết nối SSH đến MASTER server (Kubernetes cluster)
+                System.out.println("[deployBackend] Đang kết nối đến MASTER server: " + master_server.getIp() + ":" + master_server.getPort());
+                JSch jsch = new JSch();
+                clusterSession = jsch.getSession(master_server.getUsername(), master_server.getIp(), master_server.getPort());
+                clusterSession.setPassword(master_server.getPassword());
+                Properties config = new Properties();
+                config.put("StrictHostKeyChecking", "no"); // Không kiểm tra host key
+                clusterSession.setConfig(config);
+                clusterSession.setTimeout(7000);
+                clusterSession.connect();
+                System.out.println("[deployBackend] Kết nối SSH đến MASTER server thành công");
+
+                // Tạo nội dung YAML file (Deployment + Service + Ingress)
+                String fileName = projectName + ".yaml";
+                String yamlContent;
+                if ("SPRINGBOOT".equals(framework)) {
+                    yamlContent = generateBackendSpringBootYaml(
+                        projectName, 
+                        request.getDockerImage(), 
+                        domainName,
+                        request.getDatabaseName(),
+                        request.getDatabaseIp(),
+                        request.getDatabasePort(),
+                        request.getDatabaseUsername(),
+                        request.getDatabasePassword()
+                    );
+                } else {
+                    // NODEJS
+                    yamlContent = generateBackendNodeJsYaml(
+                        projectName, 
+                        request.getDockerImage(), 
+                        domainName,
+                        request.getDatabaseName(),
+                        request.getDatabaseIp(),
+                        request.getDatabasePort(),
+                        request.getDatabaseUsername(),
+                        request.getDatabasePassword()
+                    );
+                }
+
+                // Mở SFTP channel để upload YAML file
+                Channel sftpYamlCh = clusterSession.openChannel("sftp");
+                sftpYamlCh.connect();
+                sftpYaml = (ChannelSftp) sftpYamlCh;
+                
+                // Tạo thư mục đích với UUID để tránh trùng tên: /home/<master_username>/uploads/<username>/backend/<UUID>
+                String yamlRemoteDir = "/home/" + master_server.getUsername() + "/uploads/" + user.getUsername() + "/backend/" + deploymentUuid;
+                System.out.println("[deployBackend] Tạo/cd thư mục YAML: " + yamlRemoteDir);
+                String[] yamlDirParts = yamlRemoteDir.split("/");
+                String yamlCur = "";
+                for (String p : yamlDirParts) {
+                    if (p == null || p.isBlank()) continue;
+                    yamlCur += "/" + p;
+                    try {
+                        sftpYaml.cd(yamlCur); // Thử chuyển vào thư mục
+                    } catch (Exception e) {
+                        sftpYaml.mkdir(yamlCur); // Nếu không tồn tại thì tạo mới
+                        sftpYaml.cd(yamlCur);
+                    }
+                }
+                
+                // Upload YAML file lên server
+                InputStream yamlStream = new ByteArrayInputStream(yamlContent.getBytes(StandardCharsets.UTF_8));
+                String yamlRemotePath = yamlRemoteDir + "/" + fileName;
+                sftpYaml.put(yamlStream, yamlRemotePath);
+                System.out.println("[deployBackend] Đã upload YAML file: " + yamlRemotePath);
+
+                // Lưu deploymentPath (đường dẫn YAML trên MASTER server)
+                // Với DOCKER method: không có sourcePath (null)
+                projectEntity.setSourcePath(null);
+                projectEntity.setDeploymentPath(yamlRemotePath);
+
+                // Apply YAML file vào Kubernetes cluster bằng kubectl
+                System.out.println("[deployBackend] Đang apply YAML: kubectl apply -f " + yamlRemotePath);
+                executeCommand(clusterSession, "kubectl apply -f '" + yamlRemotePath + "'");
+
+            } else if ("FILE".equalsIgnoreCase(request.getDeploymentType())) {
+                // ========== PHƯƠNG THỨC 2: DEPLOY TỪ FILE ZIP ==========
+                
+                // Validate file upload
+                if (request.getFile() == null || request.getFile().isEmpty()) {
+                    throw new RuntimeException("File upload không được để trống khi deployment type là FILE");
+                }
+
+                System.out.println("[deployBackend] Kết nối SSH tới DOCKER server: " + docker_server.getIp() + ":" + docker_server.getPort());
+
+                // Bước 1: Kết nối SSH đến DOCKER server (để build và push image)
+                JSch jsch = new JSch();
+                session = jsch.getSession(docker_server.getUsername(), docker_server.getIp(), docker_server.getPort());
+                session.setPassword(docker_server.getPassword());
+                Properties cfg = new Properties();
+                cfg.put("StrictHostKeyChecking", "no");
+                session.setConfig(cfg);
+                session.setTimeout(7000);
+                session.connect();
+                System.out.println("[deployBackend] Đã kết nối SSH DOCKER server thành công");
+
+                // Bước 2: Upload file .zip lên DOCKER server
+                Channel ch = session.openChannel("sftp");
+                ch.connect();
+                sftp = (ChannelSftp) ch;
+
+                // Tạo thư mục đích trên DOCKER server với UUID để tránh trùng tên: /home/<docker_username>/uploads/<username>/backend/<UUID>
+                String remoteBase = "/home/" + docker_server.getUsername() + "/uploads/" + user.getUsername() + "/backend/" + deploymentUuid;
+                System.out.println("[deployBackend] Tạo/cd thư mục đích: " + remoteBase);
+                // Đảm bảo thư mục tồn tại (tạo từng cấp thư mục nếu chưa có)
+                String[] parts = remoteBase.split("/");
+                String cur = "";
+                for (String p : parts) {
+                    if (p == null || p.isBlank()) continue;
+                    cur += "/" + p;
+                    try {
+                        sftp.cd(cur);
+                    } catch (Exception e) {
+                        sftp.mkdir(cur);
+                        sftp.cd(cur);
+                    }
+                }
+
+                // Tạo tên file an toàn (loại bỏ ký tự đặc biệt)
+                String originalName = request.getFile().getOriginalFilename();
+                String safeName = originalName != null ? originalName.replaceAll("[^a-zA-Z0-9._-]", "_") : (projectName + ".zip");
+                String remoteZipPath = remoteBase + "/" + safeName;
+                System.out.println("[deployBackend] Upload file lên: " + remoteZipPath);
+                sftp.put(request.getFile().getInputStream(), remoteZipPath);
+                
+                // Lưu sourcePath (đường dẫn file zip trên DOCKER server)
+                projectEntity.setSourcePath(remoteZipPath);
+
+                // Bước 3: Giải nén file .zip trên DOCKER server
+                String unzipCmd = "cd " + remoteBase + " && unzip -o '" + safeName + "'";
+                System.out.println("[deployBackend] Giải nén: " + unzipCmd);
+                executeCommand(session, unzipCmd);
+
+                // Bước 4: Build và push Docker image
+                // Xác định thư mục project sau khi giải nén
+                String extractedDir = safeName.endsWith(".zip") ? safeName.substring(0, safeName.length() - 4) : safeName;
+                String projectDir = remoteBase + "/" + extractedDir;
+
+                // Kiểm tra Dockerfile có tồn tại không
+                String checkDockerfile = "test -f '" + projectDir + "/Dockerfile' && echo OK || echo NO";
+                System.out.println("[deployBackend] Kiểm tra Dockerfile: " + checkDockerfile);
+                String check = executeCommand(session, checkDockerfile);
+                if (!"OK".equals(check.trim())) {
+                    throw new RuntimeException("Không tìm thấy Dockerfile trong gói source đã giải nén");
+                }
+
+                // Build Docker image từ Dockerfile
+                String imageTag = dockerhub_username + "/" + projectName + ":latest";
+                String buildCmd = "cd '" + projectDir + "' && docker build -t '" + imageTag + "' .";
+                System.out.println("[deployBackend] Docker build: " + buildCmd);
+                executeCommand(session, buildCmd);
+                
+                // Push image lên DockerHub
+                String pushCmd = "docker push '" + imageTag + "'";
+                System.out.println("[deployBackend] Docker push: " + pushCmd);
+                executeCommand(session, pushCmd);
+
+                projectEntity.setDockerImage(imageTag); // Lưu image tag vào database
+
+                // Bước 5: Tạo YAML và apply lên Kubernetes cluster (MASTER server)
+                System.out.println("[deployBackend] Chuyển sang MASTER server để upload/apply YAML: " + master_server.getIp() + ":" + master_server.getPort());
+
+                // Tạo nội dung YAML file
+                String fileName = projectName + ".yaml";
+                String yamlContent;
+                if ("SPRINGBOOT".equals(framework)) {
+                    yamlContent = generateBackendSpringBootYaml(
+                        projectName, 
+                        imageTag, 
+                        domainName,
+                        request.getDatabaseName(),
+                        request.getDatabaseIp(),
+                        request.getDatabasePort(),
+                        request.getDatabaseUsername(),
+                        request.getDatabasePassword()
+                    );
+                } else {
+                    // NODEJS
+                    yamlContent = generateBackendNodeJsYaml(
+                        projectName, 
+                        imageTag, 
+                        domainName,
+                        request.getDatabaseName(),
+                        request.getDatabaseIp(),
+                        request.getDatabasePort(),
+                        request.getDatabaseUsername(),
+                        request.getDatabasePassword()
+                    );
+                }
+
+                // Kết nối SSH đến MASTER server
+                JSch jschCluster = new JSch();
+                clusterSession = jschCluster.getSession(master_server.getUsername(), master_server.getIp(), master_server.getPort());
+                clusterSession.setPassword(master_server.getPassword());
+                Properties cfgCluster = new Properties();
+                cfgCluster.put("StrictHostKeyChecking", "no");
+                clusterSession.setConfig(cfgCluster);
+                clusterSession.setTimeout(7000);
+                clusterSession.connect();
+                System.out.println("[deployBackend] Kết nối SSH tới MASTER server thành công");
+
+                // Mở SFTP channel để upload YAML file
+                Channel sftpYamlCh = clusterSession.openChannel("sftp");
+                sftpYamlCh.connect();
+                sftpYaml = (ChannelSftp) sftpYamlCh;
+                
+                // Tạo thư mục đích trên MASTER server với UUID để tránh trùng tên: /home/<master_username>/uploads/<username>/backend/<UUID>
+                String yamlRemoteDir = "/home/" + master_server.getUsername() + "/uploads/" + user.getUsername() + "/backend/" + deploymentUuid;
+                System.out.println("[deployBackend] Tạo/cd thư mục YAML: " + yamlRemoteDir);
+                String[] yamlDirParts = yamlRemoteDir.split("/");
+                String yamlCur = "";
+                for (String p : yamlDirParts) {
+                    if (p == null || p.isBlank()) continue;
+                    yamlCur += "/" + p;
+                    try {
+                        sftpYaml.cd(yamlCur);
+                    } catch (Exception e) {
+                        sftpYaml.mkdir(yamlCur);
+                        sftpYaml.cd(yamlCur);
+                    }
+                }
+                
+                // Upload YAML file lên MASTER server
+                InputStream yamlStream = new ByteArrayInputStream(yamlContent.getBytes(StandardCharsets.UTF_8));
+                String yamlRemotePath = yamlRemoteDir + "/" + fileName;
+                sftpYaml.put(yamlStream, yamlRemotePath);
+                System.out.println("[deployBackend] Upload YAML: " + yamlRemotePath);
+
+                // Lưu deploymentPath (đường dẫn YAML trên MASTER server)
+                // Với FILE method: đã có sourcePath (đã set ở trên), giờ set thêm deploymentPath
+                projectEntity.setDeploymentPath(yamlRemotePath);
+
+                // Apply YAML file vào Kubernetes cluster
+                System.out.println("[deployBackend] Đang apply YAML: kubectl apply -f " + yamlRemotePath);
+                executeCommand(clusterSession, "kubectl apply -f '" + yamlRemotePath + "'");
+            }
+
+            // ========== BƯỚC 4: CẬP NHẬT TRẠNG THÁI VÀ TRẢ VỀ KẾT QUẢ ==========
+            
+            // Cập nhật trạng thái project thành RUNNING
+            projectEntity.setStatus("RUNNING");
+            projectBackendRepository.save(projectEntity);
+            System.out.println("[deployBackend] Hoàn tất triển khai backend, projectName=" + projectName + ", domain=" + domainName);
+
+            // Tạo response và trả về
+            DeployBackendResponse response = new DeployBackendResponse();
+            response.setUrl("http://" + domainName);
+            response.setStatus(projectEntity.getStatus());
+            response.setDomainNameSystem(domainName);
+            return response;
+
+        } catch (Exception ex) {
+            // ========== XỬ LÝ LỖI ==========
+            System.err.println("[deployBackend] Lỗi: " + ex.getMessage());
+            ex.printStackTrace();
+            // Cập nhật trạng thái project thành ERROR
+            projectEntity.setStatus("ERROR");
+            projectBackendRepository.save(projectEntity);
+            throw new RuntimeException("Lỗi khi triển khai backend: " + ex.getMessage(), ex);
+        } finally {
+            // ========== DỌN DẸP TÀI NGUYÊN ==========
+            // Đảm bảo đóng tất cả các kết nối SSH/SFTP để giải phóng tài nguyên
+            if (sftp != null && sftp.isConnected()) sftp.disconnect();
+            if (session != null && session.isConnected()) session.disconnect();
+            if (sftpYaml != null && sftpYaml.isConnected()) sftpYaml.disconnect();
+            if (clusterSession != null && clusterSession.isConnected()) clusterSession.disconnect();
+            System.out.println("[deployBackend] Đã đóng các kết nối SSH/SFTP");
+        }
+    }
+}
+

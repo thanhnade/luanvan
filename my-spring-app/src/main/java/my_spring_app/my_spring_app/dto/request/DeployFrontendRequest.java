@@ -1,0 +1,33 @@
+package my_spring_app.my_spring_app.dto.request;
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.web.multipart.MultipartFile;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class DeployFrontendRequest {
+
+    @NotBlank(message = "Project name không được để trống")
+    private String projectName;
+
+    @NotBlank(message = "Framework không được để trống")
+    private String framework; // REACT, VUE, ANGULAR
+
+    @NotBlank(message = "Deployment method không được để trống")
+    private String deploymentMethod; // DOCKER, FILE
+
+    private String dockerImage; // docker image (khi deploymentMethod = DOCKER)
+
+    // File nén (.zip) người dùng upload khi deploymentMethod = FILE
+    private MultipartFile file;
+
+    @NotBlank(message = "Domain name system không được để trống")
+    private String domainNameSystem; // domain name system
+
+    @NotBlank(message = "Username không được để trống")
+    private String username;
+}

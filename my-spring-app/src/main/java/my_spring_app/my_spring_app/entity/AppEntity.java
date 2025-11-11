@@ -23,10 +23,10 @@ public class AppEntity {
     private String name;
 
     @Column(name = "framework_type", nullable = false)
-    private String frameworkType; // react, vue, angular, spring, node
+    private String frameworkType; // REACT, VUE, ANGULAR, SPRING, NODE
 
     @Column(name = "deployment_type", nullable = false)
-    private String deploymentType; // docker, file
+    private String deploymentType; // DOCKER, FILE
 
     @Column(name = "docker_image", nullable = true)
     private String dockerImage = null;
@@ -38,7 +38,7 @@ public class AppEntity {
     private String url = null;
 
     @Column(nullable = false)
-    private String status; // running, stopped, building, error
+    private String status; // RUNNING, STOPPED, BUILDING, ERROR
 
     @Column(name = "created_at", nullable = false, updatable = false)
     @CreationTimestamp

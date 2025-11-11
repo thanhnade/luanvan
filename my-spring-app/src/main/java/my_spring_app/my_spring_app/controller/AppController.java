@@ -22,13 +22,13 @@ public class AppController {
     private AppService appService;
 
     @PostMapping(value = "/deploy-docker", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<DeployAppDockerResponse> deployAppDockerMultipart(@ModelAttribute @Valid DeployAppDockerRequest request) {
+    public ResponseEntity<DeployAppDockerResponse> deployAppDocker(@ModelAttribute @Valid DeployAppDockerRequest request) {
         DeployAppDockerResponse response = appService.deployAppDocker(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     @PostMapping(value = "/deploy-file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<DeployAppFileResponse> deployAppFileWithFile(@ModelAttribute @Valid DeployAppFileRequest request) {
+    public ResponseEntity<DeployAppFileResponse> deployAppFile(@ModelAttribute @Valid DeployAppFileRequest request) {
         DeployAppFileResponse response = appService.deployAppFile(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
