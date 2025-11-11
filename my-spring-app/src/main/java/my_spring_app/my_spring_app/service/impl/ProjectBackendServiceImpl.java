@@ -617,7 +617,8 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 }
 
                 // Build Docker image từ Dockerfile
-                String imageTag = dockerhub_username + "/" + projectName + ":latest";
+                // Sử dụng UUID thay vì projectName để tránh trùng tên image
+                String imageTag = dockerhub_username + "/" + deploymentUuid + ":latest";
                 String buildCmd = "cd '" + projectDir + "' && docker build -t '" + imageTag + "' .";
                 System.out.println("[deployBackend] Docker build: " + buildCmd);
                 executeCommand(session, buildCmd);

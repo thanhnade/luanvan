@@ -15,15 +15,14 @@ public class DeployFrontendRequest {
     private String projectName;
 
     @NotBlank(message = "Framework không được để trống")
-    private String framework; // REACT, VUE, ANGULAR
+    private String frameworkType; // REACT, VUE, ANGULAR
 
     @NotBlank(message = "Deployment method không được để trống")
-    private String deploymentMethod; // DOCKER, FILE
+    private String deploymentType; // DOCKER, FILE
 
-    private String dockerImage; // docker image (khi deploymentMethod = DOCKER)
+    private String dockerImage; // deploymentType = DOCKER
 
-    // File nén (.zip) người dùng upload khi deploymentMethod = FILE
-    private MultipartFile file;
+    private MultipartFile file; // deploymentType = FILE
 
     @NotBlank(message = "Domain name system không được để trống")
     private String domainNameSystem; // domain name system

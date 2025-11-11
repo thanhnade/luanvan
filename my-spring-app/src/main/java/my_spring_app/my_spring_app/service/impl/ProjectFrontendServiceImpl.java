@@ -403,13 +403,13 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
         UserEntity user = userOptional.get();
 
         // Validate deployment method (chỉ hỗ trợ DOCKER hoặc FILE)
-        if (!"DOCKER".equalsIgnoreCase(request.getDeploymentMethod()) && 
-            !"FILE".equalsIgnoreCase(request.getDeploymentMethod())) {
+        if (!"DOCKER".equalsIgnoreCase(request.getDeploymentType()) &&
+            !"FILE".equalsIgnoreCase(request.getDeploymentType())) {
             throw new RuntimeException("Deployment method không hợp lệ. Chỉ hỗ trợ DOCKER hoặc FILE");
         }
 
         // Validate framework (chỉ hỗ trợ REACT, VUE, ANGULAR)
-        String framework = request.getFramework().toUpperCase();
+        String framework = request.getFrameworkType().toUpperCase();
         if (!"REACT".equals(framework) && !"VUE".equals(framework) && !"ANGULAR".equals(framework)) {
             throw new RuntimeException("Framework không hợp lệ. Chỉ hỗ trợ REACT, VUE, ANGULAR");
         }
@@ -418,7 +418,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
         ProjectFrontendEntity projectEntity = new ProjectFrontendEntity();
         projectEntity.setProjectName(request.getProjectName());
         projectEntity.setFrameworkType(framework);
-        projectEntity.setDeploymentMethod(request.getDeploymentMethod().toUpperCase());
+        projectEntity.setDeploymentMethod(request.getDeploymentType().toUpperCase());
         projectEntity.setStatus("BUILDING"); // Trạng thái ban đầu là BUILDING
         projectEntity.setUser(user);
 
@@ -476,7 +476,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
         try {
             // ========== BƯỚC 3: XỬ LÝ DEPLOYMENT THEO PHƯƠNG THỨC ==========
             
-            if ("DOCKER".equalsIgnoreCase(request.getDeploymentMethod())) {
+            if ("DOCKER".equalsIgnoreCase(request.getDeploymentType())) {
                 // ========== PHƯƠNG THỨC 1: DEPLOY TỪ DOCKER IMAGE CÓ SẴN ==========
                 
                 // Validate Docker image
@@ -545,7 +545,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 System.out.println("[deployFrontend] Đang apply YAML: kubectl apply -f " + yamlRemotePath);
                 executeCommand(clusterSession, "kubectl apply -f '" + yamlRemotePath + "'");
 
-            } else if ("FILE".equalsIgnoreCase(request.getDeploymentMethod())) {
+            } else if ("FILE".equalsIgnoreCase(request.getDeploymentType())) {
                 // ========== PHƯƠNG THỨC 2: DEPLOY TỪ FILE ZIP ==========
                 
                 // Validate file upload
@@ -617,7 +617,8 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 }
 
                 // Build Docker image từ Dockerfile
-                String imageTag = dockerhub_username + "/" + projectName + ":latest";
+                // Sử dụng UUID thay vì projectName để tránh trùng tên image
+                String imageTag = dockerhub_username + "/" + deploymentUuid + ":latest";
                 String buildCmd = "cd '" + projectDir + "' && docker build -t '" + imageTag + "' .";
                 System.out.println("[deployFrontend] Docker build: " + buildCmd);
                 executeCommand(session, buildCmd);
