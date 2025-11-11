@@ -20,8 +20,8 @@ public class ListProjectFrontendResponse {
     public static class ProjectFrontendItem {
         private Long id;
         private String projectName;
-        private String framework;
-        private String deploymentMethod;
+        private String frameworkType;
+        private String deploymentType;
         private String domainNameSystem;
         private String dockerImage;
         private String sourcePath;

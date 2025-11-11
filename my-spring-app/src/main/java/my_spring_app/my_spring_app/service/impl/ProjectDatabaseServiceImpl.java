@@ -220,7 +220,15 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
         
         // Lưu thông tin database server vào entity
         projectEntity.setDatabaseIp(databaseServer.getIp());
-        projectEntity.setDatabasePort(databaseServer.getPort() != null ? databaseServer.getPort() : 3306); // Mặc định 3306 cho MySQL
+        // Set port theo loại database: MYSQL = 3306, MONGODB = 27017
+        if ("MYSQL".equals(databaseType)) {
+            projectEntity.setDatabasePort(3306);
+        } else if ("MONGODB".equals(databaseType)) {
+            projectEntity.setDatabasePort(27017);
+        } else {
+            // Fallback (không nên xảy ra vì đã validate ở trên)
+            projectEntity.setDatabasePort(3306);
+        }
 
         // Khởi tạo các biến để quản lý SSH/SFTP connections
         Session dbSession = null;

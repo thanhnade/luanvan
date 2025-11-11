@@ -66,8 +66,8 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                     ListProjectBackendResponse.ProjectBackendItem item = new ListProjectBackendResponse.ProjectBackendItem();
                     item.setId(entity.getId());
                     item.setProjectName(entity.getProjectName());
-                    item.setFramework(entity.getFrameworkType());
-                    item.setDeploymentMethod(entity.getDeploymentMethod());
+                    item.setFrameworkType(entity.getFrameworkType());
+                    item.setDeploymentType(entity.getDeploymentMethod());
                     item.setDomainNameSystem(entity.getDomainNameSystem());
                     item.setDockerImage(entity.getDockerImage());
                     item.setSourcePath(entity.getSourcePath());
@@ -106,8 +106,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                                                   String databaseUsername, String databasePassword) {
         // K8s Service/Ingress dùng DNS-1035: phải bắt đầu bằng chữ cái -> prefix 'app-'
         String resourceName = "app-" + deploymentUuid;
-        // Chỉ chuẩn hóa databaseName, không chuẩn hóa databaseIp, databaseUsername, databasePassword
-        String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
+        String dbName = databaseName;
         // Sử dụng trực tiếp databaseIp, databaseUsername, databasePassword từ request (có thể chứa ký tự đặc biệt)
         String dbPassword = databasePassword != null ? databasePassword : "";
         
@@ -193,8 +192,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                                              String databaseName, String databaseIp, int databasePort,
                                              String databaseUsername, String databasePassword) {
         String resourceName = "app-" + deploymentUuid;
-        // Chỉ chuẩn hóa databaseName
-        String dbName = databaseName.trim().toLowerCase().replaceAll("\\s+", "-").replaceAll("[^a-z0-9-]", "");
+        String dbName = databaseName;
         String dbPassword = databasePassword != null ? databasePassword : "";
         
         return "apiVersion: apps/v1\n" +

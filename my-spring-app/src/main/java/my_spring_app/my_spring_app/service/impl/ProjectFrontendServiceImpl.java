@@ -65,8 +65,8 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                     ListProjectFrontendResponse.ProjectFrontendItem item = new ListProjectFrontendResponse.ProjectFrontendItem();
                     item.setId(entity.getId());
                     item.setProjectName(entity.getProjectName());
-                    item.setFramework(entity.getFrameworkType());
-                    item.setDeploymentMethod(entity.getDeploymentMethod());
+                    item.setFrameworkType(entity.getFrameworkType());
+                    item.setDeploymentType(entity.getDeploymentMethod());
                     item.setDomainNameSystem(entity.getDomainNameSystem());
                     item.setDockerImage(entity.getDockerImage());
                     item.setSourcePath(entity.getSourcePath());
