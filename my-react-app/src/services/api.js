@@ -9,25 +9,5 @@ const api = axios.create({
   },
 });
 
-export const authService = {
-  login: async (username, password) => {
-    const response = await api.post('/users/login', {
-      username,
-      password,
-    });
-    return response.data;
-  },
-
-  register: async (fullname, username, password, confirmPassword) => {
-    const response = await api.post('/users', {
-      fullname,
-      username,
-      password,
-      confirmPassword,
-    });
-    return response.data;
-  },
-};
-
 export default api;
 
