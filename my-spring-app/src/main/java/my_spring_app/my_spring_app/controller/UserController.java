@@ -2,8 +2,10 @@ package my_spring_app.my_spring_app.controller;
 
 import jakarta.validation.Valid;
 import my_spring_app.my_spring_app.dto.reponse.CreateUserResponse;
+import my_spring_app.my_spring_app.dto.reponse.GetUserProjectsResponse;
 import my_spring_app.my_spring_app.dto.reponse.LoginResponse;
 import my_spring_app.my_spring_app.dto.request.CreateUserRequest;
+import my_spring_app.my_spring_app.dto.request.GetUserProjectsRequest;
 import my_spring_app.my_spring_app.dto.request.LoginRequest;
 import my_spring_app.my_spring_app.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +29,12 @@ public class UserController {
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         LoginResponse response = userService.login(request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/projects")
+    public ResponseEntity<GetUserProjectsResponse> getUserProjects(@Valid @RequestBody GetUserProjectsRequest request) {
+        GetUserProjectsResponse response = userService.getUserProjects(request);
         return ResponseEntity.ok(response);
     }
 }

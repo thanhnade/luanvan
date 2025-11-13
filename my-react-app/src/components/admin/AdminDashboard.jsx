@@ -32,7 +32,13 @@ function AdminDashboard() {
       return;
     }
     const parsedUser = JSON.parse(userData);
-    if (parsedUser.role !== 'admin') {
+    // So sánh role không phân biệt hoa thường để đảm bảo tương thích
+    const isAdmin = parsedUser.role && parsedUser.role.toUpperCase() === 'ADMIN';
+    console.log('[AdminDashboard] User role:', parsedUser.role);
+    console.log('[AdminDashboard] Is Admin?', isAdmin);
+    
+    if (!isAdmin) {
+      console.log('[AdminDashboard] Not admin, redirecting to /dashboard');
       navigate('/dashboard');
       return;
     }

@@ -7,17 +7,27 @@ function ProtectedRoute({ children, requireAdmin = false }) {
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
+    console.log('[ProtectedRoute] User data from localStorage:', userData);
+    
     if (!userData) {
+      console.log('[ProtectedRoute] No user data, setting authenticated=false');
       setIsAuthenticated(false);
       setIsAuthorized(false);
       return;
     }
 
     const user = JSON.parse(userData);
+    console.log('[ProtectedRoute] Parsed user:', user);
+    console.log('[ProtectedRoute] User role:', user.role);
+    console.log('[ProtectedRoute] requireAdmin:', requireAdmin);
+    
     setIsAuthenticated(true);
     
     if (requireAdmin) {
-      setIsAuthorized(user.role === 'admin');
+      // So sánh role không phân biệt hoa thường để đảm bảo tương thích
+      const isAdmin = user.role && user.role.toUpperCase() === 'ADMIN';
+      console.log('[ProtectedRoute] Is Admin?', isAdmin);
+      setIsAuthorized(isAdmin);
     } else {
       setIsAuthorized(true);
     }

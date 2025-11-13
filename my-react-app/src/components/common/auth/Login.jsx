@@ -28,15 +28,22 @@ function Login() {
     try {
       const response = await authService.login(formData.username, formData.password);
       console.log('Login successful:', response);
+      console.log('Response role:', response.role);
+      console.log('Role uppercase:', response.role?.toUpperCase());
       
       localStorage.setItem('user', JSON.stringify(response));
       localStorage.setItem('isAuthenticated', 'true');
       
-      // Navigate to dashboard based on role
-      if (response.role === 'admin') {
-        navigate('/admin/dashboard');
+      // Navigate to dashboard based on role (so sánh không phân biệt hoa thường)
+      const isAdmin = response.role && response.role.toUpperCase() === 'ADMIN';
+      console.log('Is Admin?', isAdmin);
+      
+      if (isAdmin) {
+        console.log('Navigating to /admin/dashboard');
+        navigate('/admin/dashboard', { replace: true });
       } else {
-        navigate('/dashboard');
+        console.log('Navigating to /dashboard');
+        navigate('/dashboard', { replace: true });
       }
     } catch (err) {
       let errorMessage = 'Login failed. Please check your credentials.';
