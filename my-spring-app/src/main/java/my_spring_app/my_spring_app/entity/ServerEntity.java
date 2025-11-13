@@ -34,13 +34,13 @@ public class ServerEntity {
     private String password;
 
     @Column(nullable = false)
-    private String role; // ví dụ: control-plane, worker, etc.
+    private String role; // MASTER, WORKER, DOCKER, DATABASE
 
     @Column(name = "server_status", nullable = false)
-    private String serverStatus; // READY, NOT_READY, IDLE, ...
+    private String serverStatus; // RUNNING, STOPPED, BUILDING, ERROR
 
     @Column(name = "cluster_status", nullable = false)
-    private String clusterStatus; // IN_CLUSTER, AVAILABLE, ...
+    private String clusterStatus; // AVAILABLE, UNAVAILABLE
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

@@ -23,21 +23,30 @@ function ProjectsList({ user, onRefresh }) {
   const loadProjects = async () => {
     setLoading(true);
     try {
-      // Gọi API thật để lấy danh sách apps theo username
+      // Gọi API để lấy danh sách projects (frontend, backend, database) theo username
       if (user && user.username) {
-        const res = await api.post('/apps/by-user', { username: user.username });
-        const items = Array.isArray(res.data?.apps) ? res.data.apps : [];
-        const mapped = items.map(item => ({
-          id: item.id,
-          name: item.name,
-          status: item.status,
-          url: item.url,
-          framework: formatFramework(item.frameworkType),
-          createdAt: item.createdAt,
-          updatedAt: item.createdAt
-        }));
+        const res = await api.post('/users/projects', { username: user.username });
+        const items = Array.isArray(res.data?.projects) ? res.data.projects : [];
+        const mapped = items.map(item => {
+          // Tạo URL từ domainNameSystem (chỉ có cho FRONTEND và BACKEND)
+          let url = null;
+          if (item.domainNameSystem && (item.projectType === 'FRONTEND' || item.projectType === 'BACKEND')) {
+            url = `http://${item.domainNameSystem}`;
+          }
+          
+          return {
+            id: item.id,
+            name: item.projectName,
+            status: item.status ? item.status.toLowerCase() : 'unknown',
+            url: url,
+            framework: formatFramework(item.frameworkType, item.projectType),
+            projectType: item.projectType, // FRONTEND, BACKEND, DATABASE
+            createdAt: item.createdAt,
+            updatedAt: item.createdAt
+          };
+        });
         setProjects(mapped);
-        return; // Không chạy mock phía dưới
+        return;
       }
       // Không có user hợp lệ
       setProjects([]);
@@ -48,15 +57,44 @@ function ProjectsList({ user, onRefresh }) {
     }
   };
 
-  const formatFramework = (type) => {
+  const formatFramework = (type, projectType) => {
     if (!type) return '';
     const t = String(type).toLowerCase();
+    const pt = projectType ? String(projectType).toUpperCase() : '';
+    
+    // Format framework type theo project type
+    if (pt === 'FRONTEND') {
+      switch (t) {
+        case 'react': return 'React';
+        case 'vue': return 'Vue.js';
+        case 'angular': return 'Angular';
+        default: return type;
+      }
+    } else if (pt === 'BACKEND') {
+      switch (t) {
+        case 'spring': return 'Spring Boot';
+        case 'nodejs': return 'Node.js';
+        case 'node': return 'Node.js';
+        default: return type;
+      }
+    } else if (pt === 'DATABASE') {
+      switch (t) {
+        case 'mysql': return 'MySQL';
+        case 'mongodb': return 'MongoDB';
+        default: return type;
+      }
+    }
+    
+    // Fallback: format chung nếu không có projectType
     switch (t) {
       case 'react': return 'React';
       case 'vue': return 'Vue.js';
       case 'angular': return 'Angular';
-      case 'spring': return 'Spring';
+      case 'spring': return 'Spring Boot';
+      case 'nodejs': return 'Node.js';
       case 'node': return 'Node.js';
+      case 'mysql': return 'MySQL';
+      case 'mongodb': return 'MongoDB';
       default: return type;
     }
   };

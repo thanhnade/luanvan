@@ -10,22 +10,24 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ListAppsResponse {
+public class ListProjectFrontendResponse {
 
-    private List<AppItem> apps;
+    private List<ProjectFrontendItem> projectFrontends;
 
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class AppItem {
+    public static class ProjectFrontendItem {
         private Long id;
-        private String name;
+        private String projectName;
         private String frameworkType;
         private String deploymentType;
-        private String url;
+        private String domainNameSystem;
+        private String dockerImage;
+        private String sourcePath;
+        private String deploymentPath;  
         private String status;
         private LocalDateTime createdAt;
     }
 }
-
 

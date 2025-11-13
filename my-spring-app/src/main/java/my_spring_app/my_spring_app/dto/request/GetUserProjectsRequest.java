@@ -8,10 +8,9 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class GetAppsByUserRequest {
-
+public class GetUserProjectsRequest {
+    
     @NotBlank(message = "Username không được để trống")
     private String username;
 }
-
 
