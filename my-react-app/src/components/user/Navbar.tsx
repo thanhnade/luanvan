@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom"
 import { Moon, Sun, FolderKanban, Plus } from "lucide-react"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { CreateProjectModal } from "@/components/common/CreateProjectModal"
 import { cn } from "@/lib/utils"
 
 /**
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils"
 export function Navbar() {
   const location = useLocation()
   const [darkMode, setDarkMode] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   useEffect(() => {
     // Load dark mode từ localStorage
@@ -38,7 +40,7 @@ export function Navbar() {
           {/* Logo */}
           <Link to="/projects" className="flex items-center gap-2">
             <FolderKanban className="w-6 h-6 text-primary" />
-            <span className="text-xl font-bold text-foreground">DeployHub</span>
+            <span className="text-xl font-bold text-foreground">CITspace</span>
           </Link>
 
           {/* Navigation */}
@@ -50,14 +52,13 @@ export function Navbar() {
                 Projects
               </Button>
             </Link>
-            <Link to="/projects/new">
-              <Button
-                variant={location.pathname === "/projects/new" ? "default" : "outline"}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Tạo Project
-              </Button>
-            </Link>
+            <Button
+              variant={location.pathname === "/projects/new" ? "default" : "outline"}
+              onClick={() => setShowCreateModal(true)}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Tạo Project
+            </Button>
             <Button variant="ghost" size="icon" onClick={toggleDarkMode}>
               {darkMode ? (
                 <Sun className="w-5 h-5" />
@@ -72,6 +73,12 @@ export function Navbar() {
           </div>
         </div>
       </div>
+
+      {/* Modal tạo project */}
+      <CreateProjectModal
+        open={showCreateModal}
+        onOpenChange={setShowCreateModal}
+      />
     </nav>
   )
 }

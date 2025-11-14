@@ -3,7 +3,7 @@ import { Toaster } from "sonner"
 import { ProjectsList } from "./pages/projects/List"
 import { ProjectDetail } from "./pages/projects/Detail"
 import { ProjectNew } from "./pages/projects/New"
-import { Navbar } from "./components/Navbar"
+import { Navbar } from "./components/user/Navbar"
 import "./index.css"
 
 /**

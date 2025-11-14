@@ -53,11 +53,12 @@ const initialState: WizardData = {
 
 const savedData = loadWizardData()
 
-export const useWizardStore = create<WizardStore>((set) => {
+export const useWizardStore = create<WizardStore>((set, get) => {
   // Hàm set với auto-save
-  const setWithSave = (updates: Partial<WizardData>) => {
+  const setWithSave = (updates: Partial<WizardData> | ((state: WizardData) => Partial<WizardData>)) => {
     set((state) => {
-      const newState = { ...state, ...updates }
+      const updatesData = typeof updates === 'function' ? updates(state) : updates
+      const newState = { ...state, ...updatesData }
       saveWizardData(newState)
       return newState
     })

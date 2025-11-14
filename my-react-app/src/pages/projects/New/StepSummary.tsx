@@ -5,16 +5,14 @@ import { createProject } from "@/lib/mock-api"
 import type { DatabaseItem, BackendItem, FrontendItem } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useWizardStore } from "@/stores/wizard-store"
 import { toast } from "sonner"
 
 /**
- * Step 4: Tổng quan và xác nhận
+ * Step 5: Tổng quan và xác nhận
  */
 export function StepSummary() {
   const navigate = useNavigate()
@@ -72,22 +70,16 @@ export function StepSummary() {
         kind: fe.sourceType,
         ref: fe.sourceType === "zip" ? "uploaded.zip" : fe.dockerImage || "",
       },
-      runtimeEnv: fe.runtimeEnv?.reduce((acc, e) => {
-        if (e.key && e.value) acc[e.key] = e.value
-        return acc
-      }, {} as Record<string, string>),
       publicUrl: fe.publicUrl,
       status: "pending" as const,
-      buildCommand: fe.buildCommand,
-      outputDir: fe.outputDir,
     }))
 
     return { dbItems, beItems, feItems }
   }
 
   const handleSubmit = async () => {
-    if (!projectName.trim()) {
-      setError("Tên project không được để trống")
+    if (!projectName?.trim()) {
+      setError("Tên project không được để trống. Vui lòng quay lại bước đầu tiên để nhập tên project.")
       return
     }
 
@@ -121,45 +113,42 @@ export function StepSummary() {
     }
   }
 
-  const hasErrors = !projectName.trim()
+  const hasErrors = !projectName?.trim()
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-foreground mb-2">
-          Bước 4/4 — Tổng quan
+          Bước 5/5 — Tổng quan
         </h2>
         <p className="text-muted-foreground">
           Kiểm tra lại và xác nhận triển khai
         </p>
       </div>
 
-      {/* Thông tin project */}
+      {/* Thông tin project - Chỉ hiển thị, không cho chỉnh sửa */}
       <Card>
         <CardHeader>
           <CardTitle>Thông tin Project</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label htmlFor="projectName">
-              Tên Project <span className="text-destructive">*</span>
+            <Label className="text-sm font-medium text-muted-foreground">
+              Tên Project
             </Label>
-            <Input
-              id="projectName"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              placeholder="my-project"
-            />
+            <div className="mt-1 p-3 bg-muted rounded-md">
+              <p className="font-medium">{projectName || <span className="text-muted-foreground">Chưa có tên</span>}</p>
+            </div>
           </div>
           <div>
-            <Label htmlFor="description">Mô tả (tùy chọn)</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Mô tả về project..."
-              rows={3}
-            />
+            <Label className="text-sm font-medium text-muted-foreground">
+              Mô tả
+            </Label>
+            <div className="mt-1 p-3 bg-muted rounded-md">
+              <p className="text-sm whitespace-pre-wrap">
+                {description || <span className="text-muted-foreground">Chưa có mô tả</span>}
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -183,6 +172,11 @@ export function StepSummary() {
                       {db.type === "mysql" ? "MySQL" : "MongoDB"} -{" "}
                       {db.provision === "user" ? "Của người dùng" : "Của hệ thống"}
                     </div>
+                    {db.databaseName && (
+                      <div className="text-muted-foreground text-xs mt-1">
+                        Database: {db.databaseName}
+                      </div>
+                    )}
                     {db.ip && (
                       <div className="text-muted-foreground text-xs mt-1">
                         {db.ip}:{db.port}

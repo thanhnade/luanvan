@@ -1,6 +1,14 @@
-# Hệ thống Triển khai Ứng dụng Tự động - DeployHub
+# Hệ thống Triển khai Ứng dụng Tự động - CITspace
 
 Ứng dụng React hiện đại để người dùng tự khai báo và triển khai dự án đa thành phần (database, backend, frontend) tương tự Vercel.
+
+## 📚 Tài Liệu Hướng Dẫn
+
+**👉 Cho người mới bắt đầu React:**
+- **[HUONG_DAN_CAU_TRUC.md](./HUONG_DAN_CAU_TRUC.md)** - Hướng dẫn chi tiết về cấu trúc dự án, cách các phần kết nối với nhau, và cách tìm component thuộc trang nào.
+
+**👉 Hướng dẫn Components:**
+- **[src/components/README.md](./src/components/README.md)** - Giải thích cấu trúc components và cách sử dụng.
 
 ## 🚀 Hướng dẫn Chạy
 

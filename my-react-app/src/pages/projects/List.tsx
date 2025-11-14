@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { Search, Plus, Filter, ArrowUpDown } from "lucide-react"
+import { Search, Plus } from "lucide-react"
 import { motion } from "framer-motion"
 import { getProjects } from "@/lib/mock-api"
 import type { Project, ProjectStatus } from "@/types"
@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select } from "@/components/ui/select"
-import { EmptyState } from "@/components/EmptyState"
+import { EmptyState } from "@/components/common/EmptyState"
+import { CreateProjectModal } from "@/components/common/CreateProjectModal"
 
 /**
  * Trang danh sách Projects với tìm kiếm, lọc và sắp xếp
@@ -21,6 +22,7 @@ export function ProjectsList() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [sortBy, setSortBy] = useState<"name" | "updated">("updated")
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   // Load projects
   useEffect(() => {
@@ -136,7 +138,7 @@ export function ProjectsList() {
               </div>
 
               {/* Create button */}
-              <Button onClick={() => navigate("/projects/new")}>
+              <Button onClick={() => setShowCreateModal(true)}>
                 <Plus className="w-4 h-4 mr-2" />
                 Tạo Project
               </Button>
@@ -150,7 +152,7 @@ export function ProjectsList() {
             title="Chưa có project nào"
             description="Bắt đầu bằng cách tạo project mới để triển khai ứng dụng của bạn"
             actionLabel="Tạo project mới"
-            onAction={() => navigate("/projects/new")}
+            onAction={() => setShowCreateModal(true)}
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -206,6 +208,26 @@ export function ProjectsList() {
           </div>
         )}
       </div>
+
+      {/* Modal chọn loại project */}
+      <CreateProjectModal
+        open={showCreateModal}
+        onOpenChange={setShowCreateModal}
+        onProjectCreated={async () => {
+          // Reload projects
+          const data = await getProjects(
+            searchQuery,
+            statusFilter === "all" ? undefined : statusFilter
+          )
+          const sorted = [...data].sort((a, b) => {
+            if (sortBy === "name") {
+              return a.name.localeCompare(b.name)
+            }
+            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          })
+          setProjects(sorted)
+        }}
+      />
     </div>
   )
 }

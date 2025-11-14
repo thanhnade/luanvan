@@ -11,6 +11,7 @@ export type DatabaseItem = {
   name: string;
   type: "mysql" | "mongodb";
   provision: "user" | "system";
+  databaseName?: string; // Tên database thực tế trên server (khi chọn "Của người dùng")
   endpoint?: string; // host:port
   username?: string;
   hasSeedZip?: boolean;
@@ -61,6 +62,7 @@ export type DatabaseFormData = {
   name: string;
   type: "mysql" | "mongodb";
   provision: "user" | "system";
+  databaseName?: string; // Tên database thực tế trên server (khi chọn "Của người dùng")
   ip?: string;
   port?: string;
   username?: string;
@@ -74,10 +76,8 @@ export type BackendFormData = {
   sourceType: "zip" | "image";
   zipFile?: File;
   dockerImage?: string;
-  env: Array<{ key: string; value: string }>;
+  env: Array<{ key: string; value: string }>; // Database connection env vars
   dns?: string;
-  buildCommand?: string;
-  outputDir?: string;
 };
 
 export type FrontendFormData = {
@@ -86,10 +86,7 @@ export type FrontendFormData = {
   sourceType: "zip" | "image";
   zipFile?: File;
   dockerImage?: string;
-  runtimeEnv: Array<{ key: string; value: string }>;
   publicUrl?: string;
-  buildCommand?: string;
-  outputDir?: string;
 };
 
 export type WizardData = {

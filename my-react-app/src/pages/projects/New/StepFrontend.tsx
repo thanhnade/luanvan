@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Upload, X, Plus, Trash2 } from "lucide-react"
+import { Upload, X, Plus, CheckCircle2 } from "lucide-react"
 import { motion } from "framer-motion"
 import type { FrontendFormData } from "@/types"
 import { validateZipFile, validateDockerImage, validateDNS } from "@/lib/validators"
@@ -11,8 +11,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
-import { HintBox } from "@/components/HintBox"
+import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
+import { toast } from "sonner"
 
 const frontendSchema = z.object({
   name: z.string().min(1, "Tên frontend không được để trống"),
@@ -20,8 +21,6 @@ const frontendSchema = z.object({
   sourceType: z.enum(["zip", "image"]),
   dockerImage: z.string().optional(),
   publicUrl: z.string().optional(),
-  buildCommand: z.string().optional(),
-  outputDir: z.string().optional(),
 }).refine((data) => {
   if (data.sourceType === "image") {
     return !!data.dockerImage && data.dockerImage.trim() !== ""
@@ -35,13 +34,15 @@ const frontendSchema = z.object({
 type FormData = z.infer<typeof frontendSchema>
 
 /**
- * Step 3: Cấu hình Frontend
+ * Step 4: Cấu hình Frontend
  */
 export function StepFrontend() {
-  const { frontends, addFrontend, removeFrontend } = useWizardStore()
+  // Subscribe cụ thể vào frontends để đảm bảo re-render
+  const frontends = useWizardStore((state) => state.frontends)
+  const addFrontend = useWizardStore((state) => state.addFrontend)
+  const removeFrontend = useWizardStore((state) => state.removeFrontend)
   const [showForm, setShowForm] = useState(false)
   const [zipFile, setZipFile] = useState<File | null>(null)
-  const [runtimeEnv, setRuntimeEnv] = useState<Array<{ key: string; value: string }>>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const {
@@ -56,15 +57,12 @@ export function StepFrontend() {
     defaultValues: {
       tech: "react",
       sourceType: "zip",
-      buildCommand: "",
-      outputDir: "",
     },
   })
 
   const sourceType = watch("sourceType")
   const dockerImage = watch("dockerImage")
   const publicUrl = watch("publicUrl")
-  const tech = watch("tech")
 
   // Validate Docker image
   const validateDocker = () => {
@@ -78,31 +76,6 @@ export function StepFrontend() {
     }
   }
 
-  // Validate DNS
-  const validateDNSField = () => {
-    if (publicUrl) {
-      const validation = validateDNS(publicUrl)
-      if (!validation.valid) {
-        setErrors({ ...errors, publicUrl: validation.message || "" })
-      } else {
-        setErrors({ ...errors, publicUrl: "" })
-      }
-    }
-  }
-
-  // Apply preset
-  const applyPreset = () => {
-    if (tech === "react") {
-      setValue("buildCommand", "npm run build")
-      setValue("outputDir", "dist")
-    } else if (tech === "vue") {
-      setValue("buildCommand", "npm run build")
-      setValue("outputDir", "dist")
-    } else {
-      setValue("buildCommand", "ng build")
-      setValue("outputDir", "dist")
-    }
-  }
 
   const onSubmit = (data: FormData) => {
     if (data.sourceType === "zip" && !zipFile) {
@@ -126,53 +99,28 @@ export function StepFrontend() {
       }
     }
 
-    if (data.publicUrl) {
-      const dnsValidation = validateDNS(data.publicUrl)
-      if (!dnsValidation.valid) {
-        setErrors({ ...errors, publicUrl: dnsValidation.message || "" })
-        return
-      }
-    }
-
     const feData: FrontendFormData = {
       name: data.name,
       tech: data.tech,
       sourceType: data.sourceType,
       zipFile: data.sourceType === "zip" ? zipFile : undefined,
       dockerImage: data.sourceType === "image" ? data.dockerImage : undefined,
-      runtimeEnv: runtimeEnv.filter((e) => e.key && e.value),
       publicUrl: data.publicUrl || undefined,
-      buildCommand: data.buildCommand || undefined,
-      outputDir: data.outputDir || undefined,
     }
 
     addFrontend(feData)
     reset()
     setZipFile(null)
-    setRuntimeEnv([])
     setErrors({})
     setShowForm(false)
-  }
-
-  const addRuntimeEnv = () => {
-    setRuntimeEnv([...runtimeEnv, { key: "", value: "" }])
-  }
-
-  const removeRuntimeEnv = (index: number) => {
-    setRuntimeEnv(runtimeEnv.filter((_, i) => i !== index))
-  }
-
-  const updateRuntimeEnv = (index: number, field: "key" | "value", value: string) => {
-    const newEnv = [...runtimeEnv]
-    newEnv[index] = { ...newEnv[index], [field]: value }
-    setRuntimeEnv(newEnv)
+    toast.success(`Đã thêm frontend "${feData.name}"`)
   }
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-foreground mb-2">
-          Bước 3/4 — Cấu hình Frontend
+          Bước 4/5 — Cấu hình Frontend
         </h2>
         <p className="text-muted-foreground">
           Thiết lập các frontend applications
@@ -189,50 +137,67 @@ export function StepFrontend() {
             <strong>Docker Image:</strong> Định dạng <code className="bg-muted px-1 rounded">owner/name:tag</code>
           </li>
           <li>
-            <strong>Config build:</strong> Build command và output directory (ví dụ: <code className="bg-muted px-1 rounded">npm run build</code>, <code className="bg-muted px-1 rounded">dist/</code>)
-          </li>
-          <li>
-            <strong>Runtime ENV:</strong> Ví dụ <code className="bg-muted px-1 rounded">VITE_API_BASE_URL</code>, <code className="bg-muted px-1 rounded">REACT_APP_API_URL</code>
-          </li>
-          <li>
-            <strong>DNS:</strong> Ví dụ <code className="bg-muted px-1 rounded">fe.myapp.local.test</code>
+            <strong>DNS:</strong> Chỉ a-z, 0-9, '-', dài 3-63 ký tự, không bắt đầu/kết thúc bằng '-' (ví dụ: <code className="bg-muted px-1 rounded">fe.myapp.local.test</code>)
           </li>
         </ul>
       </HintBox>
 
-      {frontends.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="font-semibold">Frontends đã thêm ({frontends.length})</h3>
-          <div className="grid gap-4">
-            {frontends.map((fe, index) => (
-              <Card key={index}>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-medium">{fe.name}</h4>
-                      <p className="text-sm text-muted-foreground">
-                        {fe.tech === "react" ? "React" : fe.tech === "vue" ? "Vue" : "Angular"}
-                      </p>
-                      {fe.publicUrl && (
-                        <p className="text-sm text-muted-foreground mt-1">
-                          URL: {fe.publicUrl}
-                        </p>
-                      )}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeFrontend(index)}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Frontends đã thêm ({frontends.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {frontends.length > 0 ? (
+            <div className="space-y-3">
+              {frontends.map((fe, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <Card className="border">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-medium">{fe.name}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {fe.tech === "react" ? "React" : fe.tech === "vue" ? "Vue" : "Angular"}
+                          </p>
+                          {fe.publicUrl && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              URL: {fe.publicUrl}
+                            </p>
+                          )}
+                          {fe.dockerImage && (
+                            <p className="text-sm text-muted-foreground mt-1 font-mono text-xs">
+                              {fe.dockerImage}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            removeFrontend(index)
+                            toast.success(`Đã xóa frontend "${fe.name}"`)
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              Chưa có frontend nào. Nhấn "Thêm Frontend" để bắt đầu.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {showForm ? (
         <Card>
@@ -251,10 +216,7 @@ export function StepFrontend() {
                 </div>
                 <div>
                   <Label htmlFor="tech">Technology <span className="text-destructive">*</span></Label>
-                  <Select id="tech" {...register("tech")} onChange={(e) => {
-                    register("tech").onChange(e)
-                    applyPreset()
-                  }}>
+                  <Select id="tech" {...register("tech")}>
                     <option value="react">React</option>
                     <option value="vue">Vue</option>
                     <option value="angular">Angular</option>
@@ -334,25 +296,6 @@ export function StepFrontend() {
                   {errors.zipFile && (
                     <p className="text-sm text-destructive mt-1">{errors.zipFile}</p>
                   )}
-
-                  <div className="grid grid-cols-2 gap-4 mt-4">
-                    <div>
-                      <Label htmlFor="buildCommand">Build Command</Label>
-                      <Input
-                        id="buildCommand"
-                        {...register("buildCommand")}
-                        placeholder="npm run build"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="outputDir">Output Directory</Label>
-                      <Input
-                        id="outputDir"
-                        {...register("outputDir")}
-                        placeholder="dist"
-                      />
-                    </div>
-                  </div>
                 </div>
               ) : (
                 <div>
@@ -371,57 +314,35 @@ export function StepFrontend() {
               )}
 
               <div>
-                <Label htmlFor="publicUrl">DNS/URL (tùy chọn)</Label>
-                <Input
-                  id="publicUrl"
-                  {...register("publicUrl")}
-                  placeholder="fe-myapp"
-                  onBlur={validateDNSField}
-                />
-                {errors.publicUrl && (
-                  <p className="text-sm text-destructive mt-1">{errors.publicUrl}</p>
-                )}
-              </div>
-
-              {/* Runtime ENV */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <Label>Biến môi trường runtime</Label>
-                  <Button type="button" variant="outline" size="sm" onClick={addRuntimeEnv}>
-                    <Plus className="w-4 h-4 mr-1" />
-                    Thêm
+                <Label htmlFor="publicUrl">DNS (tùy chọn)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="publicUrl"
+                    {...register("publicUrl")}
+                    placeholder="fe-myapp"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const dnsValue = watch("publicUrl")
+                      if (dnsValue) {
+                        const validation = validateDNS(dnsValue)
+                        if (validation.valid) {
+                          toast.success("DNS hợp lệ!")
+                        } else {
+                          toast.error(validation.message || "DNS không hợp lệ")
+                        }
+                      } else {
+                        toast.info("Vui lòng nhập DNS trước khi kiểm tra")
+                      }
+                    }}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Kiểm tra
                   </Button>
                 </div>
-                {runtimeEnv.length > 0 ? (
-                  <div className="space-y-2">
-                    {runtimeEnv.map((env, index) => (
-                      <div key={index} className="flex gap-2">
-                        <Input
-                          placeholder="Tên biến (ví dụ: VITE_API_BASE_URL)"
-                          value={env.key}
-                          onChange={(e) => updateRuntimeEnv(index, "key", e.target.value)}
-                        />
-                        <Input
-                          placeholder="Giá trị"
-                          value={env.value}
-                          onChange={(e) => updateRuntimeEnv(index, "value", e.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeRuntimeEnv(index)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-4 bg-muted rounded-md">
-                    Chưa có biến môi trường nào
-                  </p>
-                )}
               </div>
 
               <div className="flex gap-2">
@@ -433,7 +354,6 @@ export function StepFrontend() {
                     setShowForm(false)
                     reset()
                     setZipFile(null)
-                    setRuntimeEnv([])
                     setErrors({})
                   }}
                 >
