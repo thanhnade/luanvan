@@ -26,5 +26,8 @@ public class CreateUserRequest {
     @NotBlank(message = "Confirm Password không được để trống")
     @Size(min = 1, message = "Confirm Password phải có ít nhất 1 ký tự")
     private String confirmPassword;
+
+    // Tier: STANDARD, PREMIUM (mặc định là STANDARD nếu không cung cấp)
+    private String tier; // STANDARD, PREMIUM
 }
 

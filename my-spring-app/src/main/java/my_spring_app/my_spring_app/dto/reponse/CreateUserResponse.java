@@ -14,5 +14,6 @@ public class CreateUserResponse {
     private String username;
     private String status;
     private String role;
+    private String tier;
 }
 
