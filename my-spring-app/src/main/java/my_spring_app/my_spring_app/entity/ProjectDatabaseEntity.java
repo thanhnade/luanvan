@@ -24,9 +24,6 @@ public class ProjectDatabaseEntity {
     @Column(name = "description", nullable = true)
     private String description;
 
-    @Column(name = "deployment_type", nullable = false)
-    private String deploymentType; // PERSONAL, SYSTEM
-
     @Column(name = "database_type", nullable = false)
     private String databaseType; // MYSQL, MONGODB
 
@@ -55,9 +52,6 @@ public class ProjectDatabaseEntity {
 
     @Column(name = "yaml_path", nullable = true)
     private String yamlPath; // path to the yaml file
-
-    @Column(name = "docker_image", nullable = true)
-    private String dockerImage; // docker image name
 
     //
 
