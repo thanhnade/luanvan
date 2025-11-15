@@ -360,3 +360,113 @@ export async function deployDatabase(request: DeployDatabaseRequest): Promise<De
   return response.json()
 }
 
+/**
+ * Deploy Backend
+ */
+export interface DeployBackendRequest {
+  projectName: string
+  deploymentType: "DOCKER" | "FILE"
+  frameworkType: "SPRINGBOOT" | "NODEJS"
+  dockerImage?: string
+  file?: File | null
+  databaseIp: string
+  databasePort: number
+  databaseName: string
+  databaseUsername: string
+  databasePassword: string
+  domainNameSystem: string
+  username: string
+  projectId: number
+}
+
+export interface DeployBackendResponse {
+  url: string
+  status: string
+  domainNameSystem: string
+}
+
+export async function deployBackend(request: DeployBackendRequest): Promise<DeployBackendResponse> {
+  const formData = new FormData()
+  formData.append("projectName", request.projectName)
+  formData.append("deploymentType", request.deploymentType)
+  formData.append("frameworkType", request.frameworkType)
+  formData.append("databaseIp", request.databaseIp)
+  formData.append("databasePort", String(request.databasePort))
+  formData.append("databaseName", request.databaseName)
+  formData.append("databaseUsername", request.databaseUsername)
+  formData.append("databasePassword", request.databasePassword)
+  formData.append("domainNameSystem", request.domainNameSystem)
+  formData.append("username", request.username)
+  formData.append("projectId", String(request.projectId))
+  
+  if (request.deploymentType === "DOCKER" && request.dockerImage) {
+    formData.append("dockerImage", request.dockerImage)
+  }
+  
+  if (request.deploymentType === "FILE" && request.file) {
+    formData.append("file", request.file)
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/project-backends/deploy`, {
+    method: "POST",
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi triển khai backend" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi triển khai backend")
+  }
+
+  return response.json()
+}
+
+/**
+ * Deploy Frontend
+ */
+export interface DeployFrontendRequest {
+  projectName: string
+  deploymentType: "DOCKER" | "FILE"
+  frameworkType: "REACT" | "VUE" | "ANGULAR"
+  dockerImage?: string
+  file?: File | null
+  domainNameSystem: string
+  username: string
+  projectId: number
+}
+
+export interface DeployFrontendResponse {
+  url: string
+  status: string
+  domainNameSystem: string
+}
+
+export async function deployFrontend(request: DeployFrontendRequest): Promise<DeployFrontendResponse> {
+  const formData = new FormData()
+  formData.append("projectName", request.projectName)
+  formData.append("deploymentType", request.deploymentType)
+  formData.append("frameworkType", request.frameworkType)
+  formData.append("domainNameSystem", request.domainNameSystem)
+  formData.append("username", request.username)
+  formData.append("projectId", String(request.projectId))
+  
+  if (request.deploymentType === "DOCKER" && request.dockerImage) {
+    formData.append("dockerImage", request.dockerImage)
+  }
+  
+  if (request.deploymentType === "FILE" && request.file) {
+    formData.append("file", request.file)
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/project-frontends/deploy`, {
+    method: "POST",
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi triển khai frontend" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi triển khai frontend")
+  }
+
+  return response.json()
+}
+

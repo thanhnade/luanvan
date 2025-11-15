@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { getProjectById, deployProject, addDatabaseToProject, addBackendToProject, addFrontendToProject } from "@/lib/mock-api"
-import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
+import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, deployBackend, deployFrontend, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
 import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ComponentStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -54,6 +54,8 @@ export function ProjectDetail() {
   const [deploymentHistory, setDeploymentHistory] = useState<DeploymentHistoryItem[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [isDeployingDatabase, setIsDeployingDatabase] = useState(false)
+  const [isDeployingBackend, setIsDeployingBackend] = useState(false)
+  const [isDeployingFrontend, setIsDeployingFrontend] = useState(false)
   
   // State cho file uploads
   const [zipFileDb, setZipFileDb] = useState<File | null>(null)
@@ -87,38 +89,38 @@ export function ProjectDetail() {
   }, [id])
 
   // Load project overview từ API
-  useEffect(() => {
-    const loadProjectOverview = async () => {
-      if (!id) return
-      try {
-        const overview = await getProjectOverview(id)
-        // Map dữ liệu từ API sang format phù hợp với component
-        setProjectOverview({
-          databases: {
-            total: overview.databases.total,
-            running: overview.databases.running,
-            paused: overview.databases.paused,
-            other: overview.databases.stopped + overview.databases.error,
-          },
-          backends: {
-            total: overview.backends.total,
-            running: overview.backends.running,
-            paused: overview.backends.paused,
-            other: overview.backends.stopped + overview.backends.error,
-          },
-          frontends: {
-            total: overview.frontends.total,
-            running: overview.frontends.running,
-            paused: overview.frontends.paused,
-            other: overview.frontends.stopped + overview.frontends.error,
-          },
-        })
-      } catch (error) {
-        console.error("Lỗi load project overview:", error)
-        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
-      }
+  const loadProjectOverview = async () => {
+    if (!id) return
+    try {
+      const overview = await getProjectOverview(id)
+      // Map dữ liệu từ API sang format phù hợp với component
+      setProjectOverview({
+        databases: {
+          total: overview.databases.total,
+          running: overview.databases.running,
+          paused: overview.databases.paused,
+          other: overview.databases.stopped + overview.databases.error,
+        },
+        backends: {
+          total: overview.backends.total,
+          running: overview.backends.running,
+          paused: overview.backends.paused,
+          other: overview.backends.stopped + overview.backends.error,
+        },
+        frontends: {
+          total: overview.frontends.total,
+          running: overview.frontends.running,
+          paused: overview.frontends.paused,
+          other: overview.frontends.stopped + overview.frontends.error,
+        },
+      })
+    } catch (error) {
+      console.error("Lỗi load project overview:", error)
+      // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
     }
+  }
 
+  useEffect(() => {
     loadProjectOverview()
   }, [id])
 
@@ -532,7 +534,10 @@ export function ProjectDetail() {
   }
 
   const onSubmitBackend = async (data: z.infer<typeof backendSchema>) => {
-    if (!id) return
+    if (!id || !user?.username) {
+      toast.error("Không thể thêm backend")
+      return
+    }
 
     if (data.sourceKind === "zip" && !zipFileBe) {
       toast.error("Vui lòng chọn file ZIP")
@@ -560,52 +565,56 @@ export function ProjectDetail() {
       }
     }
 
-    // Validate DNS
-    if (data.dns) {
-      const dnsValidation = validateDNS(data.dns)
-      if (!dnsValidation.valid) {
-        toast.error(dnsValidation.message || "DNS không hợp lệ")
-        return
-      }
-    }
+    setIsDeployingBackend(true)
+    const loadingToast = toast.loading("Đang triển khai backend...", {
+      description: "Vui lòng đợi trong giây lát",
+    })
 
     try {
-      const sourceRef = data.sourceKind === "zip" 
-        ? zipFileBe?.name || "uploaded.zip"
-        : data.sourceRef || ""
+      // Chuyển đổi tech sang frameworkType
+      const frameworkType = data.tech === "spring" ? "SPRINGBOOT" : "NODEJS" as "SPRINGBOOT" | "NODEJS"
+      // Chuyển đổi sourceKind sang deploymentType
+      const deploymentType = data.sourceKind === "zip" ? "FILE" : "DOCKER" as "FILE" | "DOCKER"
 
-      // Tạo env vars từ database connection fields
-      const env: Array<{ key: string; value: string }> = []
-      if (data.dbName) env.push({ key: "DB_NAME", value: data.dbName })
-      if (data.dbIp) env.push({ key: "DB_HOST", value: data.dbIp })
-      if (data.dbPort) env.push({ key: "DB_PORT", value: data.dbPort })
-      if (data.dbUsername) env.push({ key: "DB_USERNAME", value: data.dbUsername })
-      if (data.dbPassword) env.push({ key: "DB_PASSWORD", value: data.dbPassword })
+      // Gọi API deploy backend
+      await deployBackend({
+        projectName: data.name,
+        deploymentType: deploymentType,
+        frameworkType: frameworkType,
+        dockerImage: data.sourceKind === "image" ? data.sourceRef : undefined,
+        file: data.sourceKind === "zip" ? zipFileBe || undefined : undefined,
+        databaseIp: data.dbIp || "",
+        databasePort: Number(data.dbPort) || 3306,
+        databaseName: data.dbName || "",
+        databaseUsername: data.dbUsername || "",
+        databasePassword: data.dbPassword || "",
+        domainNameSystem: data.dns || "",
+        username: user.username,
+        projectId: Number(id),
+      })
 
-      const newBackend = {
-        name: data.name,
-        tech: data.tech,
-        source: {
-          kind: data.sourceKind,
-          ref: sourceRef,
-        },
-        dns: data.dns || undefined,
-        env: env.reduce((acc, e) => {
-          acc[e.key] = e.value
-          return acc
-        }, {} as Record<string, string>),
-      }
-
-      const updatedProject = await addBackendToProject(id, newBackend)
-      setProject(updatedProject)
+      toast.dismiss(loadingToast)
+      toast.success(`Đã thêm backend "${data.name}" thành công!`)
       setShowAddBackend(false)
       resetBe()
       setZipFileBe(null)
       setZipErrorBe("")
-      toast.success(`Đã thêm backend "${data.name}"`)
+      
+      // Reload danh sách backends
+      if (id) {
+        try {
+          const response = await getProjectBackends(id)
+          setProjectBackends(response.backends || [])
+        } catch (err) {
+          console.error("Lỗi reload backends:", err)
+        }
+      }
     } catch (error) {
-      toast.error("Có lỗi xảy ra khi thêm backend")
+      toast.dismiss(loadingToast)
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi thêm backend")
       console.error(error)
+    } finally {
+      setIsDeployingBackend(false)
     }
   }
 
@@ -650,7 +659,10 @@ export function ProjectDetail() {
   }
 
   const onSubmitFrontend = async (data: z.infer<typeof frontendSchema>) => {
-    if (!id) return
+    if (!id || !user?.username) {
+      toast.error("Không thể thêm frontend")
+      return
+    }
 
     if (data.sourceKind === "zip" && !zipFileFe) {
       toast.error("Vui lòng chọn file ZIP")
@@ -678,40 +690,51 @@ export function ProjectDetail() {
       }
     }
 
-    // Validate DNS
-    if (data.publicUrl) {
-      const dnsValidation = validateDNS(data.publicUrl)
-      if (!dnsValidation.valid) {
-        toast.error(dnsValidation.message || "DNS không hợp lệ")
-        return
-      }
-    }
+    setIsDeployingFrontend(true)
+    const loadingToast = toast.loading("Đang triển khai frontend...", {
+      description: "Vui lòng đợi trong giây lát",
+    })
 
     try {
-      const sourceRef = data.sourceKind === "zip" 
-        ? zipFileFe?.name || "uploaded.zip"
-        : data.sourceRef || ""
+      // Chuyển đổi tech sang frameworkType
+      const frameworkType = data.tech.toUpperCase() as "REACT" | "VUE" | "ANGULAR"
+      // Chuyển đổi sourceKind sang deploymentType
+      const deploymentType = data.sourceKind === "zip" ? "FILE" : "DOCKER" as "FILE" | "DOCKER"
 
-      const newFrontend = {
-        name: data.name,
-        tech: data.tech,
-        source: {
-          kind: data.sourceKind,
-          ref: sourceRef,
-        },
-        publicUrl: data.publicUrl || undefined,
-      }
+      // Gọi API deploy frontend
+      await deployFrontend({
+        projectName: data.name,
+        deploymentType: deploymentType,
+        frameworkType: frameworkType,
+        dockerImage: data.sourceKind === "image" ? data.sourceRef : undefined,
+        file: data.sourceKind === "zip" ? zipFileFe || undefined : undefined,
+        domainNameSystem: data.publicUrl || "",
+        username: user.username,
+        projectId: Number(id),
+      })
 
-      const updatedProject = await addFrontendToProject(id, newFrontend)
-      setProject(updatedProject)
+      toast.dismiss(loadingToast)
+      toast.success(`Đã thêm frontend "${data.name}" thành công!`)
       setShowAddFrontend(false)
       resetFe()
       setZipFileFe(null)
       setZipErrorFe("")
-      toast.success(`Đã thêm frontend "${data.name}"`)
+      
+      // Reload danh sách frontends
+      if (id) {
+        try {
+          const response = await getProjectFrontends(id)
+          setProjectFrontends(response.frontends || [])
+        } catch (err) {
+          console.error("Lỗi reload frontends:", err)
+        }
+      }
     } catch (error) {
-      toast.error("Có lỗi xảy ra khi thêm frontend")
+      toast.dismiss(loadingToast)
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi thêm frontend")
       console.error(error)
+    } finally {
+      setIsDeployingFrontend(false)
     }
   }
 
@@ -791,6 +814,10 @@ export function ProjectDetail() {
         <Card>
           <CardContent className="p-0">
             <Tabs defaultValue="overview" className="w-full" onValueChange={(value) => {
+              // Khi chuyển sang tab "overview", load overview
+              if (value === "overview" && id) {
+                loadProjectOverview()
+              }
               // Khi chuyển sang tab "history", load deployment history
               if (value === "history" && id && deploymentHistory.length === 0 && !loadingHistory) {
                 loadDeploymentHistory()
@@ -1770,10 +1797,23 @@ export function ProjectDetail() {
             </HintBox>
             
             <form onSubmit={handleSubmitBe(onSubmitBackend)} className="space-y-4">
+              {isDeployingBackend && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                    <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+                      Đang triển khai backend...
+                    </p>
+                  </div>
+                  <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 ml-6">
+                    Quá trình này có thể mất vài phút. Vui lòng không đóng cửa sổ này.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="be-name">Tên Backend <span className="text-destructive">*</span></Label>
-                  <Input id="be-name" {...registerBe("name")} placeholder="api-service" />
+                  <Input id="be-name" {...registerBe("name")} placeholder="api-service" disabled={isDeployingBackend} />
                   {errorsBe.name && (
                     <p className="text-sm text-destructive mt-1">{errorsBe.name.message}</p>
                   )}
@@ -1782,7 +1822,7 @@ export function ProjectDetail() {
                   <Label htmlFor="be-tech">Technology <span className="text-destructive">*</span></Label>
                   <Select id="be-tech" {...registerBe("tech")} onChange={(e) => {
                     registerBe("tech").onChange(e)
-                  }}>
+                  }} disabled={isDeployingBackend}>
                     <option value="spring">Spring Boot</option>
                     <option value="node">Node.js</option>
                   </Select>
@@ -1796,6 +1836,7 @@ export function ProjectDetail() {
                     type="button"
                     variant={sourceTypeBe === "zip" ? "default" : "outline"}
                     onClick={() => setValueBe("sourceKind", "zip")}
+                    disabled={isDeployingBackend}
                   >
                     Upload ZIP
                   </Button>
@@ -1803,6 +1844,7 @@ export function ProjectDetail() {
                     type="button"
                     variant={sourceTypeBe === "image" ? "default" : "outline"}
                     onClick={() => setValueBe("sourceKind", "image")}
+                    disabled={isDeployingBackend}
                   >
                     Docker Image
                   </Button>
@@ -1813,8 +1855,12 @@ export function ProjectDetail() {
                 <div>
                   <Label>File ZIP <span className="text-destructive">*</span></Label>
                   <div
-                    className="mt-2 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-muted transition-colors"
-                    onClick={() => document.getElementById("zip-input-be-modal")?.click()}
+                    className={`mt-2 border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                      isDeployingBackend 
+                        ? "opacity-50 cursor-not-allowed" 
+                        : "cursor-pointer hover:bg-muted"
+                    }`}
+                    onClick={() => !isDeployingBackend && document.getElementById("zip-input-be-modal")?.click()}
                   >
                     {zipFileBe ? (
                       <div>
@@ -1845,6 +1891,7 @@ export function ProjectDetail() {
                     type="file"
                     accept=".zip"
                     className="hidden"
+                    disabled={isDeployingBackend}
                     onChange={(e) => {
                       const file = e.target.files?.[0]
                       if (file) {
@@ -1871,6 +1918,7 @@ export function ProjectDetail() {
                     placeholder="docker.io/user/app:1.0.0"
                     className="font-mono"
                     onBlur={validateDockerBe}
+                    disabled={isDeployingBackend}
                   />
                   {errorsBe.sourceRef && (
                     <p className="text-sm text-destructive mt-1">{errorsBe.sourceRef.message}</p>
@@ -1885,12 +1933,13 @@ export function ProjectDetail() {
                     id="be-dns"
                     {...registerBe("dns")}
                     placeholder="api-myapp"
-                    onBlur={validateDNSBe}
                     className="flex-1"
+                    disabled={isDeployingBackend}
                   />
                   <Button
                     type="button"
                     variant="outline"
+                    disabled={isDeployingBackend}
                     onClick={() => {
                       const dnsValue = watchBe("dns")
                       if (dnsValue) {
@@ -1931,6 +1980,7 @@ export function ProjectDetail() {
                         id="be-dbName"
                         {...registerBe("dbName")}
                         placeholder="my_database"
+                        disabled={isDeployingBackend}
                       />
                     </div>
                     <div className="col-span-5">
@@ -1941,6 +1991,7 @@ export function ProjectDetail() {
                         id="be-dbIp"
                         {...registerBe("dbIp")}
                         placeholder="192.168.1.100"
+                        disabled={isDeployingBackend}
                       />
                     </div>
                     <div className="col-span-2">
@@ -1951,6 +2002,7 @@ export function ProjectDetail() {
                         id="be-dbPort"
                         {...registerBe("dbPort")}
                         placeholder="3306"
+                        disabled={isDeployingBackend}
                       />
                     </div>
                   </div>
@@ -1963,6 +2015,7 @@ export function ProjectDetail() {
                         id="be-dbUsername"
                         {...registerBe("dbUsername")}
                         placeholder="admin"
+                        disabled={isDeployingBackend}
                       />
                     </div>
                     <div>
@@ -1974,6 +2027,7 @@ export function ProjectDetail() {
                         type="password"
                         {...registerBe("dbPassword")}
                         placeholder="••••••••"
+                        disabled={isDeployingBackend}
                       />
                     </div>
                   </div>
@@ -1990,10 +2044,20 @@ export function ProjectDetail() {
                     setZipFileBe(null)
                     setZipErrorBe("")
                   }}
+                  disabled={isDeployingBackend}
                 >
                   Hủy
                 </Button>
-                <Button type="submit">Thêm Backend</Button>
+                <Button type="submit" disabled={isDeployingBackend}>
+                  {isDeployingBackend ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Đang triển khai...
+                    </>
+                  ) : (
+                    "Thêm Backend"
+                  )}
+                </Button>
               </div>
             </form>
           </DialogContent>
@@ -2025,17 +2089,30 @@ export function ProjectDetail() {
             </HintBox>
             
             <form onSubmit={handleSubmitFe(onSubmitFrontend)} className="space-y-4">
+              {isDeployingFrontend && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                    <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+                      Đang triển khai frontend...
+                    </p>
+                  </div>
+                  <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 ml-6">
+                    Quá trình này có thể mất vài phút. Vui lòng không đóng cửa sổ này.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="fe-name">Tên Frontend <span className="text-destructive">*</span></Label>
-                  <Input id="fe-name" {...registerFe("name")} placeholder="web-app" />
+                  <Input id="fe-name" {...registerFe("name")} placeholder="web-app" disabled={isDeployingFrontend} />
                   {errorsFe.name && (
                     <p className="text-sm text-destructive mt-1">{errorsFe.name.message}</p>
                   )}
                 </div>
                 <div>
                   <Label htmlFor="fe-tech">Technology <span className="text-destructive">*</span></Label>
-                  <Select id="fe-tech" {...registerFe("tech")}>
+                  <Select id="fe-tech" {...registerFe("tech")} disabled={isDeployingFrontend}>
                     <option value="react">React</option>
                     <option value="vue">Vue</option>
                     <option value="angular">Angular</option>
@@ -2050,6 +2127,7 @@ export function ProjectDetail() {
                     type="button"
                     variant={sourceTypeFe === "zip" ? "default" : "outline"}
                     onClick={() => setValueFe("sourceKind", "zip")}
+                    disabled={isDeployingFrontend}
                   >
                     Upload ZIP
                   </Button>
@@ -2057,6 +2135,7 @@ export function ProjectDetail() {
                     type="button"
                     variant={sourceTypeFe === "image" ? "default" : "outline"}
                     onClick={() => setValueFe("sourceKind", "image")}
+                    disabled={isDeployingFrontend}
                   >
                     Docker Image
                   </Button>
@@ -2067,8 +2146,10 @@ export function ProjectDetail() {
                 <div>
                   <Label>File ZIP <span className="text-destructive">*</span></Label>
                   <div
-                    className="mt-2 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-muted transition-colors"
-                    onClick={() => document.getElementById("zip-input-fe-modal")?.click()}
+                    className={`mt-2 border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                      isDeployingFrontend ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"
+                    }`}
+                    onClick={() => !isDeployingFrontend && document.getElementById("zip-input-fe-modal")?.click()}
                   >
                     {zipFileFe ? (
                       <div>
@@ -2083,6 +2164,7 @@ export function ProjectDetail() {
                             setZipFileFe(null)
                             setZipErrorFe("")
                           }}
+                          disabled={isDeployingFrontend}
                         >
                           Xóa file
                         </Button>
@@ -2099,6 +2181,7 @@ export function ProjectDetail() {
                     type="file"
                     accept=".zip"
                     className="hidden"
+                    disabled={isDeployingFrontend}
                     onChange={(e) => {
                       const file = e.target.files?.[0]
                       if (file) {
@@ -2125,6 +2208,7 @@ export function ProjectDetail() {
                     placeholder="docker.io/user/app:1.0.0"
                     className="font-mono"
                     onBlur={validateDockerFe}
+                    disabled={isDeployingFrontend}
                   />
                   {errorsFe.sourceRef && (
                     <p className="text-sm text-destructive mt-1">{errorsFe.sourceRef.message}</p>
@@ -2141,6 +2225,7 @@ export function ProjectDetail() {
                     placeholder="fe-myapp"
                     onBlur={validateDNSPublicUrl}
                     className="flex-1"
+                    disabled={isDeployingFrontend}
                   />
                   <Button
                     type="button"
@@ -2158,6 +2243,7 @@ export function ProjectDetail() {
                         toast.info("Vui lòng nhập DNS trước khi kiểm tra")
                       }
                     }}
+                    disabled={isDeployingFrontend}
                   >
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     Kiểm tra
@@ -2175,10 +2261,13 @@ export function ProjectDetail() {
                     setZipFileFe(null)
                     setZipErrorFe("")
                   }}
+                  disabled={isDeployingFrontend}
                 >
                   Hủy
                 </Button>
-                <Button type="submit">Thêm Frontend</Button>
+                <Button type="submit" disabled={isDeployingFrontend}>
+                  {isDeployingFrontend ? "Đang triển khai..." : "Thêm Frontend"}
+                </Button>
               </div>
             </form>
           </DialogContent>
