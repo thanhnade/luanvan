@@ -2,12 +2,13 @@ package my_spring_app.my_spring_app.service.impl;
 
 import com.jcraft.jsch.*;
 import my_spring_app.my_spring_app.dto.reponse.DeployBackendResponse;
-import my_spring_app.my_spring_app.dto.reponse.ListProjectBackendResponse;
 import my_spring_app.my_spring_app.dto.request.DeployBackendRequest;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
+import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ServerEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectBackendRepository;
+import my_spring_app.my_spring_app.repository.ProjectRepository;
 import my_spring_app.my_spring_app.repository.ServerRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
 import my_spring_app.my_spring_app.service.ProjectBackendService;
@@ -16,14 +17,22 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.kubernetes.client.openapi.ApiClient;
+import io.kubernetes.client.openapi.ApiException;
+import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.CoreV1Api;
+import io.kubernetes.client.openapi.models.V1Namespace;
+import io.kubernetes.client.openapi.models.V1ObjectMeta;
+import io.kubernetes.client.util.Config;
+
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * Service implementation cho ProjectBackend
@@ -42,6 +51,10 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
     @Autowired
     private ProjectBackendRepository projectBackendRepository;
 
+    // Repository để truy vấn Project entities
+    @Autowired
+    private ProjectRepository projectRepository;
+
     // Repository để truy vấn User entities
     @Autowired
     private UserRepository userRepository;
@@ -51,49 +64,117 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
     private ServerRepository serverRepository;
 
     /**
-     * Lấy tất cả project backend từ database
-     * @return Danh sách tất cả project backend đã được chuyển đổi sang DTO response
+     * Tạo short UUID từ UUID đầy đủ để sử dụng trong Kubernetes
+     * UUID đầy đủ có 36 ký tự (với dấu gạch ngang), short UUID sẽ có độ dài cố định 12 ký tự
+     * Đảm bảo tính duy nhất bằng cách kiểm tra trong database
+     * 
+     * @param fullUuid UUID đầy đủ từ UUID.randomUUID().toString()
+     * @return Short UUID (12 ký tự) đảm bảo tính duy nhất
      */
-    @Override
-    public ListProjectBackendResponse getAllProjectBackends() {
-        // Lấy tất cả entities từ database
-        List<ProjectBackendEntity> entities = projectBackendRepository.findAll();
+    private String generateShortUuid(String fullUuid) {
+        // Loại bỏ dấu gạch ngang và lấy 12 ký tự đầu
+        String uuidWithoutDashes = fullUuid.replace("-", "");
+        String shortUuid = uuidWithoutDashes.substring(0, 12);
         
-        // Chuyển đổi entities sang DTO items
-        List<ListProjectBackendResponse.ProjectBackendItem> items = entities.stream()
-                .map(entity -> {
-                    // Tạo DTO item và map các thuộc tính từ entity
-                    ListProjectBackendResponse.ProjectBackendItem item = new ListProjectBackendResponse.ProjectBackendItem();
-                    item.setId(entity.getId());
-                    item.setProjectName(entity.getProjectName());
-                    item.setFrameworkType(entity.getFrameworkType());
-                    item.setDeploymentType(entity.getDeploymentMethod());
-                    item.setDomainNameSystem(entity.getDomainNameSystem());
-                    item.setDockerImage(entity.getDockerImage());
-                    item.setSourcePath(entity.getSourcePath());
-                    item.setDeploymentPath(entity.getDeploymentPath()); 
-                    item.setDatabaseIp(entity.getDatabaseIp());
-                    item.setDatabasePort(entity.getDatabasePort());
-                    item.setDatabaseName(entity.getDatabaseName());
-                    item.setDatabaseUsername(entity.getDatabaseUsername());
-                    item.setDatabasePassword(entity.getDatabasePassword());
-                    item.setStatus(entity.getStatus());
-                    item.setCreatedAt(entity.getCreatedAt());
-                    return item;
-                })
-                .collect(Collectors.toList());
+        // Kiểm tra tính duy nhất trong database
+        int attempt = 0;
+        while (projectBackendRepository.existsByUuid_k8s(shortUuid)) {
+            attempt++;
+            // Nếu trùng, tạo UUID mới và lấy 12 ký tự đầu
+            if (attempt > 100) {
+                // Nếu quá nhiều lần thử, throw exception
+                throw new RuntimeException("Không thể tạo short UUID duy nhất sau " + attempt + " lần thử");
+            }
+            // Tạo UUID mới
+            fullUuid = UUID.randomUUID().toString();
+            uuidWithoutDashes = fullUuid.replace("-", "");
+            shortUuid = uuidWithoutDashes.substring(0, 12);
+        }
+        
+        return shortUuid;
+    }
 
-        // Trả về response chứa danh sách items
-        return new ListProjectBackendResponse(items);
+    /**
+     * Kiểm tra và tạo namespace trên Kubernetes cluster nếu chưa tồn tại
+     * Sử dụng Kubernetes Java Client API
+     * 
+     * @param session SSH session đến MASTER server để lấy kubeconfig
+     * @param namespace Tên namespace cần kiểm tra/tạo
+     * @throws Exception Nếu có lỗi khi kiểm tra hoặc tạo namespace
+     */
+    private void ensureNamespaceExists(Session session, String namespace) throws Exception {
+        System.out.println("[ensureNamespaceExists] Kiểm tra namespace: " + namespace);
+        
+        File tempKubeconfig = null;
+        try {
+            // Đọc kubeconfig từ master server (thường ở ~/.kube/config)
+            String kubeconfigPath = "~/.kube/config";
+            System.out.println("[ensureNamespaceExists] Đang đọc kubeconfig từ: " + kubeconfigPath);
+            String kubeconfigContent = executeCommand(session, "cat " + kubeconfigPath);
+            
+            if (kubeconfigContent == null || kubeconfigContent.trim().isEmpty()) {
+                throw new RuntimeException("Không thể đọc kubeconfig từ master server");
+            }
+            
+            // Tạo file kubeconfig tạm thời trên local
+            tempKubeconfig = File.createTempFile("kubeconfig-", ".yaml");
+            tempKubeconfig.deleteOnExit();
+            try (FileWriter writer = new FileWriter(tempKubeconfig)) {
+                writer.write(kubeconfigContent);
+            }
+            System.out.println("[ensureNamespaceExists] Đã tạo file kubeconfig tạm thời: " + tempKubeconfig.getAbsolutePath());
+            
+            // Khởi tạo Kubernetes API client từ kubeconfig
+            ApiClient client = Config.fromConfig(tempKubeconfig.getAbsolutePath());
+            Configuration.setDefaultApiClient(client);
+            CoreV1Api api = new CoreV1Api();
+            
+            // Kiểm tra namespace đã tồn tại chưa
+            try {
+                V1Namespace ns = api.readNamespace(namespace, null);
+                System.out.println("[ensureNamespaceExists] Namespace đã tồn tại: " + namespace + " (Status: " + 
+                    (ns.getStatus() != null && ns.getStatus().getPhase() != null ? ns.getStatus().getPhase() : "Unknown") + ")");
+            } catch (ApiException e) {
+                if (e.getCode() == 404) {
+                    // Namespace chưa tồn tại, tạo mới
+                    System.out.println("[ensureNamespaceExists] Namespace chưa tồn tại, đang tạo mới: " + namespace);
+                    V1Namespace newNamespace = new V1Namespace();
+                    V1ObjectMeta metadata = new V1ObjectMeta();
+                    metadata.setName(namespace);
+                    newNamespace.setMetadata(metadata);
+                    
+                    V1Namespace createdNamespace = api.createNamespace(newNamespace, null, null, null, null);
+                    System.out.println("[ensureNamespaceExists] Đã tạo namespace thành công: " + namespace);
+                } else {
+                    System.err.println("[ensureNamespaceExists] Lỗi API khi kiểm tra namespace. Code: " + e.getCode() + ", Message: " + e.getMessage());
+                    throw new RuntimeException("Lỗi khi kiểm tra namespace: " + e.getMessage(), e);
+                }
+            }
+            
+        } catch (Exception e) {
+            System.err.println("[ensureNamespaceExists] Lỗi: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Không thể kiểm tra/tạo namespace: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo xóa file tạm thời sau khi sử dụng
+            if (tempKubeconfig != null && tempKubeconfig.exists()) {
+                try {
+                    tempKubeconfig.delete();
+                } catch (Exception e) {
+                    System.err.println("[ensureNamespaceExists] Không thể xóa file kubeconfig tạm thời: " + e.getMessage());
+                }
+            }
+        }
     }
 
     /**
      * Helper method để tạo nội dung YAML Kubernetes cho backend Spring Boot
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
-     * 
-     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     *
+     * @param uuid_k8s Short UUID cho deployment
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
+     * @param namespace Namespace để deploy vào Kubernetes
      * @param databaseName Database name
      * @param databaseIp Database IP address
      * @param databasePort Database port
@@ -101,22 +182,22 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * @param databasePassword Database password (có thể null)
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateBackendSpringBootYaml(String deploymentUuid, String dockerImage, String domainName, 
-                                                  String databaseName, String databaseIp, int databasePort, 
+    private String generateBackendSpringBootYaml(String uuid_k8s, String dockerImage, String domainName, String namespace,
+                                                  String databaseName, String databaseIp, int databasePort,
                                                   String databaseUsername, String databasePassword) {
         // K8s Service/Ingress dùng DNS-1035: phải bắt đầu bằng chữ cái -> prefix 'app-'
-        String resourceName = "app-" + deploymentUuid;
+        String resourceName = "app-" + uuid_k8s;
         String dbName = databaseName;
         // Sử dụng trực tiếp databaseIp, databaseUsername, databasePassword từ request (có thể chứa ký tự đặc biệt)
         String dbPassword = databasePassword != null ? databasePassword : "";
-        
+
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
                 "  name: " + resourceName + "\n" +
-                "  namespace: web\n" +
+                "  namespace: " + namespace + "\n" +
                 "spec:\n" +
-                "  replicas: 2\n" +
+                "  replicas: 1\n" +
                 "  selector:\n" +
                 "    matchLabels:\n" +
                 "      app: " + resourceName + "\n" +
@@ -143,7 +224,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "kind: Service\n" +
                 "metadata:\n" +
                 "  name: " + resourceName + "-svc\n" +
-                "  namespace: web\n" +
+                "  namespace: " + namespace + "\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +
                 "  selector:\n" +
@@ -156,7 +237,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "kind: Ingress\n" +
                 "metadata:\n" +
                 "  name: " + resourceName + "-ing\n" +
-                "  namespace: web\n" +
+                "  namespace: " + namespace + "\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
                 "spec:\n" +
@@ -177,10 +258,11 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
     /**
      * Helper method để tạo nội dung YAML Kubernetes cho backend Node.js
      * Tạo file YAML bao gồm: Deployment, Service, và Ingress
-     * 
-     * @param deploymentUuid Tên project đã được chuẩn hóa (lowercase, không có ký tự đặc biệt)
+     *
+     * @param uuid_k8s Short UUID cho deployment
      * @param dockerImage Docker image tag để deploy
      * @param domainName Domain name để cấu hình Ingress
+     * @param namespace Namespace để deploy vào Kubernetes
      * @param databaseName Database name
      * @param databaseIp Database IP address
      * @param databasePort Database port
@@ -188,20 +270,20 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * @param databasePassword Database password (có thể null)
      * @return Nội dung YAML đầy đủ cho Deployment, Service và Ingress
      */
-    private String generateBackendNodeJsYaml(String deploymentUuid, String dockerImage, String domainName,
+    private String generateBackendNodeJsYaml(String uuid_k8s, String dockerImage, String domainName, String namespace,
                                              String databaseName, String databaseIp, int databasePort,
                                              String databaseUsername, String databasePassword) {
-        String resourceName = "app-" + deploymentUuid;
+        String resourceName = "app-" + uuid_k8s;
         String dbName = databaseName;
         String dbPassword = databasePassword != null ? databasePassword : "";
-        
+
         return "apiVersion: apps/v1\n" +
                 "kind: Deployment\n" +
                 "metadata:\n" +
                 "  name: " + resourceName + "\n" +
-                "  namespace: web\n" +
+                "  namespace: " + namespace + "\n" +
                 "spec:\n" +
-                "  replicas: 2\n" +
+                "  replicas: 1\n" +
                 "  selector:\n" +
                 "    matchLabels:\n" +
                 "      app: " + resourceName + "\n" +
@@ -232,7 +314,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "kind: Service\n" +
                 "metadata:\n" +
                 "  name: " + resourceName + "-svc\n" +
-                "  namespace: web\n" +
+                "  namespace: " + namespace + "\n" +
                 "spec:\n" +
                 "  type: ClusterIP\n" +
                 "  selector:\n" +
@@ -245,7 +327,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 "kind: Ingress\n" +
                 "metadata:\n" +
                 "  name: " + resourceName + "-ing\n" +
-                "  namespace: web\n" +
+                "  namespace: " + namespace + "\n" +
                 "  annotations:\n" +
                 "    nginx.ingress.kubernetes.io/rewrite-target: /\n" +
                 "spec:\n" +
@@ -366,7 +448,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
      * Triển khai backend project lên Kubernetes cluster
      * Hỗ trợ 2 phương thức deploy: DOCKER (từ image có sẵn) và FILE (từ file zip)
      * Backend sẽ sử dụng thông tin database từ request để kết nối, không tự động tạo database
-     * 
+     *
      * @param request Thông tin request để deploy backend project
      * @return Response chứa thông tin URL, status và domain name của project đã deploy
      * @throws RuntimeException Nếu có lỗi trong quá trình deploy
@@ -376,7 +458,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         System.out.println("[deployBackend] Bắt đầu triển khai backend project");
 
         // ========== BƯỚC 1: VALIDATE VÀ CHUẨN BỊ DỮ LIỆU ==========
-        
+
         // Tìm user theo username
         Optional<UserEntity> userOptional = userRepository.findByUsername(request.getUsername());
         if (userOptional.isEmpty()) {
@@ -384,8 +466,15 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         }
         UserEntity user = userOptional.get();
 
+        // Lấy ProjectEntity từ projectId
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(request.getProjectId());
+        if (projectOptional.isEmpty()) {
+            throw new RuntimeException("Project không tồn tại với id: " + request.getProjectId());
+        }
+        ProjectEntity project = projectOptional.get();
+
         // Validate deployment type (chỉ hỗ trợ DOCKER hoặc FILE)
-        if (!"DOCKER".equalsIgnoreCase(request.getDeploymentType()) && 
+        if (!"DOCKER".equalsIgnoreCase(request.getDeploymentType()) &&
             !"FILE".equalsIgnoreCase(request.getDeploymentType())) {
             throw new RuntimeException("Deployment type không hợp lệ. Chỉ hỗ trợ DOCKER hoặc FILE");
         }
@@ -396,18 +485,43 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
             throw new RuntimeException("Framework không hợp lệ. Chỉ hỗ trợ SPRINGBOOT, NODEJS");
         }
 
-        // Tạo ProjectBackendEntity và thiết lập các thuộc tính cơ bản
-        ProjectBackendEntity projectEntity = new ProjectBackendEntity();
-        projectEntity.setProjectName(request.getProjectName());
-        projectEntity.setFrameworkType(framework);
-        projectEntity.setDeploymentMethod(request.getDeploymentType().toUpperCase());
-        projectEntity.setStatus("BUILDING"); // Trạng thái ban đầu là BUILDING
-        projectEntity.setUser(user);
-
         // Chuẩn hóa tên project: chuyển sang lowercase, thay khoảng trắng bằng dấu gạch ngang, loại bỏ ký tự đặc biệt
         String projectName = request.getProjectName().toLowerCase()
                 .replaceAll("\\s+", "-")
                 .replaceAll("[^a-z0-9-]", "");
+
+        // Tạo UUID đầy đủ để đảm bảo tính duy nhất
+        String fullUuid = UUID.randomUUID().toString();
+        // Tạo short UUID từ UUID đầy đủ để sử dụng trong Kubernetes (12 ký tự)
+        String uuid_k8s = generateShortUuid(fullUuid);
+        System.out.println("[deployBackend] Tạo UUID đầy đủ: " + fullUuid);
+        System.out.println("[deployBackend] Short UUID cho deployment: " + uuid_k8s + " (độ dài: " + uuid_k8s.length() + " ký tự)");
+
+        // Lấy namespace từ ProjectEntity
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Vui lòng cấu hình namespace cho project.");
+        }
+        System.out.println("[deployBackend] Sử dụng namespace từ ProjectEntity: " + namespace);
+
+        // Validate domainNameSystem từ request
+        String domainName = request.getDomainNameSystem();
+        if (domainName == null || domainName.trim().isEmpty()) {
+            throw new RuntimeException("Domain name system không được để trống");
+        }
+        System.out.println("[deployBackend] Sử dụng domain name từ request: " + domainName);
+
+        // Tạo ProjectBackendEntity và thiết lập các thuộc tính cơ bản
+        ProjectBackendEntity projectEntity = new ProjectBackendEntity();
+        projectEntity.setProjectName(request.getProjectName());
+        projectEntity.setFrameworkType(framework);
+        projectEntity.setDeploymentType(request.getDeploymentType().toUpperCase());
+        projectEntity.setStatus("BUILDING"); // Trạng thái ban đầu là BUILDING
+        projectEntity.setProject(project);
+        // Lưu UUID vào entity để truy vết và tránh trùng tên resource trên K8s
+        projectEntity.setUuid_k8s(uuid_k8s);
+        // Lưu domain name từ request vào entity
+        projectEntity.setDomainNameSystem(domainName);
 
         // Lưu thông tin database vào entity (backend sẽ sử dụng thông tin này để kết nối database)
         projectEntity.setDatabaseIp(request.getDatabaseIp());
@@ -416,18 +530,8 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         projectEntity.setDatabaseUsername(request.getDatabaseUsername());
         projectEntity.setDatabasePassword(request.getDatabasePassword()); // Có thể null
 
-        // Tạo UUID để đảm bảo tính duy nhất cho thư mục và file, tránh trùng tên
-        String deploymentUuid = UUID.randomUUID().toString();
-        System.out.println("[deployBackend] Tạo UUID cho deployment: " + deploymentUuid);
-        // Lưu UUID vào entity để truy vết và dùng đặt tên resource K8s
-        projectEntity.setDeploymentUuid(deploymentUuid);
-
-        // Sử dụng deploymentUuid làm domain cho Ingress và lưu vào entity
-        String domainName = deploymentUuid;
-        projectEntity.setDomainNameSystem(domainName);
-
         // ========== BƯỚC 2: LẤY THÔNG TIN SERVER TỪ DATABASE ==========
-        
+
         // Lấy thông tin các server từ database: MASTER (Kubernetes cluster), DOCKER (build/push images)
         Optional<ServerEntity> masterServerOptional = serverRepository.findByRole("MASTER");
         Optional<ServerEntity> dockerServerOptional = serverRepository.findByRole("DOCKER");
@@ -451,10 +555,10 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
 
         try {
             // ========== BƯỚC 3: XỬ LÝ DEPLOYMENT THEO PHƯƠNG THỨC ==========
-            
+
             if ("DOCKER".equalsIgnoreCase(request.getDeploymentType())) {
                 // ========== PHƯƠNG THỨC 1: DEPLOY TỪ DOCKER IMAGE CÓ SẴN ==========
-                
+
                 // Validate Docker image
                 if (request.getDockerImage() == null || request.getDockerImage().trim().isEmpty()) {
                     throw new RuntimeException("Docker image không được để trống khi deployment type là DOCKER");
@@ -475,14 +579,15 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 System.out.println("[deployBackend] Kết nối SSH đến MASTER server thành công");
 
                 // Tạo nội dung YAML file (Deployment + Service + Ingress)
-                // Sử dụng UUID để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
-                String fileName = deploymentUuid + ".yaml";
+                // Sử dụng uuid_k8s để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
+                String fileName = uuid_k8s + ".yaml";
                 String yamlContent;
                 if ("SPRINGBOOT".equals(framework)) {
                     yamlContent = generateBackendSpringBootYaml(
-                        deploymentUuid, 
-                        request.getDockerImage(), 
+                        uuid_k8s,
+                        request.getDockerImage(),
                         domainName,
+                        namespace,
                         request.getDatabaseName(),
                         request.getDatabaseIp(),
                         request.getDatabasePort(),
@@ -492,9 +597,10 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 } else {
                     // NODEJS
                     yamlContent = generateBackendNodeJsYaml(
-                        deploymentUuid, 
-                        request.getDockerImage(), 
+                        uuid_k8s,
+                        request.getDockerImage(),
                         domainName,
+                        namespace,
                         request.getDatabaseName(),
                         request.getDatabaseIp(),
                         request.getDatabasePort(),
@@ -507,9 +613,9 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 Channel sftpYamlCh = clusterSession.openChannel("sftp");
                 sftpYamlCh.connect();
                 sftpYaml = (ChannelSftp) sftpYamlCh;
-                
-                // Tạo thư mục đích với UUID để tránh trùng tên: /home/<master_username>/uploads/<username>/backend/<UUID>
-                String yamlRemoteDir = "/home/" + master_server.getUsername() + "/uploads/" + user.getUsername() + "/backend/" + deploymentUuid;
+
+                // Tạo thư mục đích với UUID để tránh trùng tên: /home/<master_username>/uploads/<username>/<uuid_k8s của project>/backend/<uuid_k8s>
+                String yamlRemoteDir = "/home/" + master_server.getUsername() + "/uploads/" + user.getUsername() + "/" + project.getUuid_k8s() + "/backend/" + uuid_k8s;
                 System.out.println("[deployBackend] Tạo/cd thư mục YAML: " + yamlRemoteDir);
                 String[] yamlDirParts = yamlRemoteDir.split("/");
                 String yamlCur = "";
@@ -523,17 +629,20 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                         sftpYaml.cd(yamlCur);
                     }
                 }
-                
+
                 // Upload YAML file lên server
                 InputStream yamlStream = new ByteArrayInputStream(yamlContent.getBytes(StandardCharsets.UTF_8));
                 String yamlRemotePath = yamlRemoteDir + "/" + fileName;
                 sftpYaml.put(yamlStream, yamlRemotePath);
                 System.out.println("[deployBackend] Đã upload YAML file: " + yamlRemotePath);
 
-                // Lưu deploymentPath (đường dẫn YAML trên MASTER server)
-                // Với DOCKER method: không có sourcePath (null)
+                // Lưu yamlPath (đường dẫn YAML trên MASTER server)
+                // Với deployment type là DOCKER: không có sourcePath (null)
                 projectEntity.setSourcePath(null);
-                projectEntity.setDeploymentPath(yamlRemotePath);
+                projectEntity.setYamlPath(yamlRemotePath);
+
+                // Kiểm tra và tạo namespace nếu chưa tồn tại
+                ensureNamespaceExists(clusterSession, namespace);
 
                 // Apply YAML file vào Kubernetes cluster bằng kubectl
                 System.out.println("[deployBackend] Đang apply YAML: kubectl apply -f " + yamlRemotePath);
@@ -541,7 +650,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
 
             } else if ("FILE".equalsIgnoreCase(request.getDeploymentType())) {
                 // ========== PHƯƠNG THỨC 2: DEPLOY TỪ FILE ZIP ==========
-                
+
                 // Validate file upload
                 if (request.getFile() == null || request.getFile().isEmpty()) {
                     throw new RuntimeException("File upload không được để trống khi deployment type là FILE");
@@ -565,8 +674,8 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 ch.connect();
                 sftp = (ChannelSftp) ch;
 
-                // Tạo thư mục đích trên DOCKER server với UUID để tránh trùng tên: /home/<docker_username>/uploads/<username>/backend/<UUID>
-                String remoteBase = "/home/" + docker_server.getUsername() + "/uploads/" + user.getUsername() + "/backend/" + deploymentUuid;
+                // Tạo thư mục đích trên DOCKER server với UUID để tránh trùng tên: /home/<docker_username>/uploads/<username>/<uuid_k8s của project>/backend/<uuid_k8s>
+                String remoteBase = "/home/" + docker_server.getUsername() + "/uploads/" + user.getUsername() + "/" + project.getUuid_k8s() + "/backend/" + uuid_k8s;
                 System.out.println("[deployBackend] Tạo/cd thư mục đích: " + remoteBase);
                 // Đảm bảo thư mục tồn tại (tạo từng cấp thư mục nếu chưa có)
                 String[] parts = remoteBase.split("/");
@@ -588,7 +697,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 String remoteZipPath = remoteBase + "/" + safeName;
                 System.out.println("[deployBackend] Upload file lên: " + remoteZipPath);
                 sftp.put(request.getFile().getInputStream(), remoteZipPath);
-                
+
                 // Lưu sourcePath (đường dẫn file zip trên DOCKER server)
                 projectEntity.setSourcePath(remoteZipPath);
 
@@ -611,12 +720,12 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 }
 
                 // Build Docker image từ Dockerfile
-                // Sử dụng UUID thay vì projectName để tránh trùng tên image
-                String imageTag = dockerhub_username + "/" + deploymentUuid + ":latest";
+                // Sử dụng uuid_k8s thay vì projectName để tránh trùng tên image
+                String imageTag = dockerhub_username + "/" + uuid_k8s + ":latest";
                 String buildCmd = "cd '" + projectDir + "' && docker build -t '" + imageTag + "' .";
                 System.out.println("[deployBackend] Docker build: " + buildCmd);
                 executeCommand(session, buildCmd);
-                
+
                 // Push image lên DockerHub
                 String pushCmd = "docker push '" + imageTag + "'";
                 System.out.println("[deployBackend] Docker push: " + pushCmd);
@@ -628,14 +737,15 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 System.out.println("[deployBackend] Chuyển sang MASTER server để upload/apply YAML: " + master_server.getIp() + ":" + master_server.getPort());
 
                 // Tạo nội dung YAML file
-                // Sử dụng UUID để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
-                String fileName = deploymentUuid + ".yaml";
+                // Sử dụng uuid_k8s để làm tên resource trong K8s, tránh trùng khi projectName bị trùng
+                String fileName = uuid_k8s + ".yaml";
                 String yamlContent;
                 if ("SPRINGBOOT".equals(framework)) {
                     yamlContent = generateBackendSpringBootYaml(
-                        deploymentUuid, 
-                        imageTag, 
+                        uuid_k8s,
+                        imageTag,
                         domainName,
+                        namespace,
                         request.getDatabaseName(),
                         request.getDatabaseIp(),
                         request.getDatabasePort(),
@@ -645,9 +755,10 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 } else {
                     // NODEJS
                     yamlContent = generateBackendNodeJsYaml(
-                        deploymentUuid, 
-                        imageTag, 
+                        uuid_k8s,
+                        imageTag,
                         domainName,
+                        namespace,
                         request.getDatabaseName(),
                         request.getDatabaseIp(),
                         request.getDatabasePort(),
@@ -671,9 +782,9 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 Channel sftpYamlCh = clusterSession.openChannel("sftp");
                 sftpYamlCh.connect();
                 sftpYaml = (ChannelSftp) sftpYamlCh;
-                
-                // Tạo thư mục đích trên MASTER server với UUID để tránh trùng tên: /home/<master_username>/uploads/<username>/backend/<UUID>
-                String yamlRemoteDir = "/home/" + master_server.getUsername() + "/uploads/" + user.getUsername() + "/backend/" + deploymentUuid;
+
+                // Tạo thư mục đích trên MASTER server với UUID để tránh trùng tên: /home/<master_username>/uploads/<username>/<uuid_k8s của project>/backend/<uuid_k8s>
+                String yamlRemoteDir = "/home/" + master_server.getUsername() + "/uploads/" + user.getUsername() + "/" + project.getUuid_k8s() + "/backend/" + uuid_k8s;
                 System.out.println("[deployBackend] Tạo/cd thư mục YAML: " + yamlRemoteDir);
                 String[] yamlDirParts = yamlRemoteDir.split("/");
                 String yamlCur = "";
@@ -687,16 +798,19 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                         sftpYaml.cd(yamlCur);
                     }
                 }
-                
+
                 // Upload YAML file lên MASTER server
                 InputStream yamlStream = new ByteArrayInputStream(yamlContent.getBytes(StandardCharsets.UTF_8));
                 String yamlRemotePath = yamlRemoteDir + "/" + fileName;
                 sftpYaml.put(yamlStream, yamlRemotePath);
                 System.out.println("[deployBackend] Upload YAML: " + yamlRemotePath);
 
-                // Lưu deploymentPath (đường dẫn YAML trên MASTER server)
-                // Với FILE method: đã có sourcePath (đã set ở trên), giờ set thêm deploymentPath
-                projectEntity.setDeploymentPath(yamlRemotePath);
+                // Lưu yamlPath (đường dẫn YAML trên MASTER server)
+                // Với FILE method: đã có sourcePath (đã set ở trên), giờ set thêm yamlPath
+                projectEntity.setYamlPath(yamlRemotePath);
+
+                // Kiểm tra và tạo namespace nếu chưa tồn tại
+                ensureNamespaceExists(clusterSession, namespace);
 
                 // Apply YAML file vào Kubernetes cluster
                 System.out.println("[deployBackend] Đang apply YAML: kubectl apply -f " + yamlRemotePath);
@@ -704,7 +818,7 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
             }
 
             // ========== BƯỚC 4: CẬP NHẬT TRẠNG THÁI VÀ TRẢ VỀ KẾT QUẢ ==========
-            
+
             // Cập nhật trạng thái project thành RUNNING
             projectEntity.setStatus("RUNNING");
             projectBackendRepository.save(projectEntity);

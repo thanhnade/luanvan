@@ -1,18 +1,10 @@
 package my_spring_app.my_spring_app.service.impl;
 
 import my_spring_app.my_spring_app.dto.reponse.CreateUserResponse;
-import my_spring_app.my_spring_app.dto.reponse.GetUserProjectsResponse;
 import my_spring_app.my_spring_app.dto.reponse.LoginResponse;
 import my_spring_app.my_spring_app.dto.request.CreateUserRequest;
-import my_spring_app.my_spring_app.dto.request.GetUserProjectsRequest;
 import my_spring_app.my_spring_app.dto.request.LoginRequest;
-import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
-import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
-import my_spring_app.my_spring_app.entity.ProjectFrontendEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
-import my_spring_app.my_spring_app.repository.ProjectBackendRepository;
-import my_spring_app.my_spring_app.repository.ProjectDatabaseRepository;
-import my_spring_app.my_spring_app.repository.ProjectFrontendRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
 import my_spring_app.my_spring_app.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,10 +12,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -34,15 +23,6 @@ public class UserServiceImpl implements UserService {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
-
-    @Autowired
-    private ProjectFrontendRepository projectFrontendRepository;
-
-    @Autowired
-    private ProjectBackendRepository projectBackendRepository;
-
-    @Autowired
-    private ProjectDatabaseRepository projectDatabaseRepository;
 
     @Override
     public CreateUserResponse createUser(CreateUserRequest request) {
@@ -64,6 +44,19 @@ public class UserServiceImpl implements UserService {
         }
         System.out.println("[createUser] Username chưa tồn tại, có thể tạo user mới");
 
+        // Validate tier nếu có
+        String tier = request.getTier();
+        if (tier != null && !tier.trim().isEmpty()) {
+            tier = tier.toUpperCase();
+            if (!"STANDARD".equals(tier) && !"PREMIUM".equals(tier)) {
+                System.err.println("[createUser] Lỗi: Tier không hợp lệ: " + tier);
+                throw new RuntimeException("Tier không hợp lệ. Chỉ hỗ trợ STANDARD hoặc PREMIUM");
+            }
+        } else {
+            // Mặc định là STANDARD nếu không cung cấp
+            tier = "STANDARD";
+        }
+
         // Tạo user mới
         System.out.println("[createUser] Tạo UserEntity mới");
         UserEntity userEntity = new UserEntity();
@@ -72,7 +65,8 @@ public class UserServiceImpl implements UserService {
         userEntity.setPassword(passwordEncoder.encode(request.getPassword()));
         userEntity.setStatus("ACTIVE");
         userEntity.setRole("USER");
-        System.out.println("[createUser] Đã thiết lập thông tin user: fullname=" + request.getFullname() + ", username=" + request.getUsername() + ", role=USER, status=ACTIVE");
+        userEntity.setTier(tier);
+        System.out.println("[createUser] Đã thiết lập thông tin user: fullname=" + request.getFullname() + ", username=" + request.getUsername() + ", role=USER, status=ACTIVE, tier=" + tier);
 
         // Lưu vào database
         System.out.println("[createUser] Lưu user vào database");
@@ -87,6 +81,7 @@ public class UserServiceImpl implements UserService {
         response.setUsername(savedUserEntity.getUsername());
         response.setStatus(savedUserEntity.getStatus());
         response.setRole(savedUserEntity.getRole());
+        response.setTier(savedUserEntity.getTier());
 
         System.out.println("[createUser] Hoàn tất tạo user thành công: username=" + savedUserEntity.getUsername() + ", id=" + savedUserEntity.getId());
         return response;
@@ -130,114 +125,10 @@ public class UserServiceImpl implements UserService {
         response.setFullname(userEntity.getFullname());
         response.setUsername(userEntity.getUsername());
         response.setRole(userEntity.getRole());
+        response.setTier(userEntity.getTier());
 
         System.out.println("[login] Hoàn tất đăng nhập thành công: username=" + userEntity.getUsername() + ", role=" + userEntity.getRole());
         return response;
     }
-
-    @Override
-    public GetUserProjectsResponse getUserProjects(GetUserProjectsRequest request) {
-        System.out.println("[getUserProjects] Bắt đầu lấy danh sách projects cho user: " + request.getUsername());
-        
-        // Tìm user theo username (không fetch collections để tránh MultipleBagFetchException)
-        System.out.println("[getUserProjects] Tìm user theo username: " + request.getUsername());
-        Optional<UserEntity> userOptional = userRepository.findByUsername(request.getUsername());
-        
-        if (userOptional.isEmpty()) {
-            System.err.println("[getUserProjects] Lỗi: Không tìm thấy user với username: " + request.getUsername());
-            throw new RuntimeException("User không tồn tại");
-        }
-        
-        UserEntity userEntity = userOptional.get();
-        System.out.println("[getUserProjects] Tìm thấy user với ID: " + userEntity.getId());
-        
-        // Khởi tạo danh sách projects
-        List<GetUserProjectsResponse.ProjectItem> projects = new ArrayList<>();
-        
-        // Lấy frontend projects từ repository (query riêng biệt để tránh MultipleBagFetchException)
-        System.out.println("[getUserProjects] Lấy frontend projects từ repository");
-        List<ProjectFrontendEntity> frontendEntities = projectFrontendRepository.findByUser(userEntity);
-        List<GetUserProjectsResponse.ProjectItem> frontendProjects = frontendEntities.stream()
-                .map(frontend -> {
-                    GetUserProjectsResponse.ProjectItem item = new GetUserProjectsResponse.ProjectItem();
-                    item.setId(frontend.getId());
-                    item.setProjectName(frontend.getProjectName());
-                    item.setProjectType("FRONTEND");
-                    item.setFrameworkType(frontend.getFrameworkType());
-                    item.setDeploymentType(frontend.getDeploymentMethod());
-                    item.setDomainNameSystem(frontend.getDomainNameSystem());
-                    item.setStatus(frontend.getStatus());
-                    item.setCreatedAt(frontend.getCreatedAt());
-                    item.setDockerImage(frontend.getDockerImage());
-                    item.setSourcePath(frontend.getSourcePath());
-                    item.setDeploymentPath(frontend.getDeploymentPath());
-                    return item;
-                })
-                .collect(Collectors.toList());
-        projects.addAll(frontendProjects);
-        System.out.println("[getUserProjects] Đã lấy " + frontendProjects.size() + " frontend projects");
-        
-        // Lấy backend projects từ repository (query riêng biệt để tránh MultipleBagFetchException)
-        System.out.println("[getUserProjects] Lấy backend projects từ repository");
-        List<ProjectBackendEntity> backendEntities = projectBackendRepository.findByUser(userEntity);
-        List<GetUserProjectsResponse.ProjectItem> backendProjects = backendEntities.stream()
-                .map(backend -> {
-                    GetUserProjectsResponse.ProjectItem item = new GetUserProjectsResponse.ProjectItem();
-                    item.setId(backend.getId());
-                    item.setProjectName(backend.getProjectName());
-                    item.setProjectType("BACKEND");
-                    item.setFrameworkType(backend.getFrameworkType());
-                    item.setDeploymentType(backend.getDeploymentMethod());
-                    item.setDomainNameSystem(backend.getDomainNameSystem());
-                    item.setStatus(backend.getStatus());
-                    item.setCreatedAt(backend.getCreatedAt());
-                    item.setDockerImage(backend.getDockerImage());
-                    item.setSourcePath(backend.getSourcePath());
-                    item.setDeploymentPath(backend.getDeploymentPath());
-                    item.setDatabaseIp(backend.getDatabaseIp());
-                    item.setDatabasePort(backend.getDatabasePort());
-                    item.setDatabaseName(backend.getDatabaseName());
-                    item.setDatabaseUsername(backend.getDatabaseUsername());
-                    item.setDatabasePassword(backend.getDatabasePassword());
-                    return item;
-                })
-                .collect(Collectors.toList());
-        projects.addAll(backendProjects);
-        System.out.println("[getUserProjects] Đã lấy " + backendProjects.size() + " backend projects");
-        
-        // Lấy database projects từ repository (query riêng biệt để tránh MultipleBagFetchException)
-        System.out.println("[getUserProjects] Lấy database projects từ repository");
-        List<ProjectDatabaseEntity> databaseEntities = projectDatabaseRepository.findByUser(userEntity);
-        List<GetUserProjectsResponse.ProjectItem> databaseProjects = databaseEntities.stream()
-                .map(database -> {
-                    GetUserProjectsResponse.ProjectItem item = new GetUserProjectsResponse.ProjectItem();
-                    item.setId(database.getId());
-                    item.setProjectName(database.getProjectName());
-                    item.setProjectType("DATABASE");
-                    item.setFrameworkType(database.getDatabaseType());
-                    item.setStatus(database.getStatus());
-                    item.setCreatedAt(database.getCreatedAt());
-                    item.setDatabaseIp(database.getDatabaseIp());
-                    item.setDatabasePort(database.getDatabasePort());
-                    item.setDatabaseName(database.getDatabaseName());
-                    item.setDatabaseUsername(database.getDatabaseUsername());
-                    item.setDatabasePassword(database.getDatabasePassword());
-                    item.setDatabaseFile(database.getDatabaseFile());
-                    return item;
-                })
-                .collect(Collectors.toList());
-        projects.addAll(databaseProjects);
-        System.out.println("[getUserProjects] Đã lấy " + databaseProjects.size() + " database projects");
-        
-        System.out.println("[getUserProjects] Tổng cộng " + projects.size() + " projects");
-        
-        // Tạo response
-        GetUserProjectsResponse response = new GetUserProjectsResponse();
-        response.setProjects(projects);
-        
-        System.out.println("[getUserProjects] Hoàn tất lấy danh sách projects cho user: " + request.getUsername());
-        return response;
-    }
-
 }
 

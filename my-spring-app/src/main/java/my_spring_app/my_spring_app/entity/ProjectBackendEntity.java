@@ -18,29 +18,19 @@ public class ProjectBackendEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "deployment_uuid", nullable = false)
-    private String deploymentUuid;
-
     @Column(name = "project_name", nullable = false)
     private String projectName;
+
+    @Column(name = "description", nullable = true)
+    private String description;
+
+    @Column(name = "deployment_type", nullable = false)
+    private String deploymentType; // DOCKER, FILE
 
     @Column(nullable = false)
     private String frameworkType; // SPRING, NODEJS
 
-    @Column(name = "deployment_method", nullable = false)
-    private String deploymentMethod; // DOCKER, FILE
-
-    @Column(name = "docker_image", nullable = true)
-    private String dockerImage;
-
-    @Column(name = "source_path", nullable = true)
-    private String sourcePath;
-
-    @Column(name = "deployment_path", nullable = true)
-    private String deploymentPath;
-
-    @Column(name = "domain_name_system", nullable = true)
-    private String domainNameSystem;
+    // Database information
 
     @Column(name = "database_ip", nullable = true)
     private String databaseIp;
@@ -57,15 +47,38 @@ public class ProjectBackendEntity {
     @Column(name = "database_password", nullable = true)
     private String databasePassword;
 
+    // Deployment information for K8s
+
+    @Column(name = "uuid_k8s", nullable = false)
+    private String uuid_k8s; // uuid short id for k8s
+
+    @Column(name = "source_path", nullable = true)
+    private String sourcePath;
+
+    @Column(name = "yaml_path", nullable = true)
+    private String yamlPath;
+
+     @Column(name = "docker_image", nullable = true)
+    private String dockerImage;
+
+    @Column(name = "domain_name_system", nullable = true)
+    private String domainNameSystem;
+
+    //
+
     @Column(nullable = false)
     private String status; // RUNNING, STOPPED, ERROR
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+    // Relations
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private UserEntity user;
+    @JoinColumn(name = "project_id", nullable = false)
+    private ProjectEntity project;
+
+    //
+
+    @Column(name = "created_at", nullable = false)
+    private LocalDateTime createdAt;
 
     @PrePersist
     public void prePersist() {

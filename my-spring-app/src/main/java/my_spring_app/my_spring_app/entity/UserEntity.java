@@ -30,13 +30,19 @@ public class UserEntity {
     private String password;
 
     @Column(nullable = false)
-    private String status; // INACTIVE, ACTIVE
+    private String role; // USER, ADMIN
 
     @Column(nullable = false)
-    private String role; // USER, ADMIN
+    private String tier; // STANDARD, PREMIUM
+
+    @Column(nullable = false)
+    private String status; // INACTIVE, ACTIVE
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<ProjectEntity> projects = new ArrayList<>();
 
     @PrePersist
     public void prePersist() {
@@ -45,13 +51,5 @@ public class UserEntity {
         }
     }
 
-    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
-    private List<ProjectFrontendEntity> projectFrontends = new ArrayList<>();
-
-    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
-    private List<ProjectBackendEntity> projectBackends = new ArrayList<>();
-
-    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
-    private List<ProjectDatabaseEntity> projectDatabases = new ArrayList<>();
 }
 
