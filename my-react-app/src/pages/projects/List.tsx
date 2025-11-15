@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { Search, Plus } from "lucide-react"
 import { motion } from "framer-motion"
-import { getProjects } from "@/lib/mock-api"
+import { getUserProjects } from "@/lib/project-api"
+import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ProjectStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,45 +12,93 @@ import { Badge } from "@/components/ui/badge"
 import { Select } from "@/components/ui/select"
 import { EmptyState } from "@/components/common/EmptyState"
 import { CreateProjectModal } from "@/components/common/CreateProjectModal"
+import { toast } from "sonner"
 
 /**
  * Trang danh sách Projects với tìm kiếm, lọc và sắp xếp
  */
 export function ProjectsList() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [sortBy, setSortBy] = useState<"name" | "updated">("updated")
   const [showCreateModal, setShowCreateModal] = useState(false)
 
-  // Load projects
-  useEffect(() => {
-    const loadProjects = async () => {
-      setLoading(true)
-      try {
-        const data = await getProjects(
-          searchQuery,
-          statusFilter === "all" ? undefined : statusFilter
-        )
-        // Sort
-        const sorted = [...data].sort((a, b) => {
-          if (sortBy === "name") {
-            return a.name.localeCompare(b.name)
-          }
-          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-        })
-        setProjects(sorted)
-      } catch (error) {
-        console.error("Lỗi load projects:", error)
-      } finally {
-        setLoading(false)
-      }
+  // Load projects từ API
+  const loadProjects = useCallback(async () => {
+    if (!user?.username) {
+      setLoading(false)
+      return
     }
 
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await getUserProjects(user.username)
+      
+      // Map dữ liệu từ API response sang format Project
+      const mappedProjects: Project[] = response.projects.map((item) => ({
+        id: String(item.id),
+        name: item.projectName,
+        description: item.description || undefined,
+        status: "running" as ProjectStatus, // Mặc định status vì API chưa trả về
+        updatedAt: item.updatedAt,
+        components: {
+          databases: [], // Chỉ lưu counts, không tạo dummy data
+          backends: [],
+          frontends: [],
+        },
+        // Lưu counts riêng để hiển thị
+        _counts: {
+          databases: item.databaseCount,
+          backends: item.backendCount,
+          frontends: item.frontendCount,
+        },
+      }))
+
+      // Filter và sort
+      let filtered = mappedProjects
+
+      // Filter by search query
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase()
+        filtered = filtered.filter(
+          (p) =>
+            p.name.toLowerCase().includes(query) ||
+            p.description?.toLowerCase().includes(query)
+        )
+      }
+
+      // Filter by status (tạm thời không áp dụng vì API chưa trả về status)
+      // if (statusFilter !== "all") {
+      //   filtered = filtered.filter((p) => p.status === statusFilter)
+      // }
+
+      // Sort
+      const sorted = [...filtered].sort((a, b) => {
+        if (sortBy === "name") {
+          return a.name.localeCompare(b.name)
+        }
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      })
+
+      setProjects(sorted)
+    } catch (err) {
+      console.error("Lỗi load projects:", err)
+      setError(err instanceof Error ? err.message : "Có lỗi xảy ra khi tải danh sách projects")
+      toast.error("Không thể tải danh sách projects")
+    } finally {
+      setLoading(false)
+    }
+  }, [user?.username, searchQuery, statusFilter, sortBy])
+
+  useEffect(() => {
     loadProjects()
-  }, [searchQuery, statusFilter, sortBy])
+  }, [loadProjects])
 
   // Map trạng thái sang badge variant
   const getStatusBadge = (status: ProjectStatus) => {
@@ -82,6 +131,19 @@ export function ProjectsList() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center py-12">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={loadProjects}>Thử lại</Button>
+          </div>
+        </div>
       </div>
     )
   }
@@ -183,9 +245,9 @@ export function ProjectsList() {
                     <CardContent className="flex-1">
                       <div className="space-y-2 text-sm text-muted-foreground">
                         <div className="flex items-center gap-4">
-                          <span>Databases: {project.components.databases.length}</span>
-                          <span>Backends: {project.components.backends.length}</span>
-                          <span>Frontends: {project.components.frontends.length}</span>
+                          <span>Databases: {project._counts?.databases ?? project.components.databases.length}</span>
+                          <span>Backends: {project._counts?.backends ?? project.components.backends.length}</span>
+                          <span>Frontends: {project._counts?.frontends ?? project.components.frontends.length}</span>
                         </div>
                         <div className="text-xs">
                           Cập nhật: {formatDate(project.updatedAt)}
@@ -213,19 +275,9 @@ export function ProjectsList() {
       <CreateProjectModal
         open={showCreateModal}
         onOpenChange={setShowCreateModal}
-        onProjectCreated={async () => {
-          // Reload projects
-          const data = await getProjects(
-            searchQuery,
-            statusFilter === "all" ? undefined : statusFilter
-          )
-          const sorted = [...data].sort((a, b) => {
-            if (sortBy === "name") {
-              return a.name.localeCompare(b.name)
-            }
-            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          })
-          setProjects(sorted)
+        onProjectCreated={() => {
+          // Reload projects sau khi tạo thành công
+          loadProjects()
         }}
       />
     </div>

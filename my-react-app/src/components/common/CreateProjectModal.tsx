@@ -1,7 +1,8 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { FolderPlus, Layers } from "lucide-react"
-import { createProject } from "@/lib/mock-api"
+import { createProject } from "@/lib/project-api"
+import { useAuth } from "@/contexts/AuthContext"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -25,6 +26,7 @@ export function CreateProjectModal({
   onProjectCreated,
 }: CreateProjectModalProps) {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [createMode, setCreateMode] = useState<"empty" | "fullstack" | null>(null)
   const [projectName, setProjectName] = useState("")
   const [projectDescription, setProjectDescription] = useState("")
@@ -47,14 +49,17 @@ export function CreateProjectModal({
       return
     }
 
+    if (!user?.username) {
+      toast.error("Bạn chưa đăng nhập")
+      return
+    }
+
     setIsCreating(true)
     try {
       const newProject = await createProject({
-        name: projectName.trim(),
+        projectName: projectName.trim(),
         description: projectDescription.trim() || undefined,
-        databases: [],
-        backends: [],
-        frontends: [],
+        username: user.username,
       })
       toast.success("Tạo project thành công!")
       handleClose()
@@ -65,7 +70,7 @@ export function CreateProjectModal({
       // Navigate to detail
       navigate(`/projects/${newProject.id}`)
     } catch (error) {
-      toast.error("Có lỗi xảy ra khi tạo project")
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi tạo project")
       console.error(error)
     } finally {
       setIsCreating(false)

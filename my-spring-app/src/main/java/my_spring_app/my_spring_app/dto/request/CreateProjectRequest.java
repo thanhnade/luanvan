@@ -17,10 +17,6 @@ public class CreateProjectRequest {
 
     private String description;
 
-    @NotBlank(message = "Namespace không được để trống")
-    @Size(min = 1, max = 63, message = "Namespace phải có từ 1 đến 63 ký tự")
-    private String namespace;
-
     @NotBlank(message = "Username không được để trống")
     private String username;
 }

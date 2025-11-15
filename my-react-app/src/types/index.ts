@@ -55,6 +55,12 @@ export type Project = {
     backends: BackendItem[];
     frontends: FrontendItem[];
   };
+  // Optional counts từ API (khi không có full components data)
+  _counts?: {
+    databases: number;
+    backends: number;
+    frontends: number;
+  };
 };
 
 // Types cho wizard form
