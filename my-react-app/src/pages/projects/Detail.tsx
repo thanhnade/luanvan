@@ -185,20 +185,9 @@ export function ProjectDetail() {
   const databaseSchema = z.object({
     name: z.string().min(1, "Tên database không được để trống"),
     type: z.enum(["mysql", "mongodb"]),
-    provision: z.enum(["user", "system"]),
-    databaseName: z.string().optional(), // Tên database thực tế trên server (khi chọn "Của người dùng")
-    ip: z.string().optional(),
-    port: z.string().optional(),
+    databaseName: z.string().optional(), // Tên database thực tế trên server
     username: z.string().optional(),
     password: z.string().optional(),
-  }).refine((data) => {
-    if (data.provision === "user") {
-      return !!(data.databaseName && data.ip && data.port && data.username && data.password)
-    }
-    return true
-  }, {
-    message: "Khi chọn 'Của người dùng', vui lòng điền đầy đủ Tên database, IP, Port, Username và Password",
-    path: ["databaseName"]
   })
 
   // Schema validation cho form thêm backend
@@ -245,33 +234,24 @@ export function ProjectDetail() {
   const {
     register: registerDb,
     handleSubmit: handleSubmitDb,
-    watch: watchDb,
     reset: resetDb,
     formState: { errors: errorsDb },
   } = useForm<z.infer<typeof databaseSchema>>({
     resolver: zodResolver(databaseSchema),
     defaultValues: {
       type: "mysql",
-      provision: "system",
     },
   })
-
-  const provisionDb = watchDb("provision")
 
   const onSubmitDatabase = async (data: z.infer<typeof databaseSchema>) => {
     if (!id) return
 
     try {
-      const endpoint = data.ip && data.port
-        ? `${data.ip}:${data.port}`
-        : undefined
-
       const newDatabase = {
         name: data.name,
         type: data.type,
-        provision: data.provision,
+        provision: "system" as const, // Mặc định là hệ thống
         databaseName: data.databaseName || undefined,
-        endpoint,
         username: data.username || undefined,
       }
 
@@ -722,8 +702,7 @@ export function ProjectDetail() {
                               <div>
                                 <CardTitle className="text-lg">{db.name}</CardTitle>
                                 <CardDescription>
-                                  {db.type === "mysql" ? "MySQL" : "MongoDB"} -{" "}
-                                  {db.provision === "user" ? "Của người dùng" : "Của hệ thống"}
+                                  {db.type === "mysql" ? "MySQL" : "MongoDB"} - Của hệ thống
                                 </CardDescription>
                               </div>
                               <Badge variant={dbStatus.variant}>
@@ -1117,10 +1096,7 @@ export function ProjectDetail() {
               <ul className="list-disc list-inside space-y-1 text-sm">
                 <li>Chọn loại database: MySQL hoặc MongoDB</li>
                 <li>
-                  <strong>Của người dùng:</strong> Nhập IP, Port, Username, Password để kết nối database có sẵn
-                </li>
-                <li>
-                  <strong>Của hệ thống:</strong> Hệ thống sẽ tự động tạo và quản lý database (chỉ thao tác qua ứng dụng, không cấp quyền đăng nhập DB)
+                  Hệ thống sẽ tự động tạo và quản lý database (chỉ thao tác qua ứng dụng, không cấp quyền đăng nhập DB)
                 </li>
                 <li>
                   Upload file ZIP: Chỉ nhận tệp .zip. Khi giải nén, tên thư mục gốc phải trùng với tên database
@@ -1146,186 +1122,75 @@ export function ProjectDetail() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="db-type">
-                    Loại Database <span className="text-destructive">*</span>
-                  </Label>
-                  <Select id="db-type" {...registerDb("type")}>
-                    <option value="mysql">MySQL</option>
-                    <option value="mongodb">MongoDB</option>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="db-provision">
-                    Nguồn <span className="text-destructive">*</span>
-                  </Label>
-                  <Select id="db-provision" {...registerDb("provision")}>
-                    <option value="system">Của hệ thống</option>
-                    <option value="user">Của người dùng</option>
-                  </Select>
-                </div>
+              <div>
+                <Label htmlFor="db-type">
+                  Loại Database <span className="text-destructive">*</span>
+                </Label>
+                <Select id="db-type" {...registerDb("type")}>
+                  <option value="mysql">MySQL</option>
+                  <option value="mongodb">MongoDB</option>
+                </Select>
               </div>
 
-              {/* Form fields cho Database connection - hiển thị cho cả system và user */}
+              {/* Form fields cho Database connection - chỉ hiển thị cho hệ thống */}
               <div className="p-4 bg-muted rounded-lg space-y-4">
                 <div>
                   <Label className="text-sm font-medium mb-2 block">
-                    Thông tin kết nối Database
+                    Thông tin Database của hệ thống
                   </Label>
                   <p className="text-xs text-muted-foreground mb-3">
-                    {provisionDb === "user" 
-                      ? "Nhập thông tin kết nối database có sẵn của bạn"
-                      : "Nhập thông tin kết nối database (tùy chọn cho hệ thống tự quản lý)"}
+                    Nhập thông tin database (tùy chọn cho hệ thống tự quản lý)
                   </p>
                 </div>
                 <div className="space-y-4">
-                  {provisionDb === "user" ? (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <div className="grid grid-cols-12 gap-4">
-                        <div className="col-span-5">
-                          <Label htmlFor="db-databaseName">
-                            Tên Database <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            id="db-databaseName"
-                            {...registerDb("databaseName")}
-                            placeholder="my_database"
-                          />
-                          {errorsDb.databaseName && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.databaseName.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="col-span-5">
-                          <Label htmlFor="db-ip">
-                            IP/Host Database <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            id="db-ip"
-                            {...registerDb("ip")}
-                            placeholder="192.168.1.100"
-                          />
-                          {errorsDb.ip && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.ip.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="col-span-2">
-                          <Label htmlFor="db-port">
-                            Port <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            id="db-port"
-                            {...registerDb("port")}
-                            placeholder="3306"
-                          />
-                          {errorsDb.port && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.port.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label htmlFor="db-username">
-                            Username Database <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            id="db-username"
-                            {...registerDb("username")}
-                            placeholder="admin"
-                          />
-                          {errorsDb.username && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.username.message}
-                            </p>
-                          )}
-                        </div>
-                        <div>
-                          <Label htmlFor="db-password">
-                            Password Database <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            id="db-password"
-                            type="password"
-                            {...registerDb("password")}
-                            placeholder="••••••••"
-                          />
-                          {errorsDb.password && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.password.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <div>
-                        <Label htmlFor="db-databaseName">
-                          Tên Database
-                        </Label>
-                        <Input
-                          id="db-databaseName"
-                          {...registerDb("databaseName")}
-                          placeholder="my_database"
-                        />
-                        {errorsDb.databaseName && (
-                          <p className="text-sm text-destructive mt-1">
-                            {errorsDb.databaseName.message}
-                          </p>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label htmlFor="db-username">
-                            Username Database
-                          </Label>
-                          <Input
-                            id="db-username"
-                            {...registerDb("username")}
-                            placeholder="admin"
-                          />
-                          {errorsDb.username && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.username.message}
-                            </p>
-                          )}
-                        </div>
-                        <div>
-                          <Label htmlFor="db-password">
-                            Password Database
-                          </Label>
-                          <Input
-                            id="db-password"
-                            type="password"
-                            {...registerDb("password")}
-                            placeholder="••••••••"
-                          />
-                          {errorsDb.password && (
-                            <p className="text-sm text-destructive mt-1">
-                              {errorsDb.password.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
+                  <div>
+                    <Label htmlFor="db-databaseName">
+                      Tên Database
+                    </Label>
+                    <Input
+                      id="db-databaseName"
+                      {...registerDb("databaseName")}
+                      placeholder="my_database"
+                    />
+                    {errorsDb.databaseName && (
+                      <p className="text-sm text-destructive mt-1">
+                        {errorsDb.databaseName.message}
+                      </p>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="db-username">
+                        Username Database
+                      </Label>
+                      <Input
+                        id="db-username"
+                        {...registerDb("username")}
+                        placeholder="admin"
+                      />
+                      {errorsDb.username && (
+                        <p className="text-sm text-destructive mt-1">
+                          {errorsDb.username.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <Label htmlFor="db-password">
+                        Password Database
+                      </Label>
+                      <Input
+                        id="db-password"
+                        type="password"
+                        {...registerDb("password")}
+                        placeholder="••••••••"
+                      />
+                      {errorsDb.password && (
+                        <p className="text-sm text-destructive mt-1">
+                          {errorsDb.password.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 

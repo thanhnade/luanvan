@@ -1,15 +1,20 @@
 import { Link, useLocation } from "react-router-dom"
-import { Moon, Sun, FolderKanban, Plus } from "lucide-react"
+import { Moon, Sun, FolderKanban, Plus, LogOut } from "lucide-react"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { CreateProjectModal } from "@/components/common/CreateProjectModal"
-import { cn } from "@/lib/utils"
+import { useAuth } from "@/contexts/AuthContext"
+import {
+  DropdownMenu,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu"
 
 /**
  * Component Navbar với dark mode toggle
  */
 export function Navbar() {
   const location = useLocation()
+  const { user, logout } = useAuth()
   const [darkMode, setDarkMode] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
 
@@ -31,6 +36,15 @@ export function Navbar() {
     } else {
       document.documentElement.classList.remove("dark")
     }
+  }
+
+  // Lấy chữ cái đầu của fullname để hiển thị trong avatar
+  const getInitials = (fullname: string) => {
+    const parts = fullname.trim().split(" ")
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    }
+    return fullname[0]?.toUpperCase() || "U"
   }
 
   return (
@@ -66,10 +80,33 @@ export function Navbar() {
                 <Moon className="w-5 h-5" />
               )}
             </Button>
-            {/* Avatar placeholder */}
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
-              U
-            </div>
+            
+            {/* User menu */}
+            <DropdownMenu
+              trigger={
+                <button className="flex items-center gap-2 rounded-full focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer">
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
+                    {user ? getInitials(user.fullname) : "U"}
+                  </div>
+                </button>
+              }
+              align="right"
+            >
+              {user && (
+                <>
+                  <div className="px-2 py-1.5 text-sm font-medium border-b pointer-events-none">
+                    {user.fullname}
+                  </div>
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground border-b pointer-events-none">
+                    @{user.username}
+                  </div>
+                </>
+              )}
+              <DropdownMenuItem onClick={logout}>
+                <LogOut className="w-4 h-4 mr-2" />
+                Đăng xuất
+              </DropdownMenuItem>
+            </DropdownMenu>
           </div>
         </div>
       </div>
