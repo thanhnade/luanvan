@@ -72,3 +72,204 @@ export async function createProject(request: CreateProjectRequest): Promise<Crea
   return response.json()
 }
 
+/**
+ * Lấy thông tin cơ bản của project
+ */
+export interface ProjectBasicInfoResponse {
+  id: number
+  projectName: string
+  description?: string
+  updatedAt: string // ISO date string
+}
+
+export async function getProjectBasicInfo(projectId: string | number): Promise<ProjectBasicInfoResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/basic-info`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy thông tin project" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy thông tin project")
+  }
+
+  return response.json()
+}
+
+/**
+ * Lấy thông tin tổng quan của project
+ */
+export interface ComponentStats {
+  total: number
+  running: number
+  paused: number
+  stopped: number
+  error: number
+}
+
+export interface ProjectOverviewResponse {
+  id: number
+  projectName: string
+  description?: string
+  createdAt: string
+  updatedAt: string
+  uuid_k8s: string
+  namespace: string
+  databases: ComponentStats
+  backends: ComponentStats
+  frontends: ComponentStats
+}
+
+export async function getProjectOverview(projectId: string | number): Promise<ProjectOverviewResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/overview`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy thông tin tổng quan project" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy thông tin tổng quan project")
+  }
+
+  return response.json()
+}
+
+/**
+ * Lấy danh sách databases của project
+ */
+export interface DatabaseInfo {
+  id: number
+  projectName: string
+  description?: string
+  databaseType: string // MYSQL, MONGODB
+  databaseIp: string
+  databasePort: number
+  databaseName: string
+  databaseUsername: string
+  databasePassword: string
+  status: string // RUNNING, STOPPED, ERROR
+  createdAt: string
+}
+
+export interface ProjectDatabaseListResponse {
+  databases: DatabaseInfo[]
+}
+
+export async function getProjectDatabases(projectId: string | number): Promise<ProjectDatabaseListResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/databases`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy danh sách databases" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy danh sách databases")
+  }
+
+  return response.json()
+}
+
+/**
+ * Lấy danh sách backends của project
+ */
+export interface BackendInfo {
+  id: number
+  projectName: string
+  description?: string
+  deploymentType: string // DOCKER, FILE
+  frameworkType: string // SPRING, NODEJS
+  databaseIp?: string
+  databasePort?: number
+  databaseName?: string
+  databaseUsername?: string
+  databasePassword?: string
+  uuid_k8s: string
+  sourcePath?: string
+  yamlPath?: string
+  dockerImage?: string
+  domainNameSystem?: string
+  status: string // RUNNING, STOPPED, ERROR
+  createdAt: string
+}
+
+export interface ProjectBackendListResponse {
+  backends: BackendInfo[]
+}
+
+export async function getProjectBackends(projectId: string | number): Promise<ProjectBackendListResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/backends`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy danh sách backends" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy danh sách backends")
+  }
+
+  return response.json()
+}
+
+/**
+ * Lấy danh sách frontends của project
+ */
+export interface FrontendInfo {
+  id: number
+  projectName: string
+  description?: string
+  deploymentType: string // DOCKER, FILE
+  frameworkType: string // REACT, VUE, ANGULAR
+  uuid_k8s: string
+  sourcePath?: string
+  yamlPath?: string
+  dockerImage?: string
+  domainNameSystem?: string
+  status: string // RUNNING, STOPPED, ERROR
+  createdAt: string
+}
+
+export interface ProjectFrontendListResponse {
+  frontends: FrontendInfo[]
+}
+
+export async function getProjectFrontends(projectId: string | number): Promise<ProjectFrontendListResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/frontends`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy danh sách frontends" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy danh sách frontends")
+  }
+
+  return response.json()
+}
+
+/**
+ * Xóa project
+ */
+export async function deleteProject(projectId: string | number, username: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}?username=${encodeURIComponent(username)}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi xóa project" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi xóa project")
+  }
+}
+

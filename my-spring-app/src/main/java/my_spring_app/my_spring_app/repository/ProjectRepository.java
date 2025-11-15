@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ProjectRepository extends JpaRepository<ProjectEntity, Long> {
@@ -26,5 +27,17 @@ public interface ProjectRepository extends JpaRepository<ProjectEntity, Long> {
     // Query riêng để fetch frontends
     @Query("SELECT DISTINCT p FROM ProjectEntity p LEFT JOIN FETCH p.frontends WHERE p.user = :user")
     List<ProjectEntity> findByUserWithFrontends(@Param("user") UserEntity user);
+    
+    // Query để fetch project by ID với databases
+    @Query("SELECT DISTINCT p FROM ProjectEntity p LEFT JOIN FETCH p.databases WHERE p.id = :id")
+    Optional<ProjectEntity> findByIdWithDatabases(@Param("id") Long id);
+    
+    // Query để fetch project by ID với backends
+    @Query("SELECT DISTINCT p FROM ProjectEntity p LEFT JOIN FETCH p.backends WHERE p.id = :id")
+    Optional<ProjectEntity> findByIdWithBackends(@Param("id") Long id);
+    
+    // Query để fetch project by ID với frontends
+    @Query("SELECT DISTINCT p FROM ProjectEntity p LEFT JOIN FETCH p.frontends WHERE p.id = :id")
+    Optional<ProjectEntity> findByIdWithFrontends(@Param("id") Long id);
 }
 

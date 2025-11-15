@@ -1,9 +1,18 @@
 package my_spring_app.my_spring_app.service.impl;
 
 import my_spring_app.my_spring_app.dto.reponse.CreateProjectResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectBackendListResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectBasicInfoResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectDatabaseListResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectDetailResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectFrontendListResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectOverviewResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.request.CreateProjectRequest;
+import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
+import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
+import my_spring_app.my_spring_app.entity.ProjectFrontendEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
@@ -146,6 +155,413 @@ public class ProjectServiceImpl implements ProjectService {
 
         System.out.println("[getUserProjects] Hoàn tất lấy danh sách projects: " + projectSummaries.size() + " projects");
         return response;
+    }
+
+    @Override
+    public ProjectDetailResponse getProjectDetail(Long projectId, String username) {
+        System.out.println("[getProjectDetail] Bắt đầu lấy chi tiết project với ID: " + projectId + " cho user: " + username);
+
+        // Tìm user theo username
+        Optional<UserEntity> userOptional = userRepository.findByUsername(username);
+        if (userOptional.isEmpty()) {
+            System.err.println("[getProjectDetail] Lỗi: User không tồn tại với username: " + username);
+            throw new RuntimeException("User không tồn tại với username: " + username);
+        }
+        UserEntity user = userOptional.get();
+        System.out.println("[getProjectDetail] Tìm thấy user với ID: " + user.getId());
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectDetail] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectDetail] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Validate project thuộc về user
+        if (project.getUser() == null || !project.getUser().getId().equals(user.getId())) {
+            System.err.println("[getProjectDetail] Lỗi: Project không thuộc về user này. Project user ID: " + 
+                              (project.getUser() != null ? project.getUser().getId() : "null") + 
+                              ", Request user ID: " + user.getId());
+            throw new RuntimeException("Bạn không có quyền truy cập project này");
+        }
+
+        // Fetch các collections riêng biệt để tránh LazyInitializationException
+        // Sử dụng các query riêng để fetch databases, backends, frontends
+        ProjectEntity projectWithDatabases = projectRepository.findByIdWithDatabases(projectId).orElse(project);
+        ProjectEntity projectWithBackends = projectRepository.findByIdWithBackends(projectId).orElse(project);
+        ProjectEntity projectWithFrontends = projectRepository.findByIdWithFrontends(projectId).orElse(project);
+
+        // Map databases
+        List<ProjectDetailResponse.DatabaseDetail> databases = (projectWithDatabases.getDatabases() != null ? projectWithDatabases.getDatabases() : project.getDatabases())
+                .stream()
+                .map(db -> {
+                    ProjectDetailResponse.DatabaseDetail detail = new ProjectDetailResponse.DatabaseDetail();
+                    detail.setId(db.getId());
+                    detail.setProjectName(db.getProjectName());
+                    detail.setDescription(db.getDescription());
+                    detail.setDatabaseType(db.getDatabaseType());
+                    detail.setDatabaseIp(db.getDatabaseIp());
+                    detail.setDatabasePort(db.getDatabasePort());
+                    detail.setDatabaseName(db.getDatabaseName());
+                    detail.setDatabaseUsername(db.getDatabaseUsername());
+                    detail.setDatabasePassword(db.getDatabasePassword());
+                    detail.setUuid_k8s(db.getUuid_k8s());
+                    detail.setSourcePath(db.getSourcePath());
+                    detail.setYamlPath(db.getYamlPath());
+                    detail.setStatus(db.getStatus());
+                    detail.setCreatedAt(db.getCreatedAt());
+                    return detail;
+                })
+                .collect(Collectors.toList());
+
+        // Map backends
+        List<ProjectDetailResponse.BackendDetail> backends = (projectWithBackends.getBackends() != null ? projectWithBackends.getBackends() : project.getBackends())
+                .stream()
+                .map(be -> {
+                    ProjectDetailResponse.BackendDetail detail = new ProjectDetailResponse.BackendDetail();
+                    detail.setId(be.getId());
+                    detail.setProjectName(be.getProjectName());
+                    detail.setDescription(be.getDescription());
+                    detail.setDeploymentType(be.getDeploymentType());
+                    detail.setFrameworkType(be.getFrameworkType());
+                    detail.setDatabaseIp(be.getDatabaseIp());
+                    detail.setDatabasePort(be.getDatabasePort());
+                    detail.setDatabaseName(be.getDatabaseName());
+                    detail.setDatabaseUsername(be.getDatabaseUsername());
+                    detail.setDatabasePassword(be.getDatabasePassword());
+                    detail.setUuid_k8s(be.getUuid_k8s());
+                    detail.setSourcePath(be.getSourcePath());
+                    detail.setYamlPath(be.getYamlPath());
+                    detail.setDockerImage(be.getDockerImage());
+                    detail.setDomainNameSystem(be.getDomainNameSystem());
+                    detail.setStatus(be.getStatus());
+                    detail.setCreatedAt(be.getCreatedAt());
+                    return detail;
+                })
+                .collect(Collectors.toList());
+
+        // Map frontends
+        List<ProjectDetailResponse.FrontendDetail> frontends = (projectWithFrontends.getFrontends() != null ? projectWithFrontends.getFrontends() : project.getFrontends())
+                .stream()
+                .map(fe -> {
+                    ProjectDetailResponse.FrontendDetail detail = new ProjectDetailResponse.FrontendDetail();
+                    detail.setId(fe.getId());
+                    detail.setProjectName(fe.getProjectName());
+                    detail.setDescription(fe.getDescription());
+                    detail.setDeploymentType(fe.getDeploymentType());
+                    detail.setFrameworkType(fe.getFrameworkType());
+                    detail.setUuid_k8s(fe.getUuid_k8s());
+                    detail.setSourcePath(fe.getSourcePath());
+                    detail.setYamlPath(fe.getYamlPath());
+                    detail.setDockerImage(fe.getDockerImage());
+                    detail.setDomainNameSystem(fe.getDomainNameSystem());
+                    detail.setStatus(fe.getStatus());
+                    detail.setCreatedAt(fe.getCreatedAt());
+                    return detail;
+                })
+                .collect(Collectors.toList());
+
+        // Tạo response
+        ProjectDetailResponse response = new ProjectDetailResponse();
+        response.setId(project.getId());
+        response.setProjectName(project.getProjectName());
+        response.setDescription(project.getDescription());
+        // Status mặc định - có thể tính toán dựa trên status của components
+        response.setStatus("RUNNING"); // TODO: Tính toán status thực tế
+        response.setCreatedAt(project.getCreatedAt());
+        response.setUpdatedAt(project.getUpdatedAt() != null ? project.getUpdatedAt() : project.getCreatedAt());
+        response.setUuid_k8s(project.getUuid_k8s());
+        response.setNamespace(project.getNamespace());
+        response.setDatabases(databases);
+        response.setBackends(backends);
+        response.setFrontends(frontends);
+
+        System.out.println("[getProjectDetail] Hoàn tất lấy chi tiết project: " + project.getProjectName() + 
+                          ", databases: " + databases.size() + 
+                          ", backends: " + backends.size() + 
+                          ", frontends: " + frontends.size());
+        return response;
+    }
+
+    @Override
+    public ProjectBasicInfoResponse getProjectBasicInfo(Long projectId) {
+        System.out.println("[getProjectBasicInfo] Bắt đầu lấy thông tin cơ bản project với ID: " + projectId);
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectBasicInfo] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectBasicInfo] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Tạo response
+        ProjectBasicInfoResponse response = new ProjectBasicInfoResponse();
+        response.setId(project.getId());
+        response.setProjectName(project.getProjectName());
+        response.setDescription(project.getDescription());
+        // Đảm bảo updatedAt được set (nếu null thì dùng createdAt)
+        response.setUpdatedAt(project.getUpdatedAt() != null ? project.getUpdatedAt() : project.getCreatedAt());
+
+        System.out.println("[getProjectBasicInfo] Hoàn tất lấy thông tin cơ bản project: " + project.getProjectName());
+        return response;
+    }
+
+    @Override
+    public ProjectOverviewResponse getProjectOverview(Long projectId) {
+        System.out.println("[getProjectOverview] Bắt đầu lấy thông tin tổng quan project với ID: " + projectId);
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectOverview] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectOverview] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Fetch các collections riêng biệt để tránh LazyInitializationException
+        ProjectEntity projectWithDatabases = projectRepository.findByIdWithDatabases(projectId).orElse(project);
+        ProjectEntity projectWithBackends = projectRepository.findByIdWithBackends(projectId).orElse(project);
+        ProjectEntity projectWithFrontends = projectRepository.findByIdWithFrontends(projectId).orElse(project);
+
+        // Tính toán stats cho databases
+        List<ProjectDatabaseEntity> databases = projectWithDatabases.getDatabases() != null 
+                ? projectWithDatabases.getDatabases() 
+                : (project.getDatabases() != null ? project.getDatabases() : new java.util.ArrayList<>());
+        
+        ProjectOverviewResponse.ComponentStats databaseStats = new ProjectOverviewResponse.ComponentStats();
+        databaseStats.setTotal(databases.size());
+        databaseStats.setRunning((int) databases.stream().filter(db -> "RUNNING".equalsIgnoreCase(db.getStatus())).count());
+        databaseStats.setPaused(0); // Paused không có trong database entity, có thể thêm sau
+        databaseStats.setStopped((int) databases.stream().filter(db -> "STOPPED".equalsIgnoreCase(db.getStatus())).count());
+        databaseStats.setError((int) databases.stream().filter(db -> "ERROR".equalsIgnoreCase(db.getStatus())).count());
+
+        // Tính toán stats cho backends
+        List<ProjectBackendEntity> backends = projectWithBackends.getBackends() != null 
+                ? projectWithBackends.getBackends() 
+                : (project.getBackends() != null ? project.getBackends() : new java.util.ArrayList<>());
+        
+        ProjectOverviewResponse.ComponentStats backendStats = new ProjectOverviewResponse.ComponentStats();
+        backendStats.setTotal(backends.size());
+        backendStats.setRunning((int) backends.stream().filter(be -> "RUNNING".equalsIgnoreCase(be.getStatus())).count());
+        backendStats.setPaused(0); // Paused không có trong backend entity
+        backendStats.setStopped((int) backends.stream().filter(be -> "STOPPED".equalsIgnoreCase(be.getStatus())).count());
+        backendStats.setError((int) backends.stream().filter(be -> "ERROR".equalsIgnoreCase(be.getStatus())).count());
+
+        // Tính toán stats cho frontends
+        List<ProjectFrontendEntity> frontends = projectWithFrontends.getFrontends() != null 
+                ? projectWithFrontends.getFrontends() 
+                : (project.getFrontends() != null ? project.getFrontends() : new java.util.ArrayList<>());
+        
+        ProjectOverviewResponse.ComponentStats frontendStats = new ProjectOverviewResponse.ComponentStats();
+        frontendStats.setTotal(frontends.size());
+        frontendStats.setRunning((int) frontends.stream().filter(fe -> "RUNNING".equalsIgnoreCase(fe.getStatus())).count());
+        frontendStats.setPaused(0); // Paused không có trong frontend entity
+        frontendStats.setStopped((int) frontends.stream().filter(fe -> "STOPPED".equalsIgnoreCase(fe.getStatus())).count());
+        frontendStats.setError((int) frontends.stream().filter(fe -> "ERROR".equalsIgnoreCase(fe.getStatus())).count());
+
+        // Tạo response
+        ProjectOverviewResponse response = new ProjectOverviewResponse();
+        response.setId(project.getId());
+        response.setProjectName(project.getProjectName());
+        response.setDescription(project.getDescription());
+        response.setCreatedAt(project.getCreatedAt());
+        response.setUpdatedAt(project.getUpdatedAt() != null ? project.getUpdatedAt() : project.getCreatedAt());
+        response.setUuid_k8s(project.getUuid_k8s());
+        response.setNamespace(project.getNamespace());
+        response.setDatabases(databaseStats);
+        response.setBackends(backendStats);
+        response.setFrontends(frontendStats);
+
+        System.out.println("[getProjectOverview] Hoàn tất lấy thông tin tổng quan project: " + project.getProjectName() + 
+                          ", databases: " + databaseStats.getTotal() + 
+                          ", backends: " + backendStats.getTotal() + 
+                          ", frontends: " + frontendStats.getTotal());
+        return response;
+    }
+
+    @Override
+    public ProjectDatabaseListResponse getProjectDatabases(Long projectId) {
+        System.out.println("[getProjectDatabases] Bắt đầu lấy danh sách databases của project với ID: " + projectId);
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectDatabases] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectDatabases] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Fetch databases
+        ProjectEntity projectWithDatabases = projectRepository.findByIdWithDatabases(projectId).orElse(project);
+        List<ProjectDatabaseEntity> databases = projectWithDatabases.getDatabases() != null 
+                ? projectWithDatabases.getDatabases() 
+                : (project.getDatabases() != null ? project.getDatabases() : new java.util.ArrayList<>());
+
+        // Map databases sang DTO
+        List<ProjectDatabaseListResponse.DatabaseInfo> databaseInfos = databases.stream()
+                .map(db -> {
+                    ProjectDatabaseListResponse.DatabaseInfo info = new ProjectDatabaseListResponse.DatabaseInfo();
+                    info.setId(db.getId());
+                    info.setProjectName(db.getProjectName());
+                    info.setDescription(db.getDescription());
+                    info.setDatabaseType(db.getDatabaseType());
+                    info.setDatabaseIp(db.getDatabaseIp());
+                    info.setDatabasePort(db.getDatabasePort());
+                    info.setDatabaseName(db.getDatabaseName());
+                    info.setDatabaseUsername(db.getDatabaseUsername());
+                    info.setDatabasePassword(db.getDatabasePassword());
+                    info.setStatus(db.getStatus());
+                    info.setCreatedAt(db.getCreatedAt());
+                    return info;
+                })
+                .collect(Collectors.toList());
+
+        // Tạo response
+        ProjectDatabaseListResponse response = new ProjectDatabaseListResponse();
+        response.setDatabases(databaseInfos);
+
+        System.out.println("[getProjectDatabases] Hoàn tất lấy danh sách databases: " + databaseInfos.size() + " databases");
+        return response;
+    }
+
+    @Override
+    public ProjectBackendListResponse getProjectBackends(Long projectId) {
+        System.out.println("[getProjectBackends] Bắt đầu lấy danh sách backends của project với ID: " + projectId);
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectBackends] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectBackends] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Fetch backends
+        ProjectEntity projectWithBackends = projectRepository.findByIdWithBackends(projectId).orElse(project);
+        List<ProjectBackendEntity> backends = projectWithBackends.getBackends() != null 
+                ? projectWithBackends.getBackends() 
+                : (project.getBackends() != null ? project.getBackends() : new java.util.ArrayList<>());
+
+        // Map backends sang DTO
+        List<ProjectBackendListResponse.BackendInfo> backendInfos = backends.stream()
+                .map(be -> {
+                    ProjectBackendListResponse.BackendInfo info = new ProjectBackendListResponse.BackendInfo();
+                    info.setId(be.getId());
+                    info.setProjectName(be.getProjectName());
+                    info.setDescription(be.getDescription());
+                    info.setDeploymentType(be.getDeploymentType());
+                    info.setFrameworkType(be.getFrameworkType());
+                    info.setDatabaseIp(be.getDatabaseIp());
+                    info.setDatabasePort(be.getDatabasePort());
+                    info.setDatabaseName(be.getDatabaseName());
+                    info.setDatabaseUsername(be.getDatabaseUsername());
+                    info.setDatabasePassword(be.getDatabasePassword());
+                    info.setUuid_k8s(be.getUuid_k8s());
+                    info.setSourcePath(be.getSourcePath());
+                    info.setYamlPath(be.getYamlPath());
+                    info.setDockerImage(be.getDockerImage());
+                    info.setDomainNameSystem(be.getDomainNameSystem());
+                    info.setStatus(be.getStatus());
+                    info.setCreatedAt(be.getCreatedAt());
+                    return info;
+                })
+                .collect(Collectors.toList());
+
+        // Tạo response
+        ProjectBackendListResponse response = new ProjectBackendListResponse();
+        response.setBackends(backendInfos);
+
+        System.out.println("[getProjectBackends] Hoàn tất lấy danh sách backends: " + backendInfos.size() + " backends");
+        return response;
+    }
+
+    @Override
+    public ProjectFrontendListResponse getProjectFrontends(Long projectId) {
+        System.out.println("[getProjectFrontends] Bắt đầu lấy danh sách frontends của project với ID: " + projectId);
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectFrontends] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectFrontends] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Fetch frontends
+        ProjectEntity projectWithFrontends = projectRepository.findByIdWithFrontends(projectId).orElse(project);
+        List<ProjectFrontendEntity> frontends = projectWithFrontends.getFrontends() != null 
+                ? projectWithFrontends.getFrontends() 
+                : (project.getFrontends() != null ? project.getFrontends() : new java.util.ArrayList<>());
+
+        // Map frontends sang DTO
+        List<ProjectFrontendListResponse.FrontendInfo> frontendInfos = frontends.stream()
+                .map(fe -> {
+                    ProjectFrontendListResponse.FrontendInfo info = new ProjectFrontendListResponse.FrontendInfo();
+                    info.setId(fe.getId());
+                    info.setProjectName(fe.getProjectName());
+                    info.setDescription(fe.getDescription());
+                    info.setDeploymentType(fe.getDeploymentType());
+                    info.setFrameworkType(fe.getFrameworkType());
+                    info.setUuid_k8s(fe.getUuid_k8s());
+                    info.setSourcePath(fe.getSourcePath());
+                    info.setYamlPath(fe.getYamlPath());
+                    info.setDockerImage(fe.getDockerImage());
+                    info.setDomainNameSystem(fe.getDomainNameSystem());
+                    info.setStatus(fe.getStatus());
+                    info.setCreatedAt(fe.getCreatedAt());
+                    return info;
+                })
+                .collect(Collectors.toList());
+
+        // Tạo response
+        ProjectFrontendListResponse response = new ProjectFrontendListResponse();
+        response.setFrontends(frontendInfos);
+
+        System.out.println("[getProjectFrontends] Hoàn tất lấy danh sách frontends: " + frontendInfos.size() + " frontends");
+        return response;
+    }
+
+    @Override
+    public void deleteProject(Long projectId, String username) {
+        System.out.println("[deleteProject] Bắt đầu xóa project với ID: " + projectId + " cho user: " + username);
+
+        // Tìm user theo username
+        Optional<UserEntity> userOptional = userRepository.findByUsername(username);
+        if (userOptional.isEmpty()) {
+            System.err.println("[deleteProject] Lỗi: User không tồn tại với username: " + username);
+            throw new RuntimeException("User không tồn tại với username: " + username);
+        }
+        UserEntity user = userOptional.get();
+        System.out.println("[deleteProject] Tìm thấy user với ID: " + user.getId());
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[deleteProject] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[deleteProject] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Validate project thuộc về user
+        if (project.getUser() == null || !project.getUser().getId().equals(user.getId())) {
+            System.err.println("[deleteProject] Lỗi: Project không thuộc về user này. Project user ID: " + 
+                              (project.getUser() != null ? project.getUser().getId() : "null") + 
+                              ", Request user ID: " + user.getId());
+            throw new RuntimeException("Bạn không có quyền xóa project này");
+        }
+
+        // Xóa project (cascade sẽ xóa các databases, backends, frontends liên quan)
+        projectRepository.delete(project);
+        System.out.println("[deleteProject] Đã xóa project thành công: " + project.getProjectName());
     }
 }
 

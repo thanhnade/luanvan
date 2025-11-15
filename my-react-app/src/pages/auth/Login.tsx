@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { Link } from "react-router-dom"
+import { useState, useEffect } from "react"
+import { Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,10 +12,21 @@ import { FolderKanban, Server, Database, Globe, Rocket, Zap, Shield } from "luci
  * Trang đăng nhập
  */
 export function Login() {
-  const { login } = useAuth()
+  const { login, isLoading: authLoading } = useAuth()
+  const navigate = useNavigate()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+
+  // Redirect nếu đã đăng nhập
+  useEffect(() => {
+    if (!authLoading) {
+      const savedUsername = localStorage.getItem("username")
+      if (savedUsername) {
+        navigate("/projects", { replace: true })
+      }
+    }
+  }, [authLoading, navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

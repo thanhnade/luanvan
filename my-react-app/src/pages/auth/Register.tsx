@@ -21,6 +21,14 @@ export function Register() {
   })
   const [isLoading, setIsLoading] = useState(false)
 
+  // Redirect nếu đã đăng nhập
+  useEffect(() => {
+    const savedUsername = localStorage.getItem("username")
+    if (savedUsername) {
+      navigate("/projects", { replace: true })
+    }
+  }, [navigate])
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,

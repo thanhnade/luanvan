@@ -12,6 +12,7 @@ interface User {
 interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
+  isLoading: boolean
   login: (username: string, password: string) => Promise<void>
   logout: () => void
 }
@@ -20,6 +21,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
   const navigate = useNavigate()
 
   // Load user từ localStorage khi mount
@@ -33,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username: savedUsername,
       })
     }
+    setIsLoading(false)
   }, [])
 
   const login = async (username: string, password: string) => {
@@ -74,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         isAuthenticated: !!user,
+        isLoading,
         login,
         logout,
       }}

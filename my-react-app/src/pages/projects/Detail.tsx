@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Copy, CheckCircle2, ExternalLink, MoreVertical, Play, Pause, Trash2, Eye, Plus, Upload, X } from "lucide-react"
+import { ArrowLeft, Copy, CheckCircle2, ExternalLink, MoreVertical, Play, Pause, Trash2, Eye, EyeOff, Plus, Upload, X } from "lucide-react"
 import { motion } from "framer-motion"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { getProjectById, deployProject, addDatabaseToProject, addBackendToProject, addFrontendToProject } from "@/lib/mock-api"
+import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, type DatabaseInfo, type BackendInfo, type FrontendInfo } from "@/lib/project-api"
+import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ComponentStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -28,14 +30,27 @@ import { toast } from "sonner"
 export function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
+  const [projectBasicInfo, setProjectBasicInfo] = useState<{ name: string; description?: string; updatedAt: string } | null>(null)
+  const [projectOverview, setProjectOverview] = useState<{
+    databases: { total: number; running: number; paused: number; other: number }
+    backends: { total: number; running: number; paused: number; other: number }
+    frontends: { total: number; running: number; paused: number; other: number }
+  } | null>(null)
+  const [projectDatabases, setProjectDatabases] = useState<DatabaseInfo[]>([])
+  const [projectBackends, setProjectBackends] = useState<BackendInfo[]>([])
+  const [projectFrontends, setProjectFrontends] = useState<FrontendInfo[]>([])
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
   const [showLogModal, setShowLogModal] = useState(false)
   const [selectedLogs, setSelectedLogs] = useState("")
   const [deploying, setDeploying] = useState(false)
   const [showAddDatabase, setShowAddDatabase] = useState(false)
   const [showAddBackend, setShowAddBackend] = useState(false)
   const [showAddFrontend, setShowAddFrontend] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   
   // State cho file uploads
   const [zipFileDb, setZipFileDb] = useState<File | null>(null)
@@ -48,7 +63,111 @@ export function ProjectDetail() {
   // State cho runtime env (chỉ cho frontend)
   const [runtimeEnv, setRuntimeEnv] = useState<Array<{ key: string; value: string }>>([])
 
-  // Load project
+  // Load project basic info từ API
+  useEffect(() => {
+    const loadProjectBasicInfo = async () => {
+      if (!id) return
+      try {
+        const basicInfo = await getProjectBasicInfo(id)
+        setProjectBasicInfo({
+          name: basicInfo.projectName,
+          description: basicInfo.description,
+          updatedAt: basicInfo.updatedAt,
+        })
+      } catch (error) {
+        console.error("Lỗi load project basic info:", error)
+        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+      }
+    }
+
+    loadProjectBasicInfo()
+  }, [id])
+
+  // Load project overview từ API
+  useEffect(() => {
+    const loadProjectOverview = async () => {
+      if (!id) return
+      try {
+        const overview = await getProjectOverview(id)
+        // Map dữ liệu từ API sang format phù hợp với component
+        setProjectOverview({
+          databases: {
+            total: overview.databases.total,
+            running: overview.databases.running,
+            paused: overview.databases.paused,
+            other: overview.databases.stopped + overview.databases.error,
+          },
+          backends: {
+            total: overview.backends.total,
+            running: overview.backends.running,
+            paused: overview.backends.paused,
+            other: overview.backends.stopped + overview.backends.error,
+          },
+          frontends: {
+            total: overview.frontends.total,
+            running: overview.frontends.running,
+            paused: overview.frontends.paused,
+            other: overview.frontends.stopped + overview.frontends.error,
+          },
+        })
+      } catch (error) {
+        console.error("Lỗi load project overview:", error)
+        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+      }
+    }
+
+    loadProjectOverview()
+  }, [id])
+
+  // Load project databases từ API
+  useEffect(() => {
+    const loadProjectDatabases = async () => {
+      if (!id) return
+      try {
+        const response = await getProjectDatabases(id)
+        setProjectDatabases(response.databases)
+      } catch (error) {
+        console.error("Lỗi load project databases:", error)
+        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+      }
+    }
+
+    loadProjectDatabases()
+  }, [id])
+
+  // Load project backends từ API
+  useEffect(() => {
+    const loadProjectBackends = async () => {
+      if (!id) return
+      try {
+        const response = await getProjectBackends(id)
+        setProjectBackends(response.backends)
+      } catch (error) {
+        console.error("Lỗi load project backends:", error)
+        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+      }
+    }
+
+    loadProjectBackends()
+  }, [id])
+
+  // Load project frontends từ API
+  useEffect(() => {
+    const loadProjectFrontends = async () => {
+      if (!id) return
+      try {
+        const response = await getProjectFrontends(id)
+        setProjectFrontends(response.frontends)
+      } catch (error) {
+        console.error("Lỗi load project frontends:", error)
+        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+      }
+    }
+
+    loadProjectFrontends()
+  }, [id])
+
+  // Load project (components) từ mock-api
   useEffect(() => {
     const loadProject = async () => {
       if (!id) return
@@ -122,8 +241,35 @@ export function ProjectDetail() {
     // Có thể mở modal hoặc navigate đến trang chi tiết
   }
 
-  // Tính toán thống kê
+  // Xóa project
+  const handleDeleteProject = async () => {
+    if (!id || !user?.username) {
+      toast.error("Không thể xóa project")
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      await deleteProject(id, user.username)
+      toast.success("Đã xóa project thành công!")
+      navigate("/projects")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa project")
+      console.error(error)
+    } finally {
+      setIsDeleting(false)
+      setShowDeleteDialog(false)
+    }
+  }
+
+  // Tính toán thống kê - ưu tiên dữ liệu từ API, nếu không có thì tính từ project
   const calculateStats = () => {
+    // Nếu có dữ liệu từ API overview, sử dụng nó
+    if (projectOverview) {
+      return projectOverview
+    }
+
+    // Nếu không có, tính từ project (fallback)
     if (!project) return null
 
     const calculateComponentStats = (components: Array<{ status: ComponentStatus }>) => {
@@ -135,9 +281,9 @@ export function ProjectDetail() {
       }
 
       components.forEach((comp) => {
-        if (comp.status === "deployed" || comp.status === "running") {
+        if (comp.status === "deployed") {
           stats.running++
-        } else if (comp.status === "paused") {
+        } else if (comp.status === "pending" || comp.status === "building") {
           stats.paused++
         } else {
           stats.other++
@@ -518,67 +664,47 @@ export function ProjectDetail() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
-          <Button
-            variant="ghost"
-            onClick={() => navigate("/projects")}
-            className="mb-4"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Quay lại
-          </Button>
+          <div className="flex items-center justify-between mb-4">
+            <Button
+              variant="ghost"
+              onClick={() => navigate("/projects")}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Quay lại
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Xóa Project
+            </Button>
+          </div>
 
           <Card>
             <CardHeader>
               <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-3xl mb-2">{project.name}</CardTitle>
-                  {project.description && (
+                <div className="flex-1">
+                  <CardTitle className="text-3xl mb-2">
+                    {projectBasicInfo?.name || project.name}
+                  </CardTitle>
+                  {(projectBasicInfo?.description || project.description) && (
                     <CardDescription className="mb-4">
-                      {project.description}
+                      {projectBasicInfo?.description || project.description}
                     </CardDescription>
                   )}
-                  <div className="flex items-center gap-4">
-                    <Badge variant={statusConfig.variant}>
-                      {statusConfig.label}
-                    </Badge>
-                    <span className="text-sm text-muted-foreground">
-                      Cập nhật: {new Date(project.updatedAt).toLocaleString("vi-VN")}
-                    </span>
-                  </div>
+                  <span className="text-sm text-muted-foreground">
+                    Cập nhật:{" "}
+                    {projectBasicInfo?.updatedAt
+                      ? new Date(projectBasicInfo.updatedAt).toLocaleString("vi-VN")
+                      : new Date(project.updatedAt).toLocaleString("vi-VN")}
+                  </span>
                 </div>
+                <Badge variant={statusConfig.variant} className="ml-4">
+                  {statusConfig.label}
+                </Badge>
               </div>
             </CardHeader>
-            {project.endpoints && project.endpoints.length > 0 && (
-              <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {project.endpoints.map((endpoint, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-md"
-                    >
-                      <span className="text-sm font-medium">{endpoint.label}:</span>
-                      <a
-                        href={endpoint.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-primary hover:underline flex items-center gap-1"
-                      >
-                        {endpoint.url}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => copyToClipboard(endpoint.url)}
-                      >
-                        <Copy className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            )}
           </Card>
         </div>
 
@@ -589,13 +715,13 @@ export function ProjectDetail() {
               <TabsList className="w-full justify-start border-b rounded-none">
                 <TabsTrigger value="overview">Tổng quan</TabsTrigger>
                 <TabsTrigger value="databases">
-                  Databases ({project.components.databases.length})
+                  Databases ({projectDatabases.length > 0 ? projectDatabases.length : (stats?.databases?.total ?? project.components.databases.length)})
                 </TabsTrigger>
                 <TabsTrigger value="backends">
-                  Backends ({project.components.backends.length})
+                  Backends ({projectBackends.length > 0 ? projectBackends.length : (stats?.backends?.total ?? project.components.backends.length)})
                 </TabsTrigger>
                 <TabsTrigger value="frontends">
-                  Frontends ({project.components.frontends.length})
+                  Frontends ({projectFrontends.length > 0 ? projectFrontends.length : (stats?.frontends?.total ?? project.components.frontends.length)})
                 </TabsTrigger>
                 <TabsTrigger value="history">Lịch sử triển khai</TabsTrigger>
               </TabsList>
@@ -623,27 +749,27 @@ export function ProjectDetail() {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                            {project.components.databases.length}
+                            {stats?.databases?.total ?? project.components.databases.length}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Databases</div>
                         </div>
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                            {project.components.backends.length}
+                            {stats?.backends?.total ?? project.components.backends.length}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Backends</div>
                         </div>
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                            {project.components.frontends.length}
+                            {stats?.frontends?.total ?? project.components.frontends.length}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Frontends</div>
                         </div>
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold">
-                            {project.components.databases.length +
-                              project.components.backends.length +
-                              project.components.frontends.length}
+                            {(stats?.databases?.total ?? project.components.databases.length) +
+                              (stats?.backends?.total ?? project.components.backends.length) +
+                              (stats?.frontends?.total ?? project.components.frontends.length)}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Tổng cộng</div>
                         </div>
@@ -691,18 +817,35 @@ export function ProjectDetail() {
                   </Card>
                 )}
 
-                {project.components.databases.length > 0 ? (
+                {(projectDatabases.length > 0 || project.components.databases.length > 0) ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {project.components.databases.map((db) => {
-                      const dbStatus = getStatusBadge(db.status)
+                    {(projectDatabases.length > 0 ? projectDatabases : project.components.databases).map((db) => {
+                      // Map dữ liệu từ API hoặc mock
+                      const isApiData = 'databaseType' in db
+                      const dbName = isApiData ? (db as DatabaseInfo).projectName : (db as any).name
+                      const dbDescription = isApiData ? (db as DatabaseInfo).description : undefined
+                      const dbType = isApiData ? (db as DatabaseInfo).databaseType : (db as any).type
+                      const dbStatus = getStatusBadge(isApiData ? (db as DatabaseInfo).status.toLowerCase() as ComponentStatus : (db as any).status)
+                      const dbIp = isApiData ? (db as DatabaseInfo).databaseIp : undefined
+                      const dbPort = isApiData ? (db as DatabaseInfo).databasePort : undefined
+                      const dbDatabaseName = isApiData ? (db as DatabaseInfo).databaseName : (db as any).databaseName
+                      const dbUsername = isApiData ? (db as DatabaseInfo).databaseUsername : (db as any).username
+                      const dbPassword = isApiData ? (db as DatabaseInfo).databasePassword : undefined
+                      const dbId = isApiData ? `api-${(db as DatabaseInfo).id}` : (db as any).id
+
                       return (
-                        <Card key={db.id}>
+                        <Card key={dbId}>
                           <CardHeader>
                             <div className="flex items-start justify-between">
-                              <div>
-                                <CardTitle className="text-lg">{db.name}</CardTitle>
-                                <CardDescription>
-                                  {db.type === "mysql" ? "MySQL" : "MongoDB"} - Của hệ thống
+                              <div className="flex-1">
+                                <CardTitle className="text-lg">{dbName}</CardTitle>
+                                {dbDescription && (
+                                  <CardDescription className="mt-1">
+                                    {dbDescription}
+                                  </CardDescription>
+                                )}
+                                <CardDescription className="mt-1">
+                                  {dbType === "MYSQL" || dbType === "mysql" ? "MySQL" : dbType === "MONGODB" || dbType === "mongodb" ? "MongoDB" : dbType} - Của hệ thống
                                 </CardDescription>
                               </div>
                               <Badge variant={dbStatus.variant}>
@@ -711,14 +854,84 @@ export function ProjectDetail() {
                             </div>
                           </CardHeader>
                           <CardContent>
-                            {db.endpoint && (
-                              <div className="mb-2">
-                                <span className="text-xs font-medium text-muted-foreground uppercase">
-                                  Endpoint
-                                </span>
-                                <p className="text-sm font-mono mt-1">{db.endpoint}</p>
-                              </div>
-                            )}
+                            <div className="space-y-3">
+                              {/* IP, Port, Database Name - chung 1 hàng */}
+                              {(dbIp || dbPort || dbDatabaseName) && (
+                                <div className="grid grid-cols-3 gap-4">
+                                  {/* IP */}
+                                  {dbIp && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        IP
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{dbIp}</p>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Port */}
+                                  {dbPort && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Port
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{dbPort}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Database Name */}
+                                  {dbDatabaseName && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Database Name
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{dbDatabaseName}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Username và Password - chung 1 hàng */}
+                              {(dbUsername || dbPassword) && (
+                                <div className="grid grid-cols-2 gap-4">
+                                  {/* Username */}
+                                  {dbUsername && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Username
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{dbUsername}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Password với icon toggle */}
+                                  {dbPassword && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Password
+                                      </span>
+                                      <div className="relative mt-1">
+                                        <p className="text-sm font-mono pr-8">
+                                          {showPasswords[dbId] ? dbPassword : "••••••••"}
+                                        </p>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowPasswords(prev => ({ ...prev, [dbId]: !prev[dbId] }))}
+                                          className="absolute right-0 top-0 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                                          aria-label={showPasswords[dbId] ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                                        >
+                                          {showPasswords[dbId] ? (
+                                            <EyeOff className="w-4 h-4" />
+                                          ) : (
+                                            <Eye className="w-4 h-4" />
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
                             <div className="flex justify-end mt-4">
                               <DropdownMenu
                                 trigger={
@@ -729,27 +942,21 @@ export function ProjectDetail() {
                                 }
                               >
                                 <DropdownMenuItem
-                                  onClick={() => handleStart(db.name, "database")}
-                                  disabled={deploying || db.status === "running"}
+                                  onClick={() => handleStart(dbName, "database")}
+                                  disabled={deploying || dbStatus.label === "Đang chạy"}
                                 >
                                   <Play className="w-4 h-4 mr-2" />
                                   Chạy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handlePause(db.name, "database")}
-                                  disabled={db.status === "paused" || db.status === "pending"}
+                                  onClick={() => handlePause(dbName, "database")}
+                                  disabled={dbStatus.label === "Tạm dừng" || dbStatus.label === "Chờ xử lý"}
                                 >
                                   <Pause className="w-4 h-4 mr-2" />
                                   Tạm dừng
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handleViewDetails(db.name, "database")}
-                                >
-                                  <Eye className="w-4 h-4 mr-2" />
-                                  Xem chi tiết
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleDelete(db.name, "database")}
+                                  onClick={() => handleDelete(dbName, "database")}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
@@ -807,18 +1014,37 @@ export function ProjectDetail() {
                   </Card>
                 )}
 
-                {project.components.backends.length > 0 ? (
+                {(projectBackends.length > 0 || project.components.backends.length > 0) ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {project.components.backends.map((be) => {
-                      const beStatus = getStatusBadge(be.status)
+                    {(projectBackends.length > 0 ? projectBackends : project.components.backends).map((be) => {
+                      // Map dữ liệu từ API hoặc mock
+                      const isApiData = 'frameworkType' in be
+                      const beName = isApiData ? (be as BackendInfo).projectName : (be as any).name
+                      const beDescription = isApiData ? (be as BackendInfo).description : undefined
+                      const beTech = isApiData ? (be as BackendInfo).frameworkType : (be as any).tech
+                      const beStatus = getStatusBadge(isApiData ? (be as BackendInfo).status.toLowerCase() as ComponentStatus : (be as any).status)
+                      const beDns = isApiData ? (be as BackendInfo).domainNameSystem : (be as any).dns
+                      const beDockerImage = isApiData ? (be as BackendInfo).dockerImage : (be as any).source?.ref
+                      const beDbIp = isApiData ? (be as BackendInfo).databaseIp : undefined
+                      const beDbPort = isApiData ? (be as BackendInfo).databasePort : undefined
+                      const beDbName = isApiData ? (be as BackendInfo).databaseName : undefined
+                      const beDbUsername = isApiData ? (be as BackendInfo).databaseUsername : undefined
+                      const beDbPassword = isApiData ? (be as BackendInfo).databasePassword : undefined
+                      const beId = isApiData ? `api-be-${(be as BackendInfo).id}` : (be as any).id
+
                       return (
-                        <Card key={be.id}>
+                        <Card key={beId}>
                           <CardHeader>
                             <div className="flex items-start justify-between">
-                              <div>
-                                <CardTitle className="text-lg">{be.name}</CardTitle>
-                                <CardDescription>
-                                  {be.tech === "spring" ? "Spring Boot" : "Node.js"}
+                              <div className="flex-1">
+                                <CardTitle className="text-lg">{beName}</CardTitle>
+                                {beDescription && (
+                                  <CardDescription className="mt-1">
+                                    {beDescription}
+                                  </CardDescription>
+                                )}
+                                <CardDescription className="mt-1">
+                                  {beTech === "SPRING" || beTech === "spring" ? "Spring Boot" : beTech === "NODEJS" || beTech === "node" ? "Node.js" : beTech}
                                 </CardDescription>
                               </div>
                               <Badge variant={beStatus.variant}>
@@ -827,32 +1053,114 @@ export function ProjectDetail() {
                             </div>
                           </CardHeader>
                           <CardContent>
-                            {be.dns && (
-                              <div className="mb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-medium text-muted-foreground uppercase">
-                                    DNS
-                                  </span>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5"
-                                    onClick={() => copyToClipboard(be.dns!)}
-                                  >
-                                    <Copy className="w-3 h-3" />
-                                  </Button>
+                            <div className="space-y-3">
+                              {/* DNS */}
+                              {beDns && (
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium text-muted-foreground uppercase">
+                                      DNS
+                                    </span>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5"
+                                      onClick={() => copyToClipboard(beDns!)}
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                  <p className="text-sm font-mono mt-1">{beDns}</p>
                                 </div>
-                                <p className="text-sm font-mono mt-1">{be.dns}</p>
-                              </div>
-                            )}
-                            {be.source.ref && (
-                              <div className="mb-2">
-                                <span className="text-xs font-medium text-muted-foreground uppercase">
-                                  Image
-                                </span>
-                                <p className="text-sm font-mono mt-1">{be.source.ref}</p>
-                              </div>
-                            )}
+                              )}
+
+                              {/* Docker Image */}
+                              {beDockerImage && (
+                                <div>
+                                  <span className="text-xs font-medium text-muted-foreground uppercase">
+                                    Docker Image
+                                  </span>
+                                  <p className="text-sm font-mono mt-1">{beDockerImage}</p>
+                                </div>
+                              )}
+
+                              {/* IP, Port, Database Name - chung 1 hàng (nếu có database connection) */}
+                              {(beDbIp || beDbPort || beDbName) && (
+                                <div className="grid grid-cols-3 gap-4">
+                                  {/* IP */}
+                                  {beDbIp && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        IP
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{beDbIp}</p>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Port */}
+                                  {beDbPort && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Port
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{beDbPort}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Database Name */}
+                                  {beDbName && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Database Name
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{beDbName}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Username và Password - chung 1 hàng (nếu có database connection) */}
+                              {(beDbUsername || beDbPassword) && (
+                                <div className="grid grid-cols-2 gap-4">
+                                  {/* Username */}
+                                  {beDbUsername && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Username
+                                      </span>
+                                      <p className="text-sm font-mono mt-1">{beDbUsername}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Password với icon toggle */}
+                                  {beDbPassword && (
+                                    <div>
+                                      <span className="text-xs font-medium text-muted-foreground uppercase">
+                                        Password
+                                      </span>
+                                      <div className="relative mt-1">
+                                        <p className="text-sm font-mono pr-8">
+                                          {showPasswords[beId] ? beDbPassword : "••••••••"}
+                                        </p>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowPasswords(prev => ({ ...prev, [beId]: !prev[beId] }))}
+                                          className="absolute right-0 top-0 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                                          aria-label={showPasswords[beId] ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                                        >
+                                          {showPasswords[beId] ? (
+                                            <EyeOff className="w-4 h-4" />
+                                          ) : (
+                                            <Eye className="w-4 h-4" />
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
                             <div className="flex justify-end mt-4">
                               <DropdownMenu
                                 trigger={
@@ -863,27 +1171,21 @@ export function ProjectDetail() {
                                 }
                               >
                                 <DropdownMenuItem
-                                  onClick={() => handleStart(be.name, "backend")}
-                                  disabled={deploying || be.status === "running"}
+                                  onClick={() => handleStart(beName, "backend")}
+                                  disabled={deploying || beStatus.label === "Đang chạy"}
                                 >
                                   <Play className="w-4 h-4 mr-2" />
                                   Chạy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handlePause(be.name, "backend")}
-                                  disabled={be.status === "paused" || be.status === "pending"}
+                                  onClick={() => handlePause(beName, "backend")}
+                                  disabled={beStatus.label === "Tạm dừng" || beStatus.label === "Chờ xử lý"}
                                 >
                                   <Pause className="w-4 h-4 mr-2" />
                                   Tạm dừng
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handleViewDetails(be.name, "backend")}
-                                >
-                                  <Eye className="w-4 h-4 mr-2" />
-                                  Xem chi tiết
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleDelete(be.name, "backend")}
+                                  onClick={() => handleDelete(beName, "backend")}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
@@ -941,22 +1243,34 @@ export function ProjectDetail() {
                   </Card>
                 )}
 
-                {project.components.frontends.length > 0 ? (
+                {(projectFrontends.length > 0 || project.components.frontends.length > 0) ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {project.components.frontends.map((fe) => {
-                      const feStatus = getStatusBadge(fe.status)
+                    {(projectFrontends.length > 0 ? projectFrontends : project.components.frontends).map((fe) => {
+                      // Map dữ liệu từ API hoặc mock
+                      const isApiData = 'frameworkType' in fe
+                      const feName = isApiData ? (fe as FrontendInfo).projectName : (fe as any).name
+                      const feDescription = isApiData ? (fe as FrontendInfo).description : undefined
+                      const feTech = isApiData ? (fe as FrontendInfo).frameworkType : (fe as any).tech
+                      const feStatus = getStatusBadge(isApiData ? (fe as FrontendInfo).status.toLowerCase() as ComponentStatus : (fe as any).status)
+                      const feDns = isApiData ? (fe as FrontendInfo).domainNameSystem : (fe as any).publicUrl
+                      const feDockerImage = isApiData ? (fe as FrontendInfo).dockerImage : (fe as any).source?.ref
+                      const feId = isApiData ? `api-fe-${(fe as FrontendInfo).id}` : (fe as any).id
+
                       return (
-                        <Card key={fe.id}>
+                        <Card key={feId}>
                           <CardHeader>
                             <div className="flex items-start justify-between">
-                              <div>
-                                <CardTitle className="text-lg">{fe.name}</CardTitle>
-                                <CardDescription>
-                                  {fe.tech === "react"
-                                    ? "React"
-                                    : fe.tech === "vue"
-                                    ? "Vue"
-                                    : "Angular"}
+                              <div className="flex-1">
+                                <CardTitle className="text-lg">{feName}</CardTitle>
+                                {feDescription && (
+                                  <CardDescription className="mt-1">
+                                    {feDescription}
+                                  </CardDescription>
+                                )}
+                                <CardDescription className="mt-1">
+                                  {feTech === "REACT" || feTech === "react" ? "React" : 
+                                   feTech === "VUE" || feTech === "vue" ? "Vue" : 
+                                   feTech === "ANGULAR" || feTech === "angular" ? "Angular" : feTech}
                                 </CardDescription>
                               </div>
                               <Badge variant={feStatus.variant}>
@@ -965,40 +1279,46 @@ export function ProjectDetail() {
                             </div>
                           </CardHeader>
                           <CardContent>
-                            {fe.publicUrl && (
-                              <div className="mb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-medium text-muted-foreground uppercase">
-                                    URL
-                                  </span>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5"
-                                    onClick={() => copyToClipboard(fe.publicUrl!)}
+                            <div className="space-y-3">
+                              {/* DNS */}
+                              {feDns && (
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium text-muted-foreground uppercase">
+                                      DNS
+                                    </span>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5"
+                                      onClick={() => copyToClipboard(feDns!)}
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                  <a
+                                    href={`https://${feDns}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sm text-primary hover:underline flex items-center gap-1 mt-1"
                                   >
-                                    <Copy className="w-3 h-3" />
-                                  </Button>
+                                    {feDns}
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
                                 </div>
-                                <a
-                                  href={`https://${fe.publicUrl}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-sm text-primary hover:underline flex items-center gap-1"
-                                >
-                                  {fe.publicUrl}
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
-                              </div>
-                            )}
-                            {fe.source.ref && (
-                              <div className="mb-2">
-                                <span className="text-xs font-medium text-muted-foreground uppercase">
-                                  Image
-                                </span>
-                                <p className="text-sm font-mono mt-1">{fe.source.ref}</p>
-                              </div>
-                            )}
+                              )}
+
+                              {/* Docker Image */}
+                              {feDockerImage && (
+                                <div>
+                                  <span className="text-xs font-medium text-muted-foreground uppercase">
+                                    Docker Image
+                                  </span>
+                                  <p className="text-sm font-mono mt-1">{feDockerImage}</p>
+                                </div>
+                              )}
+                            </div>
+
                             <div className="flex justify-end mt-4">
                               <DropdownMenu
                                 trigger={
@@ -1009,27 +1329,21 @@ export function ProjectDetail() {
                                 }
                               >
                                 <DropdownMenuItem
-                                  onClick={() => handleStart(fe.name, "frontend")}
-                                  disabled={deploying || fe.status === "running"}
+                                  onClick={() => handleStart(feName, "frontend")}
+                                  disabled={deploying || feStatus.label === "Đang chạy"}
                                 >
                                   <Play className="w-4 h-4 mr-2" />
                                   Chạy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handlePause(fe.name, "frontend")}
-                                  disabled={fe.status === "paused" || fe.status === "pending"}
+                                  onClick={() => handlePause(feName, "frontend")}
+                                  disabled={feStatus.label === "Tạm dừng" || feStatus.label === "Chờ xử lý"}
                                 >
                                   <Pause className="w-4 h-4 mr-2" />
                                   Tạm dừng
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handleViewDetails(fe.name, "frontend")}
-                                >
-                                  <Eye className="w-4 h-4 mr-2" />
-                                  Xem chi tiết
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleDelete(fe.name, "frontend")}
+                                  onClick={() => handleDelete(feName, "frontend")}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
@@ -1053,7 +1367,10 @@ export function ProjectDetail() {
                 <div className="space-y-3">
                   <div className="text-sm p-4 bg-muted rounded-lg">
                     <div className="font-medium mb-1">
-                      Tạo project - {new Date(project.updatedAt).toLocaleString("vi-VN")}
+                      Tạo project -{" "}
+                      {projectBasicInfo?.updatedAt
+                        ? new Date(projectBasicInfo.updatedAt).toLocaleString("vi-VN")
+                        : new Date(project.updatedAt).toLocaleString("vi-VN")}
                     </div>
                     <div className="text-muted-foreground">
                       Project được tạo thành công
@@ -1713,6 +2030,35 @@ export function ProjectDetail() {
                 <Button type="submit">Thêm Frontend</Button>
               </div>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Dialog xác nhận xóa project */}
+        <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Xác nhận xóa project</DialogTitle>
+              <DialogDescription>
+                Bạn có chắc chắn muốn xóa project "{projectBasicInfo?.name || project.name}"? 
+                Hành động này không thể hoàn tác. Tất cả databases, backends và frontends của project này sẽ bị xóa.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="outline"
+                onClick={() => setShowDeleteDialog(false)}
+                disabled={isDeleting}
+              >
+                Hủy
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteProject}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Đang xóa..." : "Xóa Project"}
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

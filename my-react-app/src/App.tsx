@@ -8,6 +8,7 @@ import { ProjectsList } from "./pages/projects/List"
 import { ProjectDetail } from "./pages/projects/Detail"
 import { ProjectNew } from "./pages/projects/New"
 import { Navbar } from "./components/user/Navbar"
+import { Footer } from "./components/user/Footer"
 import "./index.css"
 
 /**
@@ -17,7 +18,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <div className="min-h-screen bg-background">
+        <div className="min-h-screen bg-background flex flex-col">
           <Routes>
             {/* Public routes - không cần đăng nhập */}
             <Route path="/login" element={<Login />} />
@@ -30,6 +31,7 @@ function App() {
                 <ProtectedRoute>
                   <Navbar />
                   <ProjectsList />
+                  <Footer />
                 </ProtectedRoute>
               }
             />
@@ -39,6 +41,7 @@ function App() {
                 <ProtectedRoute>
                   <Navbar />
                   <ProjectNew />
+                  <Footer />
                 </ProtectedRoute>
               }
             />
@@ -48,6 +51,7 @@ function App() {
                 <ProtectedRoute>
                   <Navbar />
                   <ProjectDetail />
+                  <Footer />
                 </ProtectedRoute>
               }
             />
