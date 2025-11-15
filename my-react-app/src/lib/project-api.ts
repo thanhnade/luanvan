@@ -310,3 +310,53 @@ export async function getProjectDeploymentHistory(projectId: string | number): P
   return response.json()
 }
 
+/**
+ * Deploy Database
+ */
+export interface DeployDatabaseRequest {
+  projectName: string
+  databaseType: "MYSQL" | "MONGODB"
+  databaseName: string
+  databaseUsername: string
+  databasePassword: string
+  file?: File | null
+  username: string
+  projectId: number
+}
+
+export interface DeployDatabaseResponse {
+  status: string
+  databaseIp: string
+  databasePort: number
+  databaseName: string
+  databaseUsername: string
+  databasePassword: string
+}
+
+export async function deployDatabase(request: DeployDatabaseRequest): Promise<DeployDatabaseResponse> {
+  const formData = new FormData()
+  formData.append("projectName", request.projectName)
+  formData.append("databaseType", request.databaseType)
+  formData.append("databaseName", request.databaseName)
+  formData.append("databaseUsername", request.databaseUsername)
+  formData.append("databasePassword", request.databasePassword)
+  formData.append("username", request.username)
+  formData.append("projectId", String(request.projectId))
+  
+  if (request.file) {
+    formData.append("file", request.file)
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/project-databases/deploy`, {
+    method: "POST",
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi triển khai database" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi triển khai database")
+  }
+
+  return response.json()
+}
+

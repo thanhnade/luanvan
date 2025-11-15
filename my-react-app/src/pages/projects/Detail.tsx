@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Copy, CheckCircle2, ExternalLink, MoreVertical, Play, Pause, Trash2, Eye, EyeOff, Plus, Upload, X } from "lucide-react"
+import { ArrowLeft, Copy, CheckCircle2, ExternalLink, MoreVertical, Play, Pause, Trash2, Eye, EyeOff, Plus, Upload, X, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { getProjectById, deployProject, addDatabaseToProject, addBackendToProject, addFrontendToProject } from "@/lib/mock-api"
-import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
+import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
 import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ComponentStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -53,6 +53,7 @@ export function ProjectDetail() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deploymentHistory, setDeploymentHistory] = useState<DeploymentHistoryItem[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [isDeployingDatabase, setIsDeployingDatabase] = useState(false)
   
   // State cho file uploads
   const [zipFileDb, setZipFileDb] = useState<File | null>(null)
@@ -380,9 +381,9 @@ export function ProjectDetail() {
   const databaseSchema = z.object({
     name: z.string().min(1, "Tên database không được để trống"),
     type: z.enum(["mysql", "mongodb"]),
-    databaseName: z.string().optional(), // Tên database thực tế trên server
-    username: z.string().optional(),
-    password: z.string().optional(),
+    databaseName: z.string().min(1, "Tên database không được để trống"),
+    username: z.string().min(1, "Username database không được để trống"),
+    password: z.string().min(1, "Password database không được để trống"),
   })
 
   // Schema validation cho form thêm backend
@@ -439,25 +440,54 @@ export function ProjectDetail() {
   })
 
   const onSubmitDatabase = async (data: z.infer<typeof databaseSchema>) => {
-    if (!id) return
+    if (!id || !user?.username) {
+      toast.error("Không thể thêm database")
+      return
+    }
+
+    setIsDeployingDatabase(true)
+    const loadingToast = toast.loading("Đang triển khai database...", {
+      description: "Vui lòng đợi trong giây lát",
+    })
 
     try {
-      const newDatabase = {
-        name: data.name,
-        type: data.type,
-        provision: "system" as const, // Mặc định là hệ thống
-        databaseName: data.databaseName || undefined,
-        username: data.username || undefined,
-      }
+      // Chuyển đổi databaseType từ lowercase sang uppercase
+      const databaseType = data.type.toUpperCase() as "MYSQL" | "MONGODB"
+      
+      // Gọi API deploy database
+      await deployDatabase({
+        projectName: data.name,
+        databaseType: databaseType,
+        databaseName: data.databaseName || data.name,
+        databaseUsername: data.username || "root",
+        databasePassword: data.password || "password",
+        file: zipFileDb || undefined,
+        username: user.username,
+        projectId: Number(id),
+      })
 
-      const updatedProject = await addDatabaseToProject(id, newDatabase)
-      setProject(updatedProject)
+      toast.dismiss(loadingToast)
+      toast.success(`Đã thêm database "${data.name}" thành công!`)
       setShowAddDatabase(false)
       resetDb()
-      toast.success(`Đã thêm database "${data.name}"`)
+      setZipFileDb(null)
+      setZipErrorDb("")
+      
+      // Reload danh sách databases
+      if (id) {
+        try {
+          const response = await getProjectDatabases(id)
+          setProjectDatabases(response.databases || [])
+        } catch (err) {
+          console.error("Lỗi reload databases:", err)
+        }
+      }
     } catch (error) {
-      toast.error("Có lỗi xảy ra khi thêm database")
+      toast.dismiss(loadingToast)
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi thêm database")
       console.error(error)
+    } finally {
+      setIsDeployingDatabase(false)
     }
   }
 
@@ -1512,6 +1542,19 @@ export function ProjectDetail() {
             </HintBox>
             
             <form onSubmit={handleSubmitDb(onSubmitDatabase)} className="space-y-4">
+              {isDeployingDatabase && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                    <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+                      Đang triển khai database...
+                    </p>
+                  </div>
+                  <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 ml-6">
+                    Quá trình này có thể mất vài phút. Vui lòng không đóng cửa sổ này.
+                  </p>
+                </div>
+              )}
               <div>
                 <Label htmlFor="db-name">
                   Tên Database <span className="text-destructive">*</span>
@@ -1520,6 +1563,7 @@ export function ProjectDetail() {
                   id="db-name"
                   {...registerDb("name")}
                   placeholder="my-database"
+                  disabled={isDeployingDatabase}
                 />
                 {errorsDb.name && (
                   <p className="text-sm text-destructive mt-1">
@@ -1532,7 +1576,7 @@ export function ProjectDetail() {
                 <Label htmlFor="db-type">
                   Loại Database <span className="text-destructive">*</span>
                 </Label>
-                <Select id="db-type" {...registerDb("type")}>
+                <Select id="db-type" {...registerDb("type")} disabled={isDeployingDatabase}>
                   <option value="mysql">MySQL</option>
                   <option value="mongodb">MongoDB</option>
                 </Select>
@@ -1542,21 +1586,22 @@ export function ProjectDetail() {
               <div className="p-4 bg-muted rounded-lg space-y-4">
                 <div>
                   <Label className="text-sm font-medium mb-2 block">
-                    Thông tin Database của hệ thống
+                    Thông tin Database
                   </Label>
                   <p className="text-xs text-muted-foreground mb-3">
-                    Nhập thông tin database (tùy chọn cho hệ thống tự quản lý)
+                    Nhập thông tin database
                   </p>
                 </div>
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="db-databaseName">
-                      Tên Database
+                      Tên Database <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="db-databaseName"
                       {...registerDb("databaseName")}
                       placeholder="my_database"
+                      disabled={isDeployingDatabase}
                     />
                     {errorsDb.databaseName && (
                       <p className="text-sm text-destructive mt-1">
@@ -1567,12 +1612,13 @@ export function ProjectDetail() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label htmlFor="db-username">
-                        Username Database
+                        Username Database <span className="text-destructive">*</span>
                       </Label>
                       <Input
                         id="db-username"
                         {...registerDb("username")}
                         placeholder="admin"
+                        disabled={isDeployingDatabase}
                       />
                       {errorsDb.username && (
                         <p className="text-sm text-destructive mt-1">
@@ -1582,13 +1628,14 @@ export function ProjectDetail() {
                     </div>
                     <div>
                       <Label htmlFor="db-password">
-                        Password Database
+                        Password Database <span className="text-destructive">*</span>
                       </Label>
                       <Input
                         id="db-password"
                         type="password"
                         {...registerDb("password")}
                         placeholder="••••••••"
+                        disabled={isDeployingDatabase}
                       />
                       {errorsDb.password && (
                         <p className="text-sm text-destructive mt-1">
@@ -1604,8 +1651,12 @@ export function ProjectDetail() {
               <div>
                 <Label>Upload file ZIP (tùy chọn)</Label>
                 <div
-                  className="mt-2 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-muted transition-colors"
-                  onClick={() => document.getElementById("zip-input-db-modal")?.click()}
+                  className={`mt-2 border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                    isDeployingDatabase 
+                      ? "opacity-50 cursor-not-allowed" 
+                      : "cursor-pointer hover:bg-muted"
+                  }`}
+                  onClick={() => !isDeployingDatabase && document.getElementById("zip-input-db-modal")?.click()}
                 >
                   {zipFileDb ? (
                     <div>
@@ -1642,6 +1693,7 @@ export function ProjectDetail() {
                   type="file"
                   accept=".zip"
                   className="hidden"
+                  disabled={isDeployingDatabase}
                   onChange={(e) => {
                     const file = e.target.files?.[0]
                     if (file) {
@@ -1670,10 +1722,20 @@ export function ProjectDetail() {
                     setZipFileDb(null)
                     setZipErrorDb("")
                   }}
+                  disabled={isDeployingDatabase}
                 >
                   Hủy
                 </Button>
-                <Button type="submit">Thêm Database</Button>
+                <Button type="submit" disabled={isDeployingDatabase}>
+                  {isDeployingDatabase ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Đang triển khai...
+                    </>
+                  ) : (
+                    "Thêm Database"
+                  )}
+                </Button>
               </div>
             </form>
           </DialogContent>
