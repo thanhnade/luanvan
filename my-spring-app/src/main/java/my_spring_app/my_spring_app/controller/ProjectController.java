@@ -9,6 +9,7 @@ import my_spring_app.my_spring_app.dto.reponse.ProjectDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectFrontendListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectOverviewResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectSummaryResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectDeploymentHistoryResponse;
 import my_spring_app.my_spring_app.dto.request.CreateProjectRequest;
 import my_spring_app.my_spring_app.service.ProjectService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -86,6 +87,12 @@ public class ProjectController {
             @RequestParam String username) {
         projectService.deleteProject(id, username);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/deployment-history")
+    public ResponseEntity<ProjectDeploymentHistoryResponse> getProjectDeploymentHistory(@PathVariable Long id) {
+        ProjectDeploymentHistoryResponse response = projectService.getProjectDeploymentHistory(id);
+        return ResponseEntity.ok(response);
     }
 }
 

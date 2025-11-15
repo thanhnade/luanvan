@@ -8,6 +8,7 @@ import my_spring_app.my_spring_app.dto.reponse.ProjectDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectFrontendListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectOverviewResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectSummaryResponse;
+import my_spring_app.my_spring_app.dto.reponse.ProjectDeploymentHistoryResponse;
 import my_spring_app.my_spring_app.dto.request.CreateProjectRequest;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -562,6 +563,100 @@ public class ProjectServiceImpl implements ProjectService {
         // Xóa project (cascade sẽ xóa các databases, backends, frontends liên quan)
         projectRepository.delete(project);
         System.out.println("[deleteProject] Đã xóa project thành công: " + project.getProjectName());
+    }
+
+    @Override
+    public ProjectDeploymentHistoryResponse getProjectDeploymentHistory(Long projectId) {
+        System.out.println("[getProjectDeploymentHistory] Bắt đầu lấy lịch sử triển khai project với ID: " + projectId);
+
+        // Tìm project theo ID
+        Optional<ProjectEntity> projectOptional = projectRepository.findById(projectId);
+        if (projectOptional.isEmpty()) {
+            System.err.println("[getProjectDeploymentHistory] Lỗi: Project không tồn tại với ID: " + projectId);
+            throw new RuntimeException("Project không tồn tại với ID: " + projectId);
+        }
+        ProjectEntity project = projectOptional.get();
+        System.out.println("[getProjectDeploymentHistory] Tìm thấy project với tên: " + project.getProjectName());
+
+        // Fetch các collections riêng biệt để tránh LazyInitializationException
+        ProjectEntity projectWithDatabases = projectRepository.findByIdWithDatabases(projectId).orElse(project);
+        ProjectEntity projectWithBackends = projectRepository.findByIdWithBackends(projectId).orElse(project);
+        ProjectEntity projectWithFrontends = projectRepository.findByIdWithFrontends(projectId).orElse(project);
+
+        // Tạo danh sách lịch sử triển khai
+        List<ProjectDeploymentHistoryResponse.DeploymentHistoryItem> historyItems = new java.util.ArrayList<>();
+
+        // Thêm project vào đầu danh sách
+        ProjectDeploymentHistoryResponse.DeploymentHistoryItem projectItem = new ProjectDeploymentHistoryResponse.DeploymentHistoryItem();
+        projectItem.setType("PROJECT");
+        projectItem.setId(project.getId());
+        projectItem.setName(project.getProjectName());
+        projectItem.setDescription(project.getDescription());
+        projectItem.setCreatedAt(project.getCreatedAt());
+        historyItems.add(projectItem);
+
+        // Thêm databases
+        List<ProjectDatabaseEntity> databases = projectWithDatabases.getDatabases() != null 
+                ? projectWithDatabases.getDatabases() 
+                : (project.getDatabases() != null ? project.getDatabases() : new java.util.ArrayList<>());
+        
+        for (ProjectDatabaseEntity db : databases) {
+            ProjectDeploymentHistoryResponse.DeploymentHistoryItem dbItem = new ProjectDeploymentHistoryResponse.DeploymentHistoryItem();
+            dbItem.setType("DATABASE");
+            dbItem.setId(db.getId());
+            dbItem.setName(db.getProjectName());
+            dbItem.setDescription(db.getDescription());
+            dbItem.setCreatedAt(db.getCreatedAt());
+            dbItem.setDatabaseType(db.getDatabaseType());
+            historyItems.add(dbItem);
+        }
+
+        // Thêm backends
+        List<ProjectBackendEntity> backends = projectWithBackends.getBackends() != null 
+                ? projectWithBackends.getBackends() 
+                : (project.getBackends() != null ? project.getBackends() : new java.util.ArrayList<>());
+        
+        for (ProjectBackendEntity be : backends) {
+            ProjectDeploymentHistoryResponse.DeploymentHistoryItem beItem = new ProjectDeploymentHistoryResponse.DeploymentHistoryItem();
+            beItem.setType("BACKEND");
+            beItem.setId(be.getId());
+            beItem.setName(be.getProjectName());
+            beItem.setDescription(be.getDescription());
+            beItem.setCreatedAt(be.getCreatedAt());
+            beItem.setFrameworkType(be.getFrameworkType());
+            beItem.setDeploymentType(be.getDeploymentType());
+            historyItems.add(beItem);
+        }
+
+        // Thêm frontends
+        List<ProjectFrontendEntity> frontends = projectWithFrontends.getFrontends() != null 
+                ? projectWithFrontends.getFrontends() 
+                : (project.getFrontends() != null ? project.getFrontends() : new java.util.ArrayList<>());
+        
+        for (ProjectFrontendEntity fe : frontends) {
+            ProjectDeploymentHistoryResponse.DeploymentHistoryItem feItem = new ProjectDeploymentHistoryResponse.DeploymentHistoryItem();
+            feItem.setType("FRONTEND");
+            feItem.setId(fe.getId());
+            feItem.setName(fe.getProjectName());
+            feItem.setDescription(fe.getDescription());
+            feItem.setCreatedAt(fe.getCreatedAt());
+            feItem.setFrameworkType(fe.getFrameworkType());
+            feItem.setDeploymentType(fe.getDeploymentType());
+            historyItems.add(feItem);
+        }
+
+        // Sắp xếp theo thời gian tạo (từ mới nhất đến cũ nhất)
+        historyItems.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+
+        // Tạo response
+        ProjectDeploymentHistoryResponse response = new ProjectDeploymentHistoryResponse();
+        response.setProjectId(project.getId());
+        response.setProjectName(project.getProjectName());
+        response.setProjectCreatedAt(project.getCreatedAt());
+        response.setHistoryItems(historyItems);
+
+        System.out.println("[getProjectDeploymentHistory] Hoàn tất lấy lịch sử triển khai: " + historyItems.size() + " items");
+        return response;
     }
 }
 

@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { getProjectById, deployProject, addDatabaseToProject, addBackendToProject, addFrontendToProject } from "@/lib/mock-api"
-import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, type DatabaseInfo, type BackendInfo, type FrontendInfo } from "@/lib/project-api"
+import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
 import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ComponentStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -51,6 +51,8 @@ export function ProjectDetail() {
   const [showAddFrontend, setShowAddFrontend] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [deploymentHistory, setDeploymentHistory] = useState<DeploymentHistoryItem[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
   
   // State cho file uploads
   const [zipFileDb, setZipFileDb] = useState<File | null>(null)
@@ -259,6 +261,53 @@ export function ProjectDetail() {
     } finally {
       setIsDeleting(false)
       setShowDeleteDialog(false)
+    }
+  }
+
+  // Load deployment history
+  const loadDeploymentHistory = async () => {
+    if (!id) return
+
+    setLoadingHistory(true)
+    try {
+      const response = await getProjectDeploymentHistory(id)
+      setDeploymentHistory(response.historyItems || [])
+    } catch (error) {
+      console.error("Lỗi load deployment history:", error)
+      toast.error("Không thể tải lịch sử triển khai")
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
+
+  // Get type label và icon
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case "PROJECT":
+        return "Project"
+      case "DATABASE":
+        return "Database"
+      case "BACKEND":
+        return "Backend"
+      case "FRONTEND":
+        return "Frontend"
+      default:
+        return type
+    }
+  }
+
+  const getTypeBadge = (type: string) => {
+    switch (type) {
+      case "PROJECT":
+        return { variant: "default" as const, label: "Project" }
+      case "DATABASE":
+        return { variant: "secondary" as const, label: "Database" }
+      case "BACKEND":
+        return { variant: "outline" as const, label: "Backend" }
+      case "FRONTEND":
+        return { variant: "outline" as const, label: "Frontend" }
+      default:
+        return { variant: "secondary" as const, label: type }
     }
   }
 
@@ -711,7 +760,12 @@ export function ProjectDetail() {
         {/* Tabs */}
         <Card>
           <CardContent className="p-0">
-            <Tabs defaultValue="overview" className="w-full">
+            <Tabs defaultValue="overview" className="w-full" onValueChange={(value) => {
+              // Khi chuyển sang tab "history", load deployment history
+              if (value === "history" && id && deploymentHistory.length === 0 && !loadingHistory) {
+                loadDeploymentHistory()
+              }
+            }}>
               <TabsList className="w-full justify-start border-b rounded-none">
                 <TabsTrigger value="overview">Tổng quan</TabsTrigger>
                 <TabsTrigger value="databases">
@@ -1364,19 +1418,54 @@ export function ProjectDetail() {
               </TabsContent>
 
               <TabsContent value="history" className="p-6">
-                <div className="space-y-3">
-                  <div className="text-sm p-4 bg-muted rounded-lg">
-                    <div className="font-medium mb-1">
-                      Tạo project -{" "}
-                      {projectBasicInfo?.updatedAt
-                        ? new Date(projectBasicInfo.updatedAt).toLocaleString("vi-VN")
-                        : new Date(project.updatedAt).toLocaleString("vi-VN")}
-                    </div>
-                    <div className="text-muted-foreground">
-                      Project được tạo thành công
-                    </div>
+                {loadingHistory ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                   </div>
-                </div>
+                ) : deploymentHistory.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-12">
+                    Chưa có lịch sử triển khai
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {deploymentHistory.map((item, index) => {
+                      const badgeConfig = getTypeBadge(item.type)
+                      return (
+                        <div key={`${item.type}-${item.id}`} className="text-sm p-4 bg-muted rounded-lg">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={badgeConfig.variant}>{badgeConfig.label}</Badge>
+                              <span className="font-medium">{item.name}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(item.createdAt).toLocaleString("vi-VN")}
+                            </span>
+                          </div>
+                          {item.description && (
+                            <div className="text-muted-foreground mb-2">{item.description}</div>
+                          )}
+                          <div className="flex gap-2 flex-wrap text-xs text-muted-foreground">
+                            {item.type === "DATABASE" && item.databaseType && (
+                              <span>Loại: {item.databaseType}</span>
+                            )}
+                            {item.type === "BACKEND" && (
+                              <>
+                                {item.frameworkType && <span>Framework: {item.frameworkType}</span>}
+                                {item.deploymentType && <span>Deployment: {item.deploymentType}</span>}
+                              </>
+                            )}
+                            {item.type === "FRONTEND" && (
+                              <>
+                                {item.frameworkType && <span>Framework: {item.frameworkType}</span>}
+                                {item.deploymentType && <span>Deployment: {item.deploymentType}</span>}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </TabsContent>
             </Tabs>
           </CardContent>

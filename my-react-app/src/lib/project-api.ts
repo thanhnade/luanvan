@@ -273,3 +273,40 @@ export async function deleteProject(projectId: string | number, username: string
   }
 }
 
+/**
+ * Lịch sử triển khai
+ */
+export interface DeploymentHistoryItem {
+  type: "PROJECT" | "DATABASE" | "BACKEND" | "FRONTEND"
+  id: number
+  name: string
+  description?: string
+  createdAt: string
+  databaseType?: string
+  frameworkType?: string
+  deploymentType?: string
+}
+
+export interface ProjectDeploymentHistoryResponse {
+  projectId: number
+  projectName: string
+  projectCreatedAt: string
+  historyItems: DeploymentHistoryItem[]
+}
+
+export async function getProjectDeploymentHistory(projectId: string | number): Promise<ProjectDeploymentHistoryResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/deployment-history`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy lịch sử triển khai" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy lịch sử triển khai")
+  }
+
+  return response.json()
+}
+
