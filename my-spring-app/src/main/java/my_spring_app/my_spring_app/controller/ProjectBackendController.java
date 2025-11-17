@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,6 +25,18 @@ public class ProjectBackendController {
     public ResponseEntity<DeployBackendResponse> deploy(@ModelAttribute @Valid DeployBackendRequest request) {
         DeployBackendResponse response = projectBackendService.deploy(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PostMapping("/{projectId}/{backendId}/stop")
+    public ResponseEntity<String> stopBackend(@PathVariable Long projectId, @PathVariable Long backendId) {
+        projectBackendService.stopBackend(projectId, backendId);
+        return ResponseEntity.ok("Đã dừng backend thành công");
+    }
+
+    @PostMapping("/{projectId}/{backendId}/start")
+    public ResponseEntity<String> startBackend(@PathVariable Long projectId, @PathVariable Long backendId) {
+        projectBackendService.startBackend(projectId, backendId);
+        return ResponseEntity.ok("Đã khởi động backend thành công");
     }
 }
 

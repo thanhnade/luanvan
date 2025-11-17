@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,6 +25,18 @@ public class ProjectFrontendController {
     public ResponseEntity<DeployFrontendResponse> deploy(@ModelAttribute @Valid DeployFrontendRequest request) {
         DeployFrontendResponse response = projectFrontendService.deploy(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PostMapping("/{projectId}/{frontendId}/stop")
+    public ResponseEntity<String> stopFrontend(@PathVariable Long projectId, @PathVariable Long frontendId) {
+        projectFrontendService.stopFrontend(projectId, frontendId);
+        return ResponseEntity.ok("Đã dừng frontend thành công");
+    }
+
+    @PostMapping("/{projectId}/{frontendId}/start")
+    public ResponseEntity<String> startFrontend(@PathVariable Long projectId, @PathVariable Long frontendId) {
+        projectFrontendService.startFrontend(projectId, frontendId);
+        return ResponseEntity.ok("Đã khởi động frontend thành công");
     }
 }
 

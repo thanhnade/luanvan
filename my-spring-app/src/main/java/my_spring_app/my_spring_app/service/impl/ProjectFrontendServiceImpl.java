@@ -21,9 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.models.V1Namespace;
 import io.kubernetes.client.openapi.models.V1ObjectMeta;
+import io.kubernetes.client.openapi.models.V1Scale;
 import io.kubernetes.client.util.Config;
 
 import java.io.ByteArrayInputStream;
@@ -372,6 +374,40 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                     tempKubeconfig.delete();
                 } catch (Exception e) {
                     System.err.println("[ensureNamespaceExists] Không thể xóa file kubeconfig tạm thời: " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Tạo Kubernetes ApiClient từ kubeconfig trên MASTER server
+     * @param session SSH session đã kết nối tới MASTER server
+     * @return ApiClient đã được cấu hình
+     * @throws Exception Nếu không đọc được kubeconfig
+     */
+    private ApiClient createKubernetesClient(Session session) throws Exception {
+        String kubeconfigPath = "~/.kube/config";
+        System.out.println("[createKubernetesClient] Đang đọc kubeconfig từ: " + kubeconfigPath);
+        File tempKubeconfig = null;
+        try {
+            String kubeconfigContent = executeCommand(session, "cat " + kubeconfigPath);
+            if (kubeconfigContent == null || kubeconfigContent.trim().isEmpty()) {
+                throw new RuntimeException("Không thể đọc kubeconfig từ master server");
+            }
+
+            tempKubeconfig = File.createTempFile("kubeconfig-", ".yaml");
+            try (FileWriter writer = new FileWriter(tempKubeconfig)) {
+                writer.write(kubeconfigContent);
+            }
+            System.out.println("[createKubernetesClient] Đã tạo kubeconfig tạm: " + tempKubeconfig.getAbsolutePath());
+            ApiClient client = Config.fromConfig(tempKubeconfig.getAbsolutePath());
+            Configuration.setDefaultApiClient(client);
+            return client;
+        } finally {
+            if (tempKubeconfig != null && tempKubeconfig.exists()) {
+                boolean deleted = tempKubeconfig.delete();
+                if (!deleted) {
+                    tempKubeconfig.deleteOnExit();
                 }
             }
         }
@@ -849,6 +885,107 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
             if (sftpYaml != null && sftpYaml.isConnected()) sftpYaml.disconnect();
             if (clusterSession != null && clusterSession.isConnected()) clusterSession.disconnect();
             System.out.println("[deployFrontend] Đã đóng các kết nối SSH/SFTP");
+        }
+    }
+
+    @Override
+    public void stopFrontend(Long projectId, Long frontendId) {
+        System.out.println("[stopFrontend] Yêu cầu dừng frontend projectId=" + projectId + ", frontendId=" + frontendId);
+
+        // Lấy ProjectEntity để xác định namespace và quyền sở hữu
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy ProjectFrontendEntity theo frontendId
+        ProjectFrontendEntity frontend = projectFrontendRepository.findById(frontendId)
+                .orElseThrow(() -> new RuntimeException("Frontend project không tồn tại với id: " + frontendId));
+
+        // Đảm bảo frontend thuộc đúng project
+        if (frontend.getProject() == null || !frontend.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Frontend project không thuộc về project này");
+        }
+
+        // Scale replicas về 0 để dừng ứng dụng
+        scaleFrontendDeployment(project, frontend, 0);
+
+        // Cập nhật trạng thái trong database
+        frontend.setStatus("STOPPED");
+        projectFrontendRepository.save(frontend);
+        System.out.println("[stopFrontend] Đã dừng frontend thành công");
+    }
+
+    @Override
+    public void startFrontend(Long projectId, Long frontendId) {
+        System.out.println("[startFrontend] Yêu cầu khởi động frontend projectId=" + projectId + ", frontendId=" + frontendId);
+
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy frontend cần khởi động
+        ProjectFrontendEntity frontend = projectFrontendRepository.findById(frontendId)
+                .orElseThrow(() -> new RuntimeException("Frontend project không tồn tại với id: " + frontendId));
+
+        // Kiểm tra frontend thuộc về project
+        if (frontend.getProject() == null || !frontend.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Frontend project không thuộc về project này");
+        }
+
+        // Scale replicas lên 1 để khởi động lại
+        scaleFrontendDeployment(project, frontend, 1);
+
+        // Cập nhật trạng thái
+        frontend.setStatus("RUNNING");
+        projectFrontendRepository.save(frontend);
+        System.out.println("[startFrontend] Đã khởi động frontend thành công");
+    }
+
+    private void scaleFrontendDeployment(ProjectEntity project, ProjectFrontendEntity frontend, int replicas) {
+        // Lấy namespace từ project để xác định không gian làm việc trên K8s
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Không thể thay đổi replicas frontend.");
+        }
+
+        // Tên deployment tuân theo convention app-<uuid_k8s>
+        String deploymentName = "app-" + frontend.getUuid_k8s();
+
+        // Lấy thông tin server MASTER để truy cập kubeconfig
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            // Kết nối SSH tới MASTER để đọc kubeconfig
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[scaleFrontendDeployment] Đã kết nối MASTER server để scale deployment");
+
+            // Tạo Kubernetes client dựa trên kubeconfig vừa đọc
+            ApiClient client = createKubernetesClient(clusterSession);
+            AppsV1Api appsApi = new AppsV1Api(client);
+
+            // Đọc object Scale hiện tại, sau đó cập nhật số replicas
+            V1Scale scale = appsApi.readNamespacedDeploymentScale(deploymentName, namespace, null);
+            if (scale.getSpec() == null) {
+                scale.setSpec(new io.kubernetes.client.openapi.models.V1ScaleSpec());
+            }
+            scale.getSpec().setReplicas(replicas);
+            appsApi.replaceNamespacedDeploymentScale(deploymentName, namespace, scale, null, null, null, null);
+            System.out.println("[scaleFrontendDeployment] Đã scale deployment " + deploymentName + " về " + replicas + " replica(s)");
+        } catch (Exception e) {
+            System.err.println("[scaleFrontendDeployment] Lỗi: " + e.getMessage());
+            throw new RuntimeException("Không thể scale frontend: " + e.getMessage(), e);
+        } finally {
+            // Đóng SSH session để tránh rò rỉ kết nối
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
         }
     }
 }

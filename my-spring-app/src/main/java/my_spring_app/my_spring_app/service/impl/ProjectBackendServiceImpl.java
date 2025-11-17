@@ -20,9 +20,12 @@ import org.springframework.transaction.annotation.Transactional;
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.models.V1Namespace;
 import io.kubernetes.client.openapi.models.V1ObjectMeta;
+import io.kubernetes.client.openapi.models.V1Scale;
+import io.kubernetes.client.openapi.models.V1ScaleSpec;
 import io.kubernetes.client.util.Config;
 
 import java.io.ByteArrayInputStream;
@@ -162,6 +165,38 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                     tempKubeconfig.delete();
                 } catch (Exception e) {
                     System.err.println("[ensureNamespaceExists] Không thể xóa file kubeconfig tạm thời: " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Tạo Kubernetes ApiClient dựa trên kubeconfig lấy từ MASTER server
+     */
+    private ApiClient createKubernetesClient(Session session) throws Exception {
+        String kubeconfigPath = "~/.kube/config";
+        System.out.println("[createKubernetesClient] Đang đọc kubeconfig từ: " + kubeconfigPath);
+        File tempKubeconfig = null;
+        try {
+            String kubeconfigContent = executeCommand(session, "cat " + kubeconfigPath);
+            if (kubeconfigContent == null || kubeconfigContent.trim().isEmpty()) {
+                throw new RuntimeException("Không thể đọc kubeconfig từ master server");
+            }
+
+            tempKubeconfig = File.createTempFile("kubeconfig-", ".yaml");
+            try (FileWriter writer = new FileWriter(tempKubeconfig)) {
+                writer.write(kubeconfigContent);
+            }
+            System.out.println("[createKubernetesClient] Đã tạo kubeconfig tạm tại: " + tempKubeconfig.getAbsolutePath());
+
+            ApiClient client = Config.fromConfig(tempKubeconfig.getAbsolutePath());
+            Configuration.setDefaultApiClient(client);
+            return client;
+        } finally {
+            if (tempKubeconfig != null && tempKubeconfig.exists()) {
+                boolean deleted = tempKubeconfig.delete();
+                if (!deleted) {
+                    tempKubeconfig.deleteOnExit();
                 }
             }
         }
@@ -858,6 +893,91 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
             if (sftpYaml != null && sftpYaml.isConnected()) sftpYaml.disconnect();
             if (clusterSession != null && clusterSession.isConnected()) clusterSession.disconnect();
             System.out.println("[deployBackend] Đã đóng các kết nối SSH/SFTP");
+        }
+    }
+
+    @Override
+    public void stopBackend(Long projectId, Long backendId) {
+        System.out.println("[stopBackend] Yêu cầu dừng backend projectId=" + projectId + ", backendId=" + backendId);
+
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        ProjectBackendEntity backend = projectBackendRepository.findById(backendId)
+                .orElseThrow(() -> new RuntimeException("Backend project không tồn tại với id: " + backendId));
+
+        if (backend.getProject() == null || !backend.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Backend project không thuộc về project này");
+        }
+
+        scaleBackendDeployment(project, backend, 0);
+
+        backend.setStatus("STOPPED");
+        projectBackendRepository.save(backend);
+        System.out.println("[stopBackend] Đã dừng backend thành công");
+    }
+
+    @Override
+    public void startBackend(Long projectId, Long backendId) {
+        System.out.println("[startBackend] Yêu cầu khởi động backend projectId=" + projectId + ", backendId=" + backendId);
+
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        ProjectBackendEntity backend = projectBackendRepository.findById(backendId)
+                .orElseThrow(() -> new RuntimeException("Backend project không tồn tại với id: " + backendId));
+
+        if (backend.getProject() == null || !backend.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Backend project không thuộc về project này");
+        }
+
+        scaleBackendDeployment(project, backend, 1);
+
+        backend.setStatus("RUNNING");
+        projectBackendRepository.save(backend);
+        System.out.println("[startBackend] Đã khởi động backend thành công");
+    }
+
+    private void scaleBackendDeployment(ProjectEntity project, ProjectBackendEntity backend, int replicas) {
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Không thể thay đổi replicas backend.");
+        }
+
+        String deploymentName = "app-" + backend.getUuid_k8s();
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[scaleBackendDeployment] Đã kết nối tới MASTER server");
+
+            ApiClient client = createKubernetesClient(clusterSession);
+            AppsV1Api appsApi = new AppsV1Api(client);
+
+            V1Scale scale = appsApi.readNamespacedDeploymentScale(deploymentName, namespace, null);
+            if (scale.getSpec() == null) {
+                scale.setSpec(new V1ScaleSpec());
+            }
+            scale.getSpec().setReplicas(replicas);
+            appsApi.replaceNamespacedDeploymentScale(deploymentName, namespace, scale, null, null, null, null);
+            System.out.println("[scaleBackendDeployment] Đã scale deployment " + deploymentName + " về " + replicas + " replica(s)");
+        } catch (Exception e) {
+            System.err.println("[scaleBackendDeployment] Lỗi: " + e.getMessage());
+            throw new RuntimeException("Không thể scale backend: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
         }
     }
 }

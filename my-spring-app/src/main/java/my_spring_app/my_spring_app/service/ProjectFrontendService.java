@@ -6,5 +6,9 @@ import my_spring_app.my_spring_app.dto.request.DeployFrontendRequest;
 public interface ProjectFrontendService {
     
     DeployFrontendResponse deploy(DeployFrontendRequest request);
+    
+    void stopFrontend(Long projectId, Long frontendId);
+    
+    void startFrontend(Long projectId, Long frontendId);
 }
 

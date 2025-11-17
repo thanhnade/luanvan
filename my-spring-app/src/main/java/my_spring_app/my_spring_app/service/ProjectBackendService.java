@@ -6,5 +6,9 @@ import my_spring_app.my_spring_app.dto.request.DeployBackendRequest;
 public interface ProjectBackendService {
 
     DeployBackendResponse deploy(DeployBackendRequest request);
+    
+    void stopBackend(Long projectId, Long backendId);
+    
+    void startBackend(Long projectId, Long backendId);
 }
 
