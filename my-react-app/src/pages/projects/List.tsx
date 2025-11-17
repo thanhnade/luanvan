@@ -4,6 +4,7 @@ import { Search, Plus } from "lucide-react"
 import { motion } from "framer-motion"
 import { getUserProjects } from "@/lib/project-api"
 import { useAuth } from "@/contexts/AuthContext"
+import { useWizardStore } from "@/stores/wizard-store"
 import type { Project, ProjectStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -20,6 +21,7 @@ import { toast } from "sonner"
 export function ProjectsList() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { resetWizard } = useWizardStore()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -27,6 +29,19 @@ export function ProjectsList() {
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [sortBy, setSortBy] = useState<"name" | "updated">("updated")
   const [showCreateModal, setShowCreateModal] = useState(false)
+
+  // Xóa currentProjectId và wizard-draft khi vào trang này
+  useEffect(() => {
+    // Xóa currentProjectId từ localStorage
+    try {
+      localStorage.removeItem("currentProjectId")
+    } catch (error) {
+      console.error("Lỗi xóa currentProjectId:", error)
+    }
+    
+    // Xóa wizard-draft thông qua resetWizard
+    resetWizard()
+  }, [resetWizard])
 
   // Load projects từ API
   const loadProjects = useCallback(async () => {

@@ -90,8 +90,6 @@ export function CreateProjectModal({
           <DialogDescription>
             {createMode === "empty" 
               ? "Nhập thông tin project của bạn"
-              : createMode === "fullstack"
-              ? "Bạn sẽ được chuyển đến trang wizard để cấu hình đầy đủ"
               : "Chọn loại project bạn muốn tạo"}
           </DialogDescription>
         </DialogHeader>
@@ -113,7 +111,7 @@ export function CreateProjectModal({
 
             <Card
               className="cursor-pointer hover:border-primary transition-colors"
-              onClick={() => setCreateMode("fullstack")}
+              onClick={handleCreateFullstack}
             >
               <CardHeader>
                 <Layers className="w-8 h-8 text-primary mb-2" />
@@ -124,7 +122,7 @@ export function CreateProjectModal({
               </CardHeader>
             </Card>
           </div>
-        ) : createMode === "empty" ? (
+        ) : (
           <form onSubmit={handleCreateEmpty} className="space-y-4 mt-4">
             <div>
               <Label htmlFor="empty-project-name">
@@ -167,26 +165,6 @@ export function CreateProjectModal({
               </Button>
             </div>
           </form>
-        ) : (
-          <div className="mt-4">
-            <p className="text-sm text-muted-foreground mb-4">
-              Bạn sẽ được chuyển đến trang wizard để cấu hình đầy đủ các thành phần cho project.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setCreateMode(null)
-                }}
-              >
-                Quay lại
-              </Button>
-              <Button onClick={handleCreateFullstack}>
-                Tiếp tục
-              </Button>
-            </div>
-          </div>
         )}
       </DialogContent>
     </Dialog>

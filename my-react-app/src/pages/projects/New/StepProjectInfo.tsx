@@ -6,9 +6,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/ui/button"
 import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
+import { createProject } from "@/lib/project-api"
+import { useAuth } from "@/contexts/AuthContext"
+import { toast } from "sonner"
+import { Loader2 } from "lucide-react"
 
 // Schema validation
 const projectInfoSchema = z.object({
@@ -22,7 +27,9 @@ type FormData = z.infer<typeof projectInfoSchema>
  * Step 1: Thông tin Project (Tên và Mô tả)
  */
 export function StepProjectInfo() {
-  const { projectName, description, setProjectName, setDescription } = useWizardStore()
+  const { projectName, description, projectId, setProjectName, setDescription, setProjectId, setCurrentStep } = useWizardStore()
+  const { user } = useAuth()
+  const [isCreating, setIsCreating] = useState(false)
 
   const {
     register,
@@ -60,6 +67,54 @@ export function StepProjectInfo() {
     }
   }, [watchedDescription, description, setDescription])
 
+  const onSubmit = async (data: FormData) => {
+    if (!user?.username) {
+      toast.error("Bạn chưa đăng nhập")
+      return
+    }
+
+    if (projectId) {
+      // Project đã được tạo rồi, chỉ cần chuyển sang bước tiếp theo
+      setCurrentStep(1)
+      return
+    }
+
+    setIsCreating(true)
+    const loadingToast = toast.loading("Đang tạo project...", {
+      description: "Vui lòng đợi trong giây lát",
+    })
+
+    try {
+      const response = await createProject({
+        projectName: data.projectName.trim(),
+        description: data.description?.trim() || undefined,
+        username: user.username,
+      })
+
+      // Lưu projectId vào store
+      setProjectId(response.id)
+      
+      // Lưu projectId vào localStorage
+      try {
+        localStorage.setItem("currentProjectId", String(response.id))
+      } catch (error) {
+        console.error("Lỗi lưu projectId vào localStorage:", error)
+      }
+
+      toast.dismiss(loadingToast)
+      toast.success("Tạo project thành công!")
+      
+      // Tự động chuyển sang bước tiếp theo
+      setCurrentStep(1)
+    } catch (error) {
+      toast.dismiss(loadingToast)
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi tạo project")
+      console.error(error)
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -86,7 +141,14 @@ export function StepProjectInfo() {
           <CardTitle>Thông tin Project</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <form onSubmit={handleSubmit(() => {})} className="space-y-4">
+          {projectId && (
+            <div className="p-4 bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-lg">
+              <p className="text-sm text-green-900 dark:text-green-100 font-medium">
+                ✓ Project đã được tạo thành công! Bạn có thể tiếp tục với các bước tiếp theo.
+              </p>
+            </div>
+          )}
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div>
               <Label htmlFor="projectName">
                 Tên Project <span className="text-destructive">*</span>
@@ -96,6 +158,7 @@ export function StepProjectInfo() {
                 {...register("projectName")}
                 placeholder="my-awesome-project"
                 className={errors.projectName ? "border-destructive" : ""}
+                disabled={isCreating || !!projectId}
               />
               {errors.projectName && (
                 <p className="text-sm text-destructive mt-1">
@@ -114,10 +177,29 @@ export function StepProjectInfo() {
                 {...register("description")}
                 placeholder="Mô tả về project của bạn..."
                 rows={4}
+                disabled={isCreating || !!projectId}
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Mô tả ngắn gọn về mục đích và chức năng của project
               </p>
+            </div>
+
+            <div className="flex justify-end pt-4">
+              <Button
+                type="submit"
+                disabled={isCreating || !!projectId}
+              >
+                {isCreating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Đang tạo...
+                  </>
+                ) : projectId ? (
+                  "Đã tạo project"
+                ) : (
+                  "Xác nhận"
+                )}
+              </Button>
             </div>
           </form>
         </CardContent>

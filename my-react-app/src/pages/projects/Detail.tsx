@@ -172,7 +172,7 @@ export function ProjectDetail() {
     loadProjectFrontends()
   }, [id])
 
-  // Load project (components) từ mock-api
+  // Load project (components) từ mock-api - optional, chỉ dùng làm fallback
   useEffect(() => {
     const loadProject = async () => {
       if (!id) return
@@ -181,15 +181,33 @@ export function ProjectDetail() {
         const data = await getProjectById(id)
         setProject(data)
       } catch (error) {
-        console.error("Lỗi load project:", error)
-        toast.error("Không tìm thấy project")
+        // Không hiển thị lỗi vì chúng ta đã có dữ liệu từ các API thực
+        // Chỉ log để debug
+        console.log("Không tìm thấy project trong mock-api, sử dụng dữ liệu từ API thực")
+        // Tạo project object giả từ dữ liệu API để tránh lỗi render
+        setProject({
+          id: id,
+          name: projectBasicInfo?.name || "Project",
+          description: projectBasicInfo?.description,
+          status: "running",
+          updatedAt: projectBasicInfo?.updatedAt || new Date().toISOString(),
+          components: {
+            databases: [],
+            backends: [],
+            frontends: [],
+          },
+          endpoints: {
+            frontend: "",
+            api: "",
+          },
+        } as Project)
       } finally {
         setLoading(false)
       }
     }
 
     loadProject()
-  }, [id])
+  }, [id, projectBasicInfo])
 
   // Xem log (giả lập)
   const handleViewLog = (resourceName: string) => {
@@ -206,14 +224,19 @@ export function ProjectDetail() {
 
   // Chạy component
   const handleStart = async (resourceName: string, resourceType: "database" | "backend" | "frontend") => {
-    if (!project) return
+    if (!id) return
     setDeploying(true)
     try {
-      await deployProject(project.id)
+      await deployProject(id)
       toast.success(`Đã bắt đầu chạy ${resourceName}!`)
-      // Reload project để cập nhật status
-      const data = await getProjectById(project.id)
-      setProject(data)
+      // Reload project để cập nhật status (nếu có trong mock-api)
+      try {
+        const data = await getProjectById(id)
+        setProject(data)
+      } catch (error) {
+        // Nếu không tìm thấy trong mock-api, không sao vì đã có dữ liệu từ API thực
+        console.log("Không thể reload từ mock-api, sử dụng dữ liệu từ API thực")
+      }
     } catch (error) {
       toast.error("Có lỗi xảy ra khi chạy")
     } finally {
@@ -314,43 +337,61 @@ export function ProjectDetail() {
     }
   }
 
-  // Tính toán thống kê - ưu tiên dữ liệu từ API, nếu không có thì tính từ project
-  const calculateStats = () => {
-    // Nếu có dữ liệu từ API overview, sử dụng nó
-    if (projectOverview) {
-      return projectOverview
-    }
-
-    // Nếu không có, tính từ project (fallback)
-    if (!project) return null
-
-    const calculateComponentStats = (components: Array<{ status: ComponentStatus }>) => {
-      const stats = {
-        total: components.length,
-        running: 0,
-        paused: 0,
-        other: 0,
+    // Tính toán thống kê - ưu tiên dữ liệu từ API, nếu không có thì tính từ project
+    const calculateStats = () => {
+      // Nếu có dữ liệu từ API overview, sử dụng nó
+      if (projectOverview) {
+        return projectOverview
       }
 
-      components.forEach((comp) => {
-        if (comp.status === "deployed") {
-          stats.running++
-        } else if (comp.status === "pending" || comp.status === "building") {
-          stats.paused++
-        } else {
-          stats.other++
+      // Nếu không có, tính từ project (fallback)
+      // Sử dụng displayProject nếu đã được tạo, nếu không thì return null
+      const currentProject = project || (projectBasicInfo ? {
+        id: id || "",
+        name: projectBasicInfo.name,
+        description: projectBasicInfo.description,
+        status: "running" as const,
+        updatedAt: projectBasicInfo.updatedAt,
+        components: {
+          databases: [],
+          backends: [],
+          frontends: [],
+        },
+        endpoints: {
+          frontend: "",
+          api: "",
+        },
+      } : null)
+
+      if (!currentProject) return null
+
+      const calculateComponentStats = (components: Array<{ status: ComponentStatus }>) => {
+        const stats = {
+          total: components.length,
+          running: 0,
+          paused: 0,
+          other: 0,
         }
-      })
 
-      return stats
-    }
+        components.forEach((comp) => {
+          if (comp.status === "deployed") {
+            stats.running++
+          } else if (comp.status === "pending" || comp.status === "building") {
+            stats.paused++
+          } else {
+            stats.other++
+          }
+        })
 
-    return {
-      databases: calculateComponentStats(project.components.databases),
-      backends: calculateComponentStats(project.components.backends),
-      frontends: calculateComponentStats(project.components.frontends),
+        return stats
+      }
+
+      return {
+        databases: calculateComponentStats(currentProject.components.databases),
+        backends: calculateComponentStats(currentProject.components.backends),
+        frontends: calculateComponentStats(currentProject.components.frontends),
+      }
     }
-  }
 
   const stats = calculateStats()
 
@@ -746,7 +787,8 @@ export function ProjectDetail() {
     )
   }
 
-  if (!project) {
+  // Nếu không có projectBasicInfo thì có thể project không tồn tại
+  if (!projectBasicInfo && !project) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -759,7 +801,25 @@ export function ProjectDetail() {
     )
   }
 
-  const statusConfig = getStatusBadge(project.status)
+  // Tạo project object nếu chưa có (từ mock-api) nhưng có dữ liệu từ API
+  const displayProject = project || {
+    id: id || "",
+    name: projectBasicInfo?.name || "Project",
+    description: projectBasicInfo?.description,
+    status: "running",
+    updatedAt: projectBasicInfo?.updatedAt || new Date().toISOString(),
+    components: {
+      databases: [],
+      backends: [],
+      frontends: [],
+    },
+    endpoints: {
+      frontend: "",
+      api: "",
+    },
+  } as Project
+
+  const statusConfig = getStatusBadge(displayProject.status)
 
   return (
     <div className="min-h-screen bg-background py-8 px-4 sm:px-6 lg:px-8">
@@ -788,18 +848,18 @@ export function ProjectDetail() {
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <CardTitle className="text-3xl mb-2">
-                    {projectBasicInfo?.name || project.name}
+                    {projectBasicInfo?.name || displayProject.name}
                   </CardTitle>
-                  {(projectBasicInfo?.description || project.description) && (
+                  {(projectBasicInfo?.description || displayProject.description) && (
                     <CardDescription className="mb-4">
-                      {projectBasicInfo?.description || project.description}
+                      {projectBasicInfo?.description || displayProject.description}
                     </CardDescription>
                   )}
                   <span className="text-sm text-muted-foreground">
                     Cập nhật:{" "}
                     {projectBasicInfo?.updatedAt
                       ? new Date(projectBasicInfo.updatedAt).toLocaleString("vi-VN")
-                      : new Date(project.updatedAt).toLocaleString("vi-VN")}
+                      : new Date(displayProject.updatedAt).toLocaleString("vi-VN")}
                   </span>
                 </div>
                 <Badge variant={statusConfig.variant} className="ml-4">
@@ -826,13 +886,13 @@ export function ProjectDetail() {
               <TabsList className="w-full justify-start border-b rounded-none">
                 <TabsTrigger value="overview">Tổng quan</TabsTrigger>
                 <TabsTrigger value="databases">
-                  Databases ({projectDatabases.length > 0 ? projectDatabases.length : (stats?.databases?.total ?? project.components.databases.length)})
+                  Databases ({projectDatabases.length > 0 ? projectDatabases.length : (stats?.databases?.total ?? displayProject.components.databases.length)})
                 </TabsTrigger>
                 <TabsTrigger value="backends">
-                  Backends ({projectBackends.length > 0 ? projectBackends.length : (stats?.backends?.total ?? project.components.backends.length)})
+                  Backends ({projectBackends.length > 0 ? projectBackends.length : (stats?.backends?.total ?? displayProject.components.backends.length)})
                 </TabsTrigger>
                 <TabsTrigger value="frontends">
-                  Frontends ({projectFrontends.length > 0 ? projectFrontends.length : (stats?.frontends?.total ?? project.components.frontends.length)})
+                  Frontends ({projectFrontends.length > 0 ? projectFrontends.length : (stats?.frontends?.total ?? displayProject.components.frontends.length)})
                 </TabsTrigger>
                 <TabsTrigger value="history">Lịch sử triển khai</TabsTrigger>
               </TabsList>
@@ -860,27 +920,27 @@ export function ProjectDetail() {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                            {stats?.databases?.total ?? project.components.databases.length}
+                            {stats?.databases?.total ?? displayProject.components.databases.length}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Databases</div>
                         </div>
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                            {stats?.backends?.total ?? project.components.backends.length}
+                            {stats?.backends?.total ?? displayProject.components.backends.length}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Backends</div>
                         </div>
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                            {stats?.frontends?.total ?? project.components.frontends.length}
+                            {stats?.frontends?.total ?? displayProject.components.frontends.length}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Frontends</div>
                         </div>
                         <div className="text-center p-4 bg-muted rounded-lg">
                           <div className="text-2xl font-bold">
-                            {(stats?.databases?.total ?? project.components.databases.length) +
-                              (stats?.backends?.total ?? project.components.backends.length) +
-                              (stats?.frontends?.total ?? project.components.frontends.length)}
+                            {(stats?.databases?.total ?? displayProject.components.databases.length) +
+                              (stats?.backends?.total ?? displayProject.components.backends.length) +
+                              (stats?.frontends?.total ?? displayProject.components.frontends.length)}
                           </div>
                           <div className="text-sm text-muted-foreground mt-1">Tổng cộng</div>
                         </div>
@@ -928,9 +988,9 @@ export function ProjectDetail() {
                   </Card>
                 )}
 
-                {(projectDatabases.length > 0 || project.components.databases.length > 0) ? (
+                {(projectDatabases.length > 0 || displayProject.components.databases.length > 0) ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {(projectDatabases.length > 0 ? projectDatabases : project.components.databases).map((db) => {
+                    {(projectDatabases.length > 0 ? projectDatabases : displayProject.components.databases).map((db) => {
                       // Map dữ liệu từ API hoặc mock
                       const isApiData = 'databaseType' in db
                       const dbName = isApiData ? (db as DatabaseInfo).projectName : (db as any).name
@@ -1125,9 +1185,9 @@ export function ProjectDetail() {
                   </Card>
                 )}
 
-                {(projectBackends.length > 0 || project.components.backends.length > 0) ? (
+                {(projectBackends.length > 0 || displayProject.components.backends.length > 0) ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {(projectBackends.length > 0 ? projectBackends : project.components.backends).map((be) => {
+                    {(projectBackends.length > 0 ? projectBackends : displayProject.components.backends).map((be) => {
                       // Map dữ liệu từ API hoặc mock
                       const isApiData = 'frameworkType' in be
                       const beName = isApiData ? (be as BackendInfo).projectName : (be as any).name
@@ -1354,9 +1414,9 @@ export function ProjectDetail() {
                   </Card>
                 )}
 
-                {(projectFrontends.length > 0 || project.components.frontends.length > 0) ? (
+                {(projectFrontends.length > 0 || displayProject.components.frontends.length > 0) ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {(projectFrontends.length > 0 ? projectFrontends : project.components.frontends).map((fe) => {
+                    {(projectFrontends.length > 0 ? projectFrontends : displayProject.components.frontends).map((fe) => {
                       // Map dữ liệu từ API hoặc mock
                       const isApiData = 'frameworkType' in fe
                       const feName = isApiData ? (fe as FrontendInfo).projectName : (fe as any).name
@@ -2279,7 +2339,7 @@ export function ProjectDetail() {
             <DialogHeader>
               <DialogTitle>Xác nhận xóa project</DialogTitle>
               <DialogDescription>
-                Bạn có chắc chắn muốn xóa project "{projectBasicInfo?.name || project.name}"? 
+                Bạn có chắc chắn muốn xóa project "{projectBasicInfo?.name || displayProject.name}"? 
                 Hành động này không thể hoàn tác. Tất cả databases, backends và frontends của project này sẽ bị xóa.
               </DialogDescription>
             </DialogHeader>

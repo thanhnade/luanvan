@@ -98,6 +98,7 @@ export type FrontendFormData = {
 export type WizardData = {
   projectName: string;
   description: string;
+  projectId?: number; // ID của project đã được tạo
   databases: DatabaseFormData[];
   backends: BackendFormData[];
   frontends: FrontendFormData[];

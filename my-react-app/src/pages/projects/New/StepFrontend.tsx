@@ -1,8 +1,8 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Upload, X, Plus, CheckCircle2 } from "lucide-react"
+import { Upload, X, Plus, CheckCircle2, Loader2, Trash2 } from "lucide-react"
 import { motion } from "framer-motion"
 import type { FrontendFormData } from "@/types"
 import { validateZipFile, validateDockerImage, validateDNS } from "@/lib/validators"
@@ -13,6 +13,8 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
+import { useAuth } from "@/contexts/AuthContext"
+import { deployFrontend, getProjectFrontends, type FrontendInfo } from "@/lib/project-api"
 import { toast } from "sonner"
 
 const frontendSchema = z.object({
@@ -39,11 +41,17 @@ type FormData = z.infer<typeof frontendSchema>
 export function StepFrontend() {
   // Subscribe cụ thể vào frontends để đảm bảo re-render
   const frontends = useWizardStore((state) => state.frontends)
+  const { projectName, projectId } = useWizardStore()
+  const { user } = useAuth()
   const addFrontend = useWizardStore((state) => state.addFrontend)
   const removeFrontend = useWizardStore((state) => state.removeFrontend)
   const [showForm, setShowForm] = useState(false)
   const [zipFile, setZipFile] = useState<File | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [isDeploying, setIsDeploying] = useState(false)
+  const [projectFrontends, setProjectFrontends] = useState<FrontendInfo[]>([])
+  const [loadingFrontends, setLoadingFrontends] = useState(false)
+  const [deletingFrontendId, setDeletingFrontendId] = useState<number | null>(null)
 
   const {
     register,
@@ -64,6 +72,62 @@ export function StepFrontend() {
   const dockerImage = watch("dockerImage")
   const publicUrl = watch("publicUrl")
 
+  // Load frontends từ API
+  const loadProjectFrontends = async () => {
+    // Lấy projectId từ localStorage hoặc wizard store
+    const currentProjectId = localStorage.getItem("currentProjectId") || projectId
+    if (!currentProjectId) return
+
+    setLoadingFrontends(true)
+    try {
+      const response = await getProjectFrontends(currentProjectId)
+      setProjectFrontends(response.frontends || [])
+    } catch (error) {
+      console.error("Lỗi load project frontends:", error)
+      // Không hiển thị toast để tránh làm phiền user
+    } finally {
+      setLoadingFrontends(false)
+    }
+  }
+
+  // Load frontends khi component mount hoặc projectId thay đổi
+  useEffect(() => {
+    const currentProjectId = localStorage.getItem("currentProjectId") || projectId
+    if (currentProjectId) {
+      loadProjectFrontends()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  // Xóa frontend
+  const handleDeleteFrontend = async (frontendId: number, frontendName: string) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa frontend "${frontendName}"?`)) {
+      return
+    }
+
+    setDeletingFrontendId(frontendId)
+    try {
+      // TODO: Gọi API xóa frontend khi có API
+      // await deleteFrontend(frontendId)
+      
+      // Tạm thời chỉ reload danh sách
+      await loadProjectFrontends()
+      
+      // Xóa khỏi store nếu có
+      const storeIndex = frontends.findIndex((f) => f.name === frontendName)
+      if (storeIndex !== -1) {
+        removeFrontend(storeIndex)
+      }
+      
+      toast.success(`Đã xóa frontend "${frontendName}"`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa frontend")
+      console.error(error)
+    } finally {
+      setDeletingFrontendId(null)
+    }
+  }
+
   // Validate Docker image
   const validateDocker = () => {
     if (sourceType === "image" && dockerImage) {
@@ -77,7 +141,17 @@ export function StepFrontend() {
   }
 
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = async (data: FormData) => {
+    if (!user?.username) {
+      toast.error("Bạn chưa đăng nhập")
+      return
+    }
+
+    if (!projectId || !projectName) {
+      toast.error("Vui lòng tạo project trước khi thêm frontend")
+      return
+    }
+
     if (data.sourceType === "zip" && !zipFile) {
       setErrors({ ...errors, zipFile: "Vui lòng chọn file ZIP" })
       return
@@ -99,21 +173,57 @@ export function StepFrontend() {
       }
     }
 
-    const feData: FrontendFormData = {
-      name: data.name,
-      tech: data.tech,
-      sourceType: data.sourceType,
-      zipFile: data.sourceType === "zip" ? zipFile : undefined,
-      dockerImage: data.sourceType === "image" ? data.dockerImage : undefined,
-      publicUrl: data.publicUrl || undefined,
-    }
+    setIsDeploying(true)
+    const loadingToast = toast.loading("Đang triển khai frontend...", {
+      description: "Vui lòng đợi trong giây lát",
+    })
 
-    addFrontend(feData)
-    reset()
-    setZipFile(null)
-    setErrors({})
-    setShowForm(false)
-    toast.success(`Đã thêm frontend "${feData.name}"`)
+    try {
+      // Chuyển đổi tech sang frameworkType
+      const frameworkType = data.tech === "react" ? "REACT" : data.tech === "vue" ? "VUE" : "ANGULAR" as "REACT" | "VUE" | "ANGULAR"
+      // Chuyển đổi sourceType sang deploymentType
+      const deploymentType = data.sourceType === "zip" ? "FILE" : "DOCKER" as "FILE" | "DOCKER"
+
+      // Gọi API deploy frontend
+      await deployFrontend({
+        projectName: data.name,
+        deploymentType: deploymentType,
+        frameworkType: frameworkType,
+        dockerImage: data.sourceType === "image" ? data.dockerImage : undefined,
+        file: data.sourceType === "zip" ? zipFile || undefined : undefined,
+        domainNameSystem: data.publicUrl || "",
+        username: user.username,
+        projectId: projectId,
+      })
+
+      // Lưu vào store để hiển thị trong danh sách
+      const feData: FrontendFormData = {
+        name: data.name,
+        tech: data.tech,
+        sourceType: data.sourceType,
+        zipFile: data.sourceType === "zip" ? zipFile : undefined,
+        dockerImage: data.sourceType === "image" ? data.dockerImage : undefined,
+        publicUrl: data.publicUrl || undefined,
+      }
+
+      addFrontend(feData)
+      toast.dismiss(loadingToast)
+      toast.success(`Đã thêm frontend "${data.name}" thành công!`)
+      
+      // Reload frontends từ API
+      await loadProjectFrontends()
+      
+      reset()
+      setZipFile(null)
+      setErrors({})
+      setShowForm(false)
+    } catch (error) {
+      toast.dismiss(loadingToast)
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi thêm frontend")
+      console.error(error)
+    } finally {
+      setIsDeploying(false)
+    }
   }
 
   return (
@@ -144,10 +254,72 @@ export function StepFrontend() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Frontends đã thêm ({frontends.length})</CardTitle>
+          <CardTitle>
+            Frontends đã thêm ({projectFrontends.length > 0 ? projectFrontends.length : frontends.length})
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          {frontends.length > 0 ? (
+          {loadingFrontends ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-sm text-muted-foreground">Đang tải danh sách frontends...</span>
+            </div>
+          ) : projectFrontends.length > 0 ? (
+            <div className="space-y-3">
+              {projectFrontends.map((fe) => (
+                <motion.div
+                  key={fe.id}
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <Card className="border">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 space-y-2">
+                          <div>
+                            <h4 className="font-medium">{fe.projectName}</h4>
+                            {fe.description && (
+                              <p className="text-sm text-muted-foreground mt-1">{fe.description}</p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                            <div>
+                              <span className="font-medium">Framework:</span>{" "}
+                              {fe.frameworkType === "REACT" ? "React" : fe.frameworkType === "VUE" ? "Vue" : fe.frameworkType === "ANGULAR" ? "Angular" : fe.frameworkType}
+                            </div>
+                            <div>
+                              <span className="font-medium">Deployment:</span>{" "}
+                              {fe.deploymentType === "DOCKER" ? "Docker Image" : fe.deploymentType === "FILE" ? "File ZIP" : fe.deploymentType}
+                            </div>
+                            {fe.domainNameSystem && (
+                              <div>
+                                <span className="font-medium">DNS:</span> {fe.domainNameSystem}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteFrontend(fe.id, fe.projectName)}
+                          disabled={deletingFrontendId === fe.id}
+                          className="flex-shrink-0"
+                        >
+                          {deletingFrontendId === fe.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          )}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          ) : frontends.length > 0 ? (
+            // Fallback to store data if API data is not available
             <div className="space-y-3">
               {frontends.map((fe, index) => (
                 <motion.div
@@ -179,11 +351,14 @@ export function StepFrontend() {
                           variant="ghost"
                           size="icon"
                           onClick={() => {
-                            removeFrontend(index)
-                            toast.success(`Đã xóa frontend "${fe.name}"`)
+                            if (confirm(`Bạn có chắc chắn muốn xóa frontend "${fe.name}"?`)) {
+                              removeFrontend(index)
+                              toast.success(`Đã xóa frontend "${fe.name}"`)
+                            }
                           }}
+                          className="flex-shrink-0"
                         >
-                          <X className="w-4 h-4" />
+                          <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
                       </div>
                     </CardContent>
@@ -206,17 +381,30 @@ export function StepFrontend() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              {isDeploying && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                    <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+                      Đang triển khai frontend...
+                    </p>
+                  </div>
+                  <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 ml-6">
+                    Quá trình này có thể mất vài phút. Vui lòng không đóng cửa sổ này.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="name">Tên Frontend <span className="text-destructive">*</span></Label>
-                  <Input id="name" {...register("name")} placeholder="web-app" />
+                  <Input id="name" {...register("name")} placeholder="web-app" disabled={isDeploying} />
                   {formErrors.name && (
                     <p className="text-sm text-destructive mt-1">{formErrors.name.message}</p>
                   )}
                 </div>
                 <div>
                   <Label htmlFor="tech">Technology <span className="text-destructive">*</span></Label>
-                  <Select id="tech" {...register("tech")}>
+                  <Select id="tech" {...register("tech")} disabled={isDeploying}>
                     <option value="react">React</option>
                     <option value="vue">Vue</option>
                     <option value="angular">Angular</option>
@@ -231,6 +419,7 @@ export function StepFrontend() {
                     type="button"
                     variant={sourceType === "zip" ? "default" : "outline"}
                     onClick={() => setValue("sourceType", "zip")}
+                    disabled={isDeploying}
                   >
                     Upload ZIP
                   </Button>
@@ -238,6 +427,7 @@ export function StepFrontend() {
                     type="button"
                     variant={sourceType === "image" ? "default" : "outline"}
                     onClick={() => setValue("sourceType", "image")}
+                    disabled={isDeploying}
                   >
                     Docker Image
                   </Button>
@@ -248,8 +438,10 @@ export function StepFrontend() {
                 <div>
                   <Label>File ZIP <span className="text-destructive">*</span></Label>
                   <div
-                    className="mt-2 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-muted transition-colors"
-                    onClick={() => document.getElementById("zip-input-fe")?.click()}
+                    className={`mt-2 border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                      isDeploying ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"
+                    }`}
+                    onClick={() => !isDeploying && document.getElementById("zip-input-fe")?.click()}
                   >
                     {zipFile ? (
                       <div>
@@ -264,6 +456,7 @@ export function StepFrontend() {
                             setZipFile(null)
                             setErrors({ ...errors, zipFile: "" })
                           }}
+                          disabled={isDeploying}
                         >
                           Xóa file
                         </Button>
@@ -280,6 +473,7 @@ export function StepFrontend() {
                     type="file"
                     accept=".zip"
                     className="hidden"
+                    disabled={isDeploying}
                     onChange={(e) => {
                       const file = e.target.files?.[0]
                       if (file) {
@@ -306,6 +500,7 @@ export function StepFrontend() {
                     placeholder="docker.io/user/app:1.0.0"
                     className="font-mono"
                     onBlur={validateDocker}
+                    disabled={isDeploying}
                   />
                   {errors.dockerImage && (
                     <p className="text-sm text-destructive mt-1">{errors.dockerImage}</p>
@@ -321,6 +516,7 @@ export function StepFrontend() {
                     {...register("publicUrl")}
                     placeholder="fe-myapp"
                     className="flex-1"
+                    disabled={isDeploying}
                   />
                   <Button
                     type="button"
@@ -338,6 +534,7 @@ export function StepFrontend() {
                         toast.info("Vui lòng nhập DNS trước khi kiểm tra")
                       }
                     }}
+                    disabled={isDeploying}
                   >
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     Kiểm tra
@@ -346,7 +543,16 @@ export function StepFrontend() {
               </div>
 
               <div className="flex gap-2">
-                <Button type="submit">Thêm</Button>
+                <Button type="submit" disabled={isDeploying}>
+                  {isDeploying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Đang triển khai...
+                    </>
+                  ) : (
+                    "Thêm"
+                  )}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -356,6 +562,7 @@ export function StepFrontend() {
                     setZipFile(null)
                     setErrors({})
                   }}
+                  disabled={isDeploying}
                 >
                   Hủy
                 </Button>

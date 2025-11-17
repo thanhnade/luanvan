@@ -1,11 +1,9 @@
-import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { ArrowLeft, ArrowRight, Trash2 } from "lucide-react"
+import { ArrowLeft, ArrowRight } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Stepper } from "@/components/user/Stepper"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { StepProjectInfo } from "./StepProjectInfo"
 import { StepDatabase } from "./StepDatabase"
 import { StepBackend } from "./StepBackend"
@@ -21,10 +19,31 @@ const steps = ["Thông tin Project", "Database", "Backend", "Frontend", "Tổng 
  */
 export function ProjectNew() {
   const navigate = useNavigate()
-  const { currentStep, setCurrentStep, resetWizard } = useWizardStore()
-  const [showClearDialog, setShowClearDialog] = useState(false)
+  const { currentStep, setCurrentStep, resetWizard, projectId } = useWizardStore()
+
+  // Hàm để reset wizard và navigate về trang Projects
+  const handleGoBack = () => {
+    // Xóa currentProjectId từ localStorage
+    try {
+      localStorage.removeItem("currentProjectId")
+    } catch (error) {
+      console.error("Lỗi xóa currentProjectId:", error)
+    }
+    
+    // Reset wizard (xóa wizard-draft và reset state)
+    resetWizard()
+    
+    // Navigate về trang Projects
+    navigate("/projects")
+  }
 
   const handleNext = () => {
+    // Ở bước 1, chỉ cho phép chuyển nếu project đã được tạo
+    if (currentStep === 0 && !projectId) {
+      toast.error("Vui lòng xác nhận tạo project trước khi tiếp tục")
+      return
+    }
+    
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1)
     }
@@ -36,14 +55,6 @@ export function ProjectNew() {
     }
   }
 
-  const handleClearDraft = () => {
-    resetWizard()
-    setShowClearDialog(false)
-    toast.success("Đã xóa bản nháp. Bạn có thể bắt đầu lại từ đầu.")
-    // Reset về step đầu tiên
-    setCurrentStep(0)
-  }
-
   return (
     <div className="min-h-screen bg-background py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto">
@@ -52,18 +63,10 @@ export function ProjectNew() {
           <div className="flex items-center justify-between mb-4">
             <Button
               variant="ghost"
-              onClick={() => navigate("/projects")}
+              onClick={handleGoBack}
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Quay lại
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setShowClearDialog(true)}
-              className="text-destructive hover:text-destructive"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Xóa bản nháp
             </Button>
           </div>
           <h1 className="text-3xl font-bold text-foreground mb-2">
@@ -116,7 +119,10 @@ export function ProjectNew() {
               </Button>
 
               {currentStep < steps.length - 1 && (
-                <Button onClick={handleNext}>
+                <Button 
+                  onClick={handleNext}
+                  disabled={currentStep === 0 && !projectId}
+                >
                   Tiếp theo
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -124,34 +130,6 @@ export function ProjectNew() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Dialog xác nhận xóa bản nháp */}
-        <Dialog open={showClearDialog} onOpenChange={setShowClearDialog}>
-          <DialogContent onClose={() => setShowClearDialog(false)}>
-            <DialogHeader>
-              <DialogTitle>Xóa bản nháp?</DialogTitle>
-              <DialogDescription>
-                Bạn có chắc chắn muốn xóa tất cả dữ liệu đã nhập? Hành động này không thể hoàn tác.
-                Tất cả thông tin project, databases, backends và frontends sẽ bị xóa.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex justify-end gap-2 mt-4">
-              <Button
-                variant="outline"
-                onClick={() => setShowClearDialog(false)}
-              >
-                Hủy
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleClearDraft}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Xóa bản nháp
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
     </div>
   )

@@ -7,6 +7,7 @@ import type { WizardData, DatabaseFormData, BackendFormData, FrontendFormData } 
 interface WizardStore extends WizardData {
   setProjectName: (name: string) => void
   setDescription: (desc: string) => void
+  setProjectId: (id: number) => void
   addDatabase: (db: DatabaseFormData) => void
   removeDatabase: (index: number) => void
   updateDatabase: (index: number, db: DatabaseFormData) => void
@@ -45,6 +46,7 @@ const saveWizardData = (data: WizardData) => {
 const initialState: WizardData = {
   projectName: "",
   description: "",
+  projectId: undefined, // Đảm bảo projectId không có trong initialState
   databases: [],
   backends: [],
   frontends: [],
@@ -70,6 +72,7 @@ export const useWizardStore = create<WizardStore>((set, get) => {
 
     setProjectName: (name) => setWithSave({ projectName: name }),
     setDescription: (desc) => setWithSave({ description: desc }),
+    setProjectId: (id) => setWithSave({ projectId: id }),
 
     addDatabase: (db) =>
       setWithSave((state) => ({

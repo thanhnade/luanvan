@@ -99,6 +99,100 @@ export async function getProjectBasicInfo(projectId: string | number): Promise<P
 }
 
 /**
+ * Project Detail Response
+ */
+export interface DatabaseDetail {
+  id: number
+  projectName: string
+  description?: string
+  databaseType: string // MYSQL, MONGODB
+  databaseIp?: string
+  databasePort?: number
+  databaseName?: string
+  databaseUsername?: string
+  databasePassword?: string
+  uuid_k8s?: string
+  sourcePath?: string
+  yamlPath?: string
+  status: string // RUNNING, STOPPED, ERROR
+  createdAt: string // ISO date string
+}
+
+export interface BackendDetail {
+  id: number
+  projectName: string
+  description?: string
+  deploymentType: string // DOCKER, FILE
+  frameworkType: string // SPRING, NODEJS
+  databaseIp?: string
+  databasePort?: number
+  databaseName?: string
+  databaseUsername?: string
+  databasePassword?: string
+  uuid_k8s?: string
+  sourcePath?: string
+  yamlPath?: string
+  dockerImage?: string
+  domainNameSystem?: string
+  status: string // RUNNING, STOPPED, ERROR
+  createdAt: string // ISO date string
+}
+
+export interface FrontendDetail {
+  id: number
+  projectName: string
+  description?: string
+  deploymentType: string // DOCKER, FILE
+  frameworkType: string // REACT, VUE, ANGULAR
+  uuid_k8s?: string
+  sourcePath?: string
+  yamlPath?: string
+  dockerImage?: string
+  domainNameSystem?: string
+  status: string // RUNNING, STOPPED, ERROR
+  createdAt: string // ISO date string
+}
+
+export interface ProjectDetailResponse {
+  id: number
+  projectName: string
+  description?: string
+  status: string // RUNNING, STOPPED, ERROR, PAUSED
+  createdAt: string // ISO date string
+  updatedAt: string // ISO date string
+  uuid_k8s?: string
+  namespace?: string
+  databases: DatabaseDetail[]
+  backends: BackendDetail[]
+  frontends: FrontendDetail[]
+}
+
+/**
+ * Lấy chi tiết project
+ */
+export async function getProjectDetail(
+  projectId: string | number,
+  username: string
+): Promise<ProjectDetailResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/projects/${projectId}?username=${encodeURIComponent(username)}`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  )
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Có lỗi xảy ra khi lấy chi tiết project" }))
+    throw new Error(error.message || "Có lỗi xảy ra khi lấy chi tiết project")
+  }
+
+  return response.json()
+}
+
+/**
  * Lấy thông tin tổng quan của project
  */
 export interface ComponentStats {
