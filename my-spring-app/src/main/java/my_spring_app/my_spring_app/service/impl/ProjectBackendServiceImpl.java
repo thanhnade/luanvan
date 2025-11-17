@@ -465,6 +465,17 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
             throw new RuntimeException("User không tồn tại");
         }
         UserEntity user = userOptional.get();
+        System.out.println("[deployBackend] Tier của user: " + user.getTier());
+
+        if ("STANDARD".equalsIgnoreCase(user.getTier())) {
+            long backendCount = projectBackendRepository.countByProject_User(user);
+            System.out.println("[deployBackend] User STANDARD hiện có " + backendCount + " backend project(s)");
+            if (backendCount >= 1) {
+                String errorMessage = "Tài khoản STANDARD chỉ được phép triển khai 1 backend. Vui lòng nâng cấp gói để tiếp tục.";
+                System.err.println("[deployBackend] Lỗi: " + errorMessage);
+                throw new RuntimeException(errorMessage);
+            }
+        }
 
         // Lấy ProjectEntity từ projectId
         Optional<ProjectEntity> projectOptional = projectRepository.findById(request.getProjectId());

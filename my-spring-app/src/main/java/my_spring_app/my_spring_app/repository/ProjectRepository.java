@@ -16,6 +16,9 @@ public interface ProjectRepository extends JpaRepository<ProjectEntity, Long> {
     // Tìm tất cả projects của một user
     List<ProjectEntity> findByUser(UserEntity user);
     
+    // Đếm số lượng project của một user
+    long countByUser(UserEntity user);
+    
     // Query riêng để fetch databases
     @Query("SELECT DISTINCT p FROM ProjectEntity p LEFT JOIN FETCH p.databases WHERE p.user = :user")
     List<ProjectEntity> findByUserWithDatabases(@Param("user") UserEntity user);

@@ -20,5 +20,7 @@ public interface ProjectFrontendRepository extends JpaRepository<ProjectFrontend
     // Kiểm tra uuid_k8s có tồn tại không
     @Query("SELECT COUNT(e) > 0 FROM ProjectFrontendEntity e WHERE e.uuid_k8s = :uuid_k8s")
     boolean existsByUuid_k8s(@Param("uuid_k8s") String uuid_k8s);
+    
+    long countByProject_User(UserEntity user);
 }
 

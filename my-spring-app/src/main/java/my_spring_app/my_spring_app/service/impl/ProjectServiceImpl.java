@@ -49,6 +49,18 @@ public class ProjectServiceImpl implements ProjectService {
         }
         UserEntity user = userOptional.get();
         System.out.println("[createProject] Tìm thấy user với ID: " + user.getId());
+        System.out.println("[createProject] Tier của user: " + user.getTier());
+
+        // Kiểm tra giới hạn tier
+        if ("STANDARD".equalsIgnoreCase(user.getTier())) {
+            long projectCount = projectRepository.countByUser(user);
+            System.out.println("[createProject] User STANDARD hiện có " + projectCount + " project(s)");
+            if (projectCount >= 1) {
+                String errorMessage = "Tài khoản STANDARD chỉ được phép tạo 1 dự án. Vui lòng nâng cấp gói để tiếp tục.";
+                System.err.println("[createProject] Lỗi: " + errorMessage);
+                throw new RuntimeException(errorMessage);
+            }
+        }
 
         // Tạo UUID cho project
         String fullUuid = UUID.randomUUID().toString();

@@ -496,6 +496,17 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
             throw new RuntimeException("User không tồn tại");
         }
         UserEntity user = userOptional.get();
+        System.out.println("[deployFrontend] Tier của user: " + user.getTier());
+
+        if ("STANDARD".equalsIgnoreCase(user.getTier())) {
+            long frontendCount = projectFrontendRepository.countByProject_User(user);
+            System.out.println("[deployFrontend] User STANDARD hiện có " + frontendCount + " frontend project(s)");
+            if (frontendCount >= 1) {
+                String errorMessage = "Tài khoản STANDARD chỉ được phép triển khai 1 frontend. Vui lòng nâng cấp gói để tiếp tục.";
+                System.err.println("[deployFrontend] Lỗi: " + errorMessage);
+                throw new RuntimeException(errorMessage);
+            }
+        }
 
         // Lấy ProjectEntity từ projectId
         Optional<ProjectEntity> projectOptional = projectRepository.findById(request.getProjectId());
