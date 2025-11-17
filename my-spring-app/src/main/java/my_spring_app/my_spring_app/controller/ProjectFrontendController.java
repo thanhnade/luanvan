@@ -38,5 +38,11 @@ public class ProjectFrontendController {
         projectFrontendService.startFrontend(projectId, frontendId);
         return ResponseEntity.ok("Đã khởi động frontend thành công");
     }
+
+    @PostMapping("/{projectId}/{frontendId}/delete")
+    public ResponseEntity<String> deleteFrontend(@PathVariable Long projectId, @PathVariable Long frontendId) {
+        projectFrontendService.deleteFrontend(projectId, frontendId);
+        return ResponseEntity.ok("Đã xóa frontend thành công");
+    }
 }
 

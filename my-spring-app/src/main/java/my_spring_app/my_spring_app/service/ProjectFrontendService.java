@@ -10,5 +10,7 @@ public interface ProjectFrontendService {
     void stopFrontend(Long projectId, Long frontendId);
     
     void startFrontend(Long projectId, Long frontendId);
+    
+    void deleteFrontend(Long projectId, Long frontendId);
 }
 

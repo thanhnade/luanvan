@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { getProjectById, deployProject, addDatabaseToProject, addBackendToProject, addFrontendToProject } from "@/lib/mock-api"
-import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, deployBackend, deployFrontend, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
+import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, deployBackend, deployFrontend, startProjectFrontend, stopProjectFrontend, startProjectBackend, stopProjectBackend, deleteProjectBackend, deleteProjectFrontend, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
 import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ComponentStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -51,6 +51,8 @@ export function ProjectDetail() {
   const [showAddFrontend, setShowAddFrontend] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "backend" | "frontend"; id: number; name: string } | null>(null)
+  const [isDeletingResource, setIsDeletingResource] = useState(false)
   const [deploymentHistory, setDeploymentHistory] = useState<DeploymentHistoryItem[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [isDeployingDatabase, setIsDeployingDatabase] = useState(false)
@@ -96,22 +98,22 @@ export function ProjectDetail() {
       // Map dữ liệu từ API sang format phù hợp với component
       setProjectOverview({
         databases: {
-          total: overview.databases.total,
-          running: overview.databases.running,
-          paused: overview.databases.paused,
-          other: overview.databases.stopped + overview.databases.error,
+          total: (overview.databases.total || 0),
+          running: (overview.databases.running || 0),
+          paused: (overview.databases.paused || 0) + (overview.databases.stopped || 0),
+          other: (overview.databases.error || 0),
         },
         backends: {
-          total: overview.backends.total,
-          running: overview.backends.running,
-          paused: overview.backends.paused,
-          other: overview.backends.stopped + overview.backends.error,
+          total: (overview.backends.total || 0),
+          running: (overview.backends.running || 0),
+          paused: (overview.backends.paused || 0) + (overview.backends.stopped || 0),
+          other: (overview.backends.error || 0),
         },
         frontends: {
-          total: overview.frontends.total,
-          running: overview.frontends.running,
-          paused: overview.frontends.paused,
-          other: overview.frontends.stopped + overview.frontends.error,
+          total: (overview.frontends.total || 0),
+          running: (overview.frontends.running || 0),
+          paused: (overview.frontends.paused || 0) + (overview.frontends.stopped || 0),
+          other: (overview.frontends.error || 0),
         },
       })
     } catch (error) {
@@ -140,36 +142,36 @@ export function ProjectDetail() {
     loadProjectDatabases()
   }, [id])
 
+  const loadProjectBackendsData = async () => {
+    if (!id) return
+    try {
+      const response = await getProjectBackends(id)
+      setProjectBackends(response.backends)
+    } catch (error) {
+      console.error("Lỗi load project backends:", error)
+      // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+    }
+  }
+
   // Load project backends từ API
   useEffect(() => {
-    const loadProjectBackends = async () => {
-      if (!id) return
-      try {
-        const response = await getProjectBackends(id)
-        setProjectBackends(response.backends)
-      } catch (error) {
-        console.error("Lỗi load project backends:", error)
-        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
-      }
-    }
-
-    loadProjectBackends()
+    loadProjectBackendsData()
   }, [id])
+
+  const loadProjectFrontendsData = async () => {
+    if (!id) return
+    try {
+      const response = await getProjectFrontends(id)
+      setProjectFrontends(response.frontends)
+    } catch (error) {
+      console.error("Lỗi load project frontends:", error)
+      // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
+    }
+  }
 
   // Load project frontends từ API
   useEffect(() => {
-    const loadProjectFrontends = async () => {
-      if (!id) return
-      try {
-        const response = await getProjectFrontends(id)
-        setProjectFrontends(response.frontends)
-      } catch (error) {
-        console.error("Lỗi load project frontends:", error)
-        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
-      }
-    }
-
-    loadProjectFrontends()
+    loadProjectFrontendsData()
   }, [id])
 
   // Load project (components) từ mock-api - optional, chỉ dùng làm fallback
@@ -196,10 +198,7 @@ export function ProjectDetail() {
             backends: [],
             frontends: [],
           },
-          endpoints: {
-            frontend: "",
-            api: "",
-          },
+          endpoints: [],
         } as Project)
       } finally {
         setLoading(false)
@@ -254,12 +253,101 @@ export function ProjectDetail() {
     }
   }
 
+  // Điều khiển frontend thực tế
+  const handleFrontendStart = async (frontendId: number, resourceName: string) => {
+    if (!id) return
+    setDeploying(true)
+    try {
+      await startProjectFrontend(id, frontendId)
+      toast.success(`Đã khởi động ${resourceName}!`)
+      await Promise.all([loadProjectOverview(), loadProjectFrontendsData()])
+    } catch (error) {
+      console.error("Lỗi khởi động frontend:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể khởi động frontend")
+    } finally {
+      setDeploying(false)
+    }
+  }
+
+  const handleFrontendStop = async (frontendId: number, resourceName: string) => {
+    if (!id) return
+    try {
+      await stopProjectFrontend(id, frontendId)
+      toast.success(`Đã tạm dừng ${resourceName}!`)
+      await Promise.all([loadProjectOverview(), loadProjectFrontendsData()])
+    } catch (error) {
+      console.error("Lỗi tạm dừng frontend:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể tạm dừng frontend")
+    }
+  }
+
+  // Điều khiển backend thực tế
+  const handleBackendStart = async (backendId: number, resourceName: string) => {
+    if (!id) return
+    setDeploying(true)
+    try {
+      await startProjectBackend(id, backendId)
+      toast.success(`Đã khởi động ${resourceName}!`)
+      await Promise.all([loadProjectOverview(), loadProjectBackendsData()])
+    } catch (error) {
+      console.error("Lỗi khởi động backend:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể khởi động backend")
+    } finally {
+      setDeploying(false)
+    }
+  }
+
+  const handleBackendStop = async (backendId: number, resourceName: string) => {
+    if (!id) return
+    try {
+      await stopProjectBackend(id, backendId)
+      toast.success(`Đã tạm dừng ${resourceName}!`)
+      await Promise.all([loadProjectOverview(), loadProjectBackendsData()])
+    } catch (error) {
+      console.error("Lỗi tạm dừng backend:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể tạm dừng backend")
+    }
+  }
+
   // Xóa component
-  const handleDelete = async (resourceName: string, resourceType: "database" | "backend" | "frontend") => {
-    if (confirm(`Bạn có chắc chắn muốn xóa ${resourceName}?`)) {
-      toast.success(`Đã xóa ${resourceName}!`)
-      // Mock: Có thể reload project hoặc cập nhật state
-      toast.info("Tính năng xóa đang được phát triển")
+  const handleDelete = (resourceName: string, resourceType: "database" | "backend" | "frontend", resourceId?: number) => {
+    if (resourceType === "database") {
+      // Database chưa có API xóa
+      if (confirm(`Bạn có chắc chắn muốn xóa ${resourceName}?`)) {
+        toast.info("Tính năng xóa database đang được phát triển")
+      }
+      return
+    }
+
+    if (resourceType === "backend" || resourceType === "frontend") {
+      if (!resourceId) {
+        toast.error("Không tìm thấy ID của resource")
+        return
+      }
+      setDeleteTarget({ type: resourceType, id: resourceId, name: resourceName })
+    }
+  }
+
+  const handleConfirmDeleteResource = async () => {
+    if (!deleteTarget || !id) return
+
+    setIsDeletingResource(true)
+    try {
+      if (deleteTarget.type === "backend") {
+        await deleteProjectBackend(id, deleteTarget.id)
+        toast.success(`Đã xóa backend "${deleteTarget.name}" thành công!`)
+        await Promise.all([loadProjectOverview(), loadProjectBackendsData()])
+      } else if (deleteTarget.type === "frontend") {
+        await deleteProjectFrontend(id, deleteTarget.id)
+        toast.success(`Đã xóa frontend "${deleteTarget.name}" thành công!`)
+        await Promise.all([loadProjectOverview(), loadProjectFrontendsData()])
+      }
+      setDeleteTarget(null)
+    } catch (error) {
+      console.error("Lỗi xóa resource:", error)
+      toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa resource")
+    } finally {
+      setIsDeletingResource(false)
     }
   }
 
@@ -357,10 +445,7 @@ export function ProjectDetail() {
           backends: [],
           frontends: [],
         },
-        endpoints: {
-          frontend: "",
-          api: "",
-        },
+        endpoints: [],
       } : null)
 
       if (!currentProject) return null
@@ -813,10 +898,7 @@ export function ProjectDetail() {
       backends: [],
       frontends: [],
     },
-    endpoints: {
-      frontend: "",
-      api: "",
-    },
+        endpoints: [],
   } as Project
 
   const statusConfig = getStatusBadge(displayProject.status)
@@ -1193,6 +1275,8 @@ export function ProjectDetail() {
                       const beName = isApiData ? (be as BackendInfo).projectName : (be as any).name
                       const beDescription = isApiData ? (be as BackendInfo).description : undefined
                       const beTech = isApiData ? (be as BackendInfo).frameworkType : (be as any).tech
+                      const rawBeStatus = isApiData ? (be as BackendInfo).status : (be as any).status
+                      const beStatusKey = rawBeStatus ? rawBeStatus.toString().toLowerCase() : ""
                       const beStatus = getStatusBadge(isApiData ? (be as BackendInfo).status.toLowerCase() as ComponentStatus : (be as any).status)
                       const beDns = isApiData ? (be as BackendInfo).domainNameSystem : (be as any).dns
                       const beDockerImage = isApiData ? (be as BackendInfo).dockerImage : (be as any).source?.ref
@@ -1202,6 +1286,7 @@ export function ProjectDetail() {
                       const beDbUsername = isApiData ? (be as BackendInfo).databaseUsername : undefined
                       const beDbPassword = isApiData ? (be as BackendInfo).databasePassword : undefined
                       const beId = isApiData ? `api-be-${(be as BackendInfo).id}` : (be as any).id
+                      const beApiId = isApiData ? (be as BackendInfo).id : null
 
                       return (
                         <Card key={beId}>
@@ -1342,21 +1427,43 @@ export function ProjectDetail() {
                                 }
                               >
                                 <DropdownMenuItem
-                                  onClick={() => handleStart(beName, "backend")}
-                                  disabled={deploying || beStatus.label === "Đang chạy"}
+                                  onClick={() => {
+                                    if (beApiId !== null) {
+                                      handleBackendStart(beApiId, beName)
+                                    } else {
+                                      handleStart(beName, "backend")
+                                    }
+                                  }}
+                                  disabled={deploying || ["running", "deployed"].includes(beStatusKey)}
                                 >
                                   <Play className="w-4 h-4 mr-2" />
                                   Chạy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handlePause(beName, "backend")}
-                                  disabled={beStatus.label === "Tạm dừng" || beStatus.label === "Chờ xử lý"}
+                                  onClick={() => {
+                                    if (beApiId !== null) {
+                                      handleBackendStop(beApiId, beName)
+                                    } else {
+                                      handlePause(beName, "backend")
+                                    }
+                                  }}
+                                  disabled={
+                                    deploying ||
+                                    ["paused", "stopped"].includes(beStatusKey) ||
+                                    ["pending", "building", "deploying"].includes(beStatusKey)
+                                  }
                                 >
                                   <Pause className="w-4 h-4 mr-2" />
                                   Tạm dừng
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handleDelete(beName, "backend")}
+                                  onClick={() => {
+                                    if (beApiId !== null) {
+                                      handleDelete(beName, "backend", beApiId)
+                                    } else {
+                                      handleDelete(beName, "backend")
+                                    }
+                                  }}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
@@ -1422,10 +1529,13 @@ export function ProjectDetail() {
                       const feName = isApiData ? (fe as FrontendInfo).projectName : (fe as any).name
                       const feDescription = isApiData ? (fe as FrontendInfo).description : undefined
                       const feTech = isApiData ? (fe as FrontendInfo).frameworkType : (fe as any).tech
+                      const rawFeStatus = isApiData ? (fe as FrontendInfo).status : (fe as any).status
+                      const feStatusKey = rawFeStatus ? rawFeStatus.toString().toLowerCase() : ""
                       const feStatus = getStatusBadge(isApiData ? (fe as FrontendInfo).status.toLowerCase() as ComponentStatus : (fe as any).status)
                       const feDns = isApiData ? (fe as FrontendInfo).domainNameSystem : (fe as any).publicUrl
                       const feDockerImage = isApiData ? (fe as FrontendInfo).dockerImage : (fe as any).source?.ref
                       const feId = isApiData ? `api-fe-${(fe as FrontendInfo).id}` : (fe as any).id
+                      const feApiId = isApiData ? (fe as FrontendInfo).id : null
 
                       return (
                         <Card key={feId}>
@@ -1500,21 +1610,43 @@ export function ProjectDetail() {
                                 }
                               >
                                 <DropdownMenuItem
-                                  onClick={() => handleStart(feName, "frontend")}
-                                  disabled={deploying || feStatus.label === "Đang chạy"}
+                                  onClick={() => {
+                                    if (feApiId !== null) {
+                                      handleFrontendStart(feApiId, feName)
+                                    } else {
+                                      handleStart(feName, "frontend")
+                                    }
+                                  }}
+                                  disabled={deploying || ["running", "deployed"].includes(feStatusKey)}
                                 >
                                   <Play className="w-4 h-4 mr-2" />
                                   Chạy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handlePause(feName, "frontend")}
-                                  disabled={feStatus.label === "Tạm dừng" || feStatus.label === "Chờ xử lý"}
+                                  onClick={() => {
+                                    if (feApiId !== null) {
+                                      handleFrontendStop(feApiId, feName)
+                                    } else {
+                                      handlePause(feName, "frontend")
+                                    }
+                                  }}
+                                  disabled={
+                                    deploying ||
+                                    ["paused", "stopped"].includes(feStatusKey) ||
+                                    ["pending", "building", "deploying"].includes(feStatusKey)
+                                  }
                                 >
                                   <Pause className="w-4 h-4 mr-2" />
                                   Tạm dừng
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handleDelete(feName, "frontend")}
+                                  onClick={() => {
+                                    if (feApiId !== null) {
+                                      handleDelete(feName, "frontend", feApiId)
+                                    } else {
+                                      handleDelete(feName, "frontend")
+                                    }
+                                  }}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
@@ -2357,6 +2489,35 @@ export function ProjectDetail() {
                 disabled={isDeleting}
               >
                 {isDeleting ? "Đang xóa..." : "Xóa Project"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Dialog xác nhận xóa backend/frontend */}
+        <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Xác nhận xóa {deleteTarget?.type === "backend" ? "backend" : "frontend"}</DialogTitle>
+              <DialogDescription>
+                Bạn có chắc chắn muốn xóa {deleteTarget?.type === "backend" ? "backend" : "frontend"} "{deleteTarget?.name}"? 
+                Hành động này không thể hoàn tác.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteTarget(null)}
+                disabled={isDeletingResource}
+              >
+                Hủy
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleConfirmDeleteResource}
+                disabled={isDeletingResource}
+              >
+                {isDeletingResource ? "Đang xóa..." : "Xóa"}
               </Button>
             </div>
           </DialogContent>

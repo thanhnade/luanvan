@@ -10,5 +10,7 @@ public interface ProjectBackendService {
     void stopBackend(Long projectId, Long backendId);
     
     void startBackend(Long projectId, Long backendId);
+    
+    void deleteBackend(Long projectId, Long backendId);
 }
 

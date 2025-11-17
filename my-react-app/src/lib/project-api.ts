@@ -565,6 +565,78 @@ export async function deployFrontend(request: DeployFrontendRequest): Promise<De
 }
 
 /**
+ * Điều khiển frontend đang triển khai
+ */
+export async function stopProjectFrontend(projectId: string | number, frontendId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-frontends/${projectId}/${frontendId}/stop`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể tạm dừng frontend" }))
+    throw new Error(error.message || "Không thể tạm dừng frontend")
+  }
+}
+
+export async function startProjectFrontend(projectId: string | number, frontendId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-frontends/${projectId}/${frontendId}/start`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể khởi động frontend" }))
+    throw new Error(error.message || "Không thể khởi động frontend")
+  }
+}
+
+/**
+ * Điều khiển backend đang triển khai
+ */
+export async function stopProjectBackend(projectId: string | number, backendId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-backends/${projectId}/${backendId}/stop`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể tạm dừng backend" }))
+    throw new Error(error.message || "Không thể tạm dừng backend")
+  }
+}
+
+export async function startProjectBackend(projectId: string | number, backendId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-backends/${projectId}/${backendId}/start`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể khởi động backend" }))
+    throw new Error(error.message || "Không thể khởi động backend")
+  }
+}
+
+export async function deleteProjectBackend(projectId: string | number, backendId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-backends/${projectId}/${backendId}/delete`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể xóa backend" }))
+    throw new Error(error.message || "Không thể xóa backend")
+  }
+}
+
+export async function deleteProjectFrontend(projectId: string | number, frontendId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-frontends/${projectId}/${frontendId}/delete`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể xóa frontend" }))
+    throw new Error(error.message || "Không thể xóa frontend")
+  }
+}
+
+/**
  * Kiểm tra domainNameSystem đã tồn tại chưa
  */
 export interface DNSCheckResponse {

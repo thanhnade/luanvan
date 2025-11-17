@@ -938,6 +938,31 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
         System.out.println("[startBackend] Đã khởi động backend thành công");
     }
 
+    @Override
+    public void deleteBackend(Long projectId, Long backendId) {
+        System.out.println("[deleteBackend] Yêu cầu xóa backend projectId=" + projectId + ", backendId=" + backendId);
+
+        // Lấy project để kiểm tra quyền sở hữu backend
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy backend cần xóa
+        ProjectBackendEntity backend = projectBackendRepository.findById(backendId)
+                .orElseThrow(() -> new RuntimeException("Backend project không tồn tại với id: " + backendId));
+
+        // Đảm bảo backend thuộc về đúng project
+        if (backend.getProject() == null || !backend.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Backend project không thuộc về project này");
+        }
+
+        // Xóa tài nguyên trên Kubernetes
+        deleteBackendResources(project, backend);
+
+        // Xóa record khỏi database
+        projectBackendRepository.delete(backend);
+        System.out.println("[deleteBackend] Đã xóa backend thành công");
+    }
+
     private void scaleBackendDeployment(ProjectEntity project, ProjectBackendEntity backend, int replicas) {
         String namespace = project.getNamespace();
         if (namespace == null || namespace.trim().isEmpty()) {
@@ -979,6 +1004,79 @@ public class ProjectBackendServiceImpl implements ProjectBackendService {
                 clusterSession.disconnect();
             }
         }
+    }
+
+    private void deleteBackendResources(ProjectEntity project, ProjectBackendEntity backend) {
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Không thể xóa resources backend.");
+        }
+
+        String uuid = backend.getUuid_k8s();
+        if (uuid == null || uuid.trim().isEmpty()) {
+            throw new RuntimeException("Backend không có uuid_k8s. Không thể xóa resources backend.");
+        }
+
+        String deploymentName = "app-" + uuid;
+        String serviceName = deploymentName + "-svc";
+        String ingressName = deploymentName + "-ing";
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            // Kết nối SSH tới MASTER server để có thể chạy lệnh kubectl
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[deleteBackendResources] Đã kết nối MASTER server để xóa resources");
+
+            String deleteIngressCmd = String.format("kubectl -n %s delete ing/%s || true", namespace, ingressName);
+            System.out.println("[deleteBackendResources] " + deleteIngressCmd);
+            executeCommand(clusterSession, deleteIngressCmd, true);
+
+            String deleteServiceCmd = String.format("kubectl -n %s delete svc/%s || true", namespace, serviceName);
+            System.out.println("[deleteBackendResources] " + deleteServiceCmd);
+            executeCommand(clusterSession, deleteServiceCmd, true);
+
+            String deleteDeploymentCmd = String.format("kubectl -n %s delete deploy/%s || true", namespace, deploymentName);
+            System.out.println("[deleteBackendResources] " + deleteDeploymentCmd);
+            executeCommand(clusterSession, deleteDeploymentCmd, true);
+
+            String yamlPath = backend.getYamlPath();
+            if (yamlPath != null && !yamlPath.trim().isEmpty()) {
+                String cleanedPath = yamlPath.trim();
+                String deleteYamlCmd = String.format("rm -f '%s'", escapeSingleQuotes(cleanedPath));
+                System.out.println("[deleteBackendResources] " + deleteYamlCmd);
+                executeCommand(clusterSession, deleteYamlCmd, true);
+
+                // Nếu xác định được thư mục chứa file YAML thì xóa luôn thư mục
+                java.io.File yamlFile = new java.io.File(cleanedPath);
+                String parentDir = yamlFile.getParent();
+                if (parentDir != null && !parentDir.trim().isEmpty()) {
+                    String deleteDirCmd = String.format("rm -rf '%s'", escapeSingleQuotes(parentDir.trim()));
+                    System.out.println("[deleteBackendResources] " + deleteDirCmd);
+                    executeCommand(clusterSession, deleteDirCmd, true);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[deleteBackendResources] Lỗi: " + e.getMessage());
+            throw new RuntimeException("Không thể xóa resources backend: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+    }
+
+    private String escapeSingleQuotes(String input) {
+        return input.replace("'", "'\"'\"'");
     }
 }
 

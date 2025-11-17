@@ -38,5 +38,11 @@ public class ProjectBackendController {
         projectBackendService.startBackend(projectId, backendId);
         return ResponseEntity.ok("Đã khởi động backend thành công");
     }
+
+    @PostMapping("/{projectId}/{backendId}/delete")
+    public ResponseEntity<String> deleteBackend(@PathVariable Long projectId, @PathVariable Long backendId) {
+        projectBackendService.deleteBackend(projectId, backendId);
+        return ResponseEntity.ok("Đã xóa backend thành công");
+    }
 }
 

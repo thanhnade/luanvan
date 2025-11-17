@@ -939,6 +939,31 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
         System.out.println("[startFrontend] Đã khởi động frontend thành công");
     }
 
+    @Override
+    public void deleteFrontend(Long projectId, Long frontendId) {
+        System.out.println("[deleteFrontend] Yêu cầu xóa frontend projectId=" + projectId + ", frontendId=" + frontendId);
+
+        // Lấy project và đảm bảo tồn tại
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy frontend cần xóa
+        ProjectFrontendEntity frontend = projectFrontendRepository.findById(frontendId)
+                .orElseThrow(() -> new RuntimeException("Frontend project không tồn tại với id: " + frontendId));
+
+        // Đảm bảo frontend thuộc về project này
+        if (frontend.getProject() == null || !frontend.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Frontend project không thuộc về project này");
+        }
+
+        // Xóa resources trên Kubernetes
+        deleteFrontendResources(project, frontend);
+
+        // Xóa record khỏi database
+        projectFrontendRepository.delete(frontend);
+        System.out.println("[deleteFrontend] Đã xóa frontend thành công");
+    }
+
     private void scaleFrontendDeployment(ProjectEntity project, ProjectFrontendEntity frontend, int replicas) {
         // Lấy namespace từ project để xác định không gian làm việc trên K8s
         String namespace = project.getNamespace();
@@ -987,6 +1012,84 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
                 clusterSession.disconnect();
             }
         }
+    }
+
+    private void deleteFrontendResources(ProjectEntity project, ProjectFrontendEntity frontend) {
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Không thể xóa resources frontend.");
+        }
+
+        String uuid = frontend.getUuid_k8s();
+        if (uuid == null || uuid.trim().isEmpty()) {
+            throw new RuntimeException("Frontend không có uuid_k8s. Không thể xóa resources frontend.");
+        }
+
+        String deploymentName = "app-" + uuid;
+        String serviceName = deploymentName + "-svc";
+        String ingressName = deploymentName + "-ing";
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            // Kết nối SSH tới server MASTER để chạy lệnh kubectl
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[deleteFrontendResources] Đã kết nối MASTER server để xóa resources");
+
+            // Xóa ingress
+            String deleteIngressCmd = String.format("kubectl -n %s delete ing/%s || true", namespace, ingressName);
+            System.out.println("[deleteFrontendResources] " + deleteIngressCmd);
+            executeCommand(clusterSession, deleteIngressCmd, true);
+
+            // Xóa service
+            String deleteServiceCmd = String.format("kubectl -n %s delete svc/%s || true", namespace, serviceName);
+            System.out.println("[deleteFrontendResources] " + deleteServiceCmd);
+            executeCommand(clusterSession, deleteServiceCmd, true);
+
+            // Xóa deployment
+            String deleteDeploymentCmd = String.format("kubectl -n %s delete deploy/%s || true", namespace, deploymentName);
+            System.out.println("[deleteFrontendResources] " + deleteDeploymentCmd);
+            executeCommand(clusterSession, deleteDeploymentCmd, true);
+
+            // Xóa file YAML nếu có
+            String yamlPath = frontend.getYamlPath();
+            if (yamlPath != null && !yamlPath.trim().isEmpty()) {
+                String cleanedPath = yamlPath.trim();
+                String deleteYamlCmd = String.format("rm -f '%s'", escapeSingleQuotes(cleanedPath));
+                System.out.println("[deleteFrontendResources] " + deleteYamlCmd);
+                executeCommand(clusterSession, deleteYamlCmd, true);
+
+                // Nếu xác định được thư mục chứa YAML thì xóa luôn thư mục
+                java.io.File yamlFile = new java.io.File(cleanedPath);
+                String parentDir = yamlFile.getParent();
+                if (parentDir != null && !parentDir.trim().isEmpty()) {
+                    String deleteDirCmd = String.format("rm -rf '%s'", escapeSingleQuotes(parentDir.trim()));
+                    System.out.println("[deleteFrontendResources] " + deleteDirCmd);
+                    executeCommand(clusterSession, deleteDirCmd, true);
+                }
+            }
+
+        } catch (Exception e) {
+            System.err.println("[deleteFrontendResources] Lỗi: " + e.getMessage());
+            throw new RuntimeException("Không thể xóa resources frontend: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+    }
+
+    private String escapeSingleQuotes(String input) {
+        return input.replace("'", "'\"'\"'");
     }
 }
 
