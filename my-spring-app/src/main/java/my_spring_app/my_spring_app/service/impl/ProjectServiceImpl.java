@@ -10,20 +10,26 @@ import my_spring_app.my_spring_app.dto.reponse.ProjectOverviewResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectDeploymentHistoryResponse;
 import my_spring_app.my_spring_app.dto.request.CreateProjectRequest;
+import com.jcraft.jsch.*;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectFrontendEntity;
+import my_spring_app.my_spring_app.entity.ServerEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectRepository;
+import my_spring_app.my_spring_app.repository.ServerRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
 import my_spring_app.my_spring_app.service.ProjectService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -36,6 +42,9 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private ServerRepository serverRepository;
 
     @Override
     public CreateProjectResponse createProject(CreateProjectRequest request) {
@@ -572,9 +581,140 @@ public class ProjectServiceImpl implements ProjectService {
             throw new RuntimeException("Bạn không có quyền xóa project này");
         }
 
+        // Lấy namespace trước khi xóa project
+        String namespace = project.getNamespace();
+        if (namespace != null && !namespace.trim().isEmpty()) {
+            // Xóa namespace trong Kubernetes trước
+            try {
+                deleteProjectNamespace(namespace);
+                System.out.println("[deleteProject] Đã xóa namespace trong Kubernetes: " + namespace);
+            } catch (Exception e) {
+                System.err.println("[deleteProject] Lỗi khi xóa namespace trong Kubernetes: " + e.getMessage());
+                // Vẫn tiếp tục xóa project trong database ngay cả khi xóa namespace thất bại
+                System.err.println("[deleteProject] Tiếp tục xóa project trong database...");
+            }
+        }
+
         // Xóa project (cascade sẽ xóa các databases, backends, frontends liên quan)
         projectRepository.delete(project);
         System.out.println("[deleteProject] Đã xóa project thành công: " + project.getProjectName());
+    }
+
+    /**
+     * Xóa namespace trong Kubernetes cluster
+     * 
+     * @param namespace Tên namespace cần xóa
+     * @throws Exception Nếu có lỗi khi xóa namespace
+     */
+    private void deleteProjectNamespace(String namespace) throws Exception {
+        if (namespace == null || namespace.trim().isEmpty()) {
+            System.out.println("[deleteProjectNamespace] Namespace trống, bỏ qua xóa namespace");
+            return;
+        }
+
+        // Lấy thông tin MASTER server (Kubernetes cluster)
+        Optional<ServerEntity> masterServerOptional = serverRepository.findByRole("MASTER");
+        if (masterServerOptional.isEmpty()) {
+            System.err.println("[deleteProjectNamespace] Không tìm thấy server MASTER. Không thể xóa namespace trong Kubernetes.");
+            throw new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống.");
+        }
+
+        ServerEntity masterServer = masterServerOptional.get();
+        Session clusterSession = null;
+
+        try {
+            // Kết nối SSH tới MASTER server
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[deleteProjectNamespace] Đã kết nối tới MASTER server");
+
+            // Xóa namespace bằng kubectl
+            String deleteNamespaceCmd = String.format("kubectl delete ns %s || true", namespace);
+            System.out.println("[deleteProjectNamespace] Thực thi lệnh: " + deleteNamespaceCmd);
+            String result = executeCommand(clusterSession, deleteNamespaceCmd, true);
+            System.out.println("[deleteProjectNamespace] Kết quả xóa namespace: " + result);
+            
+        } catch (Exception e) {
+            System.err.println("[deleteProjectNamespace] Lỗi khi xóa namespace: " + e.getMessage());
+            throw new RuntimeException("Không thể xóa namespace trong Kubernetes: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Helper method để thực thi lệnh qua SSH và trả về output
+     * 
+     * @param session SSH session đã kết nối
+     * @param command Lệnh cần thực thi
+     * @param ignoreNonZeroExit Nếu true, sẽ không throw exception khi lệnh trả về exit status != 0
+     * @return Kết quả output của lệnh
+     * @throws Exception Nếu có lỗi khi thực thi lệnh và ignoreNonZeroExit = false
+     */
+    private String executeCommand(Session session, String command, boolean ignoreNonZeroExit) throws Exception {
+        ChannelExec channelExec = null;
+
+        try {
+            Channel channel = session.openChannel("exec");
+            channelExec = (ChannelExec) channel;
+            channelExec.setCommand(command);
+            channelExec.setErrStream(System.err);
+
+            InputStream inputStream = channelExec.getInputStream();
+            channelExec.connect();
+
+            StringBuilder output = new StringBuilder();
+            byte[] buffer = new byte[1024];
+
+            while (true) {
+                while (inputStream.available() > 0) {
+                    int bytesRead = inputStream.read(buffer, 0, 1024);
+                    if (bytesRead < 0) {
+                        break;
+                    }
+                    output.append(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
+                }
+
+                if (channelExec.isClosed()) {
+                    if (inputStream.available() > 0) {
+                        continue;
+                    }
+                    break;
+                }
+
+                try {
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    // Bỏ qua lỗi sleep
+                }
+            }
+
+            int exitStatus = channelExec.getExitStatus();
+            String result = output.toString().trim();
+
+            if (exitStatus != 0) {
+                if (ignoreNonZeroExit) {
+                    System.err.println("[executeCommand] Command exited with status: " + exitStatus + ". Output: " + result + ". Command: " + command);
+                } else {
+                    throw new RuntimeException("Command exited with status: " + exitStatus + ". Output: " + result);
+                }
+            }
+
+            return result;
+
+        } finally {
+            if (channelExec != null && channelExec.isConnected()) {
+                channelExec.disconnect();
+            }
+        }
     }
 
     @Override
