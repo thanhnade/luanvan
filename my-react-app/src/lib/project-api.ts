@@ -564,3 +564,30 @@ export async function deployFrontend(request: DeployFrontendRequest): Promise<De
   return response.json()
 }
 
+/**
+ * Kiểm tra domainNameSystem đã tồn tại chưa
+ */
+export interface DNSCheckResponse {
+  exists: boolean
+  message: string
+}
+
+export async function checkDomainNameSystem(domainNameSystem: string): Promise<DNSCheckResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/dns/check?domainNameSystem=${encodeURIComponent(domainNameSystem)}`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  )
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể kiểm tra DNS" }))
+    throw new Error(error.message || "Không thể kiểm tra DNS")
+  }
+
+  return response.json()
+}
+

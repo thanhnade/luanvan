@@ -1016,7 +1016,7 @@ export function ProjectDetail() {
                                   </CardDescription>
                                 )}
                                 <CardDescription className="mt-1">
-                                  {dbType === "MYSQL" || dbType === "mysql" ? "MySQL" : dbType === "MONGODB" || dbType === "mongodb" ? "MongoDB" : dbType} - Của hệ thống
+                                  {dbType === "MYSQL" || dbType === "mysql" ? "MySQL" : dbType === "MONGODB" || dbType === "mongodb" ? "MongoDB" : dbType}
                                 </CardDescription>
                               </div>
                               <Badge variant={dbStatus.variant}>

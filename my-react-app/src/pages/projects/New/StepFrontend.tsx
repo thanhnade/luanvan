@@ -5,7 +5,7 @@ import { z } from "zod"
 import { Upload, X, Plus, CheckCircle2, Loader2, Trash2 } from "lucide-react"
 import { motion } from "framer-motion"
 import type { FrontendFormData } from "@/types"
-import { validateZipFile, validateDockerImage, validateDNS } from "@/lib/validators"
+import { validateZipFile, validateDockerImage } from "@/lib/validators"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select"
 import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
 import { useAuth } from "@/contexts/AuthContext"
-import { deployFrontend, getProjectFrontends, type FrontendInfo } from "@/lib/project-api"
+import { deployFrontend, getProjectFrontends, checkDomainNameSystem, type FrontendInfo } from "@/lib/project-api"
 import { toast } from "sonner"
 
 const frontendSchema = z.object({
@@ -52,6 +52,9 @@ export function StepFrontend() {
   const [projectFrontends, setProjectFrontends] = useState<FrontendInfo[]>([])
   const [loadingFrontends, setLoadingFrontends] = useState(false)
   const [deletingFrontendId, setDeletingFrontendId] = useState<number | null>(null)
+  const [isCheckingDns, setIsCheckingDns] = useState(false)
+  const [dnsStatus, setDnsStatus] = useState<"idle" | "valid" | "invalid">("idle")
+  const [dnsMessage, setDnsMessage] = useState("")
 
   const {
     register,
@@ -71,6 +74,42 @@ export function StepFrontend() {
   const sourceType = watch("sourceType")
   const dockerImage = watch("dockerImage")
   const publicUrl = watch("publicUrl")
+
+  useEffect(() => {
+    setDnsStatus("idle")
+    setDnsMessage("")
+  }, [publicUrl])
+
+  const handleCheckDns = async () => {
+    const dnsValue = watch("publicUrl")
+    if (!dnsValue) {
+      toast.info("Vui lòng nhập DNS trước khi kiểm tra")
+      return
+    }
+
+    setIsCheckingDns(true)
+    setDnsStatus("idle")
+    setDnsMessage("")
+    try {
+      const response = await checkDomainNameSystem(dnsValue)
+      if (response.exists) {
+        toast.error(response.message || "DNS đã tồn tại")
+        setDnsStatus("invalid")
+        setDnsMessage(response.message || "DNS đã tồn tại")
+      } else {
+        toast.success(response.message || "DNS có thể sử dụng")
+        setDnsStatus("valid")
+        setDnsMessage(response.message || "DNS có thể sử dụng")
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Không thể kiểm tra DNS"
+      toast.error(message)
+      setDnsStatus("invalid")
+      setDnsMessage(message)
+    } finally {
+      setIsCheckingDns(false)
+    }
+  }
 
   // Load frontends từ API
   const loadProjectFrontends = async () => {
@@ -515,31 +554,47 @@ export function StepFrontend() {
                     id="publicUrl"
                     {...register("publicUrl")}
                     placeholder="fe-myapp"
-                    className="flex-1"
+                    className={`flex-1 ${
+                      dnsStatus === "valid"
+                        ? "border-green-500 focus-visible:ring-green-500"
+                        : dnsStatus === "invalid"
+                        ? "border-red-500 focus-visible:ring-red-500 text-red-600"
+                        : ""
+                    }`}
                     disabled={isDeploying}
                   />
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      const dnsValue = watch("publicUrl")
-                      if (dnsValue) {
-                        const validation = validateDNS(dnsValue)
-                        if (validation.valid) {
-                          toast.success("DNS hợp lệ!")
-                        } else {
-                          toast.error(validation.message || "DNS không hợp lệ")
-                        }
-                      } else {
-                        toast.info("Vui lòng nhập DNS trước khi kiểm tra")
-                      }
-                    }}
-                    disabled={isDeploying}
+                    onClick={handleCheckDns}
+                    disabled={isDeploying || isCheckingDns}
                   >
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Kiểm tra
+                    {isCheckingDns ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Đang kiểm tra...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        Kiểm tra
+                      </>
+                    )}
                   </Button>
                 </div>
+                {dnsMessage && (
+                  <p
+                    className={`text-sm mt-1 ${
+                      dnsStatus === "valid"
+                        ? "text-green-600"
+                        : dnsStatus === "invalid"
+                        ? "text-red-600"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {dnsMessage}
+                  </p>
+                )}
               </div>
 
               <div className="flex gap-2">

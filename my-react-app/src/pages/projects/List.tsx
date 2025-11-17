@@ -22,6 +22,7 @@ export function ProjectsList() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { resetWizard } = useWizardStore()
+  const [allProjects, setAllProjects] = useState<Project[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -75,33 +76,7 @@ export function ProjectsList() {
         },
       }))
 
-      // Filter và sort
-      let filtered = mappedProjects
-
-      // Filter by search query
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase()
-        filtered = filtered.filter(
-          (p) =>
-            p.name.toLowerCase().includes(query) ||
-            p.description?.toLowerCase().includes(query)
-        )
-      }
-
-      // Filter by status (tạm thời không áp dụng vì API chưa trả về status)
-      // if (statusFilter !== "all") {
-      //   filtered = filtered.filter((p) => p.status === statusFilter)
-      // }
-
-      // Sort
-      const sorted = [...filtered].sort((a, b) => {
-        if (sortBy === "name") {
-          return a.name.localeCompare(b.name)
-        }
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      })
-
-      setProjects(sorted)
+      setAllProjects(mappedProjects)
     } catch (err) {
       console.error("Lỗi load projects:", err)
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra khi tải danh sách projects")
@@ -109,11 +84,39 @@ export function ProjectsList() {
     } finally {
       setLoading(false)
     }
-  }, [user?.username, searchQuery, statusFilter, sortBy])
+  }, [user?.username])
 
   useEffect(() => {
     loadProjects()
   }, [loadProjects])
+
+  // Filter & sort projects khi thay đổi bộ lọc
+  useEffect(() => {
+    let filtered = allProjects
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(
+        (p) =>
+          p.name.toLowerCase().includes(query) ||
+          p.description?.toLowerCase().includes(query)
+      )
+    }
+
+    // Filter by status (tạm thời không áp dụng vì API chưa trả về status)
+    // if (statusFilter !== "all") {
+    //   filtered = filtered.filter((p) => p.status === statusFilter)
+    // }
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === "name") {
+        return a.name.localeCompare(b.name)
+      }
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
+
+    setProjects(sorted)
+  }, [allProjects, searchQuery, statusFilter, sortBy])
 
   // Map trạng thái sang badge variant
   const getStatusBadge = (status: ProjectStatus) => {
