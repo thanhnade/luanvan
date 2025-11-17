@@ -3,19 +3,62 @@
  */
 
 /**
- * Validate DNS theo RFC 1123
+ * Validate DNS theo RFC 1035
+ * Cho phép dấu chấm (.) để phân tách các label
  */
 export const validateDNS = (dns: string): { valid: boolean; message?: string } => {
   if (!dns || dns.trim() === "") {
     return { valid: true } // DNS là optional
   }
 
-  const dnsRegex = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+  // Regex cho domain name: cho phép chữ thường, số, dấu gạch nối và dấu chấm
+  // Mỗi label (phần giữa các dấu chấm) phải:
+  // - Bắt đầu và kết thúc bằng chữ/số (không phải dấu gạch nối)
+  // - Có thể chứa chữ thường, số, dấu gạch nối ở giữa
+  // - Có độ dài từ 1 đến 63 ký tự
+  // - Toàn bộ domain không được bắt đầu hoặc kết thúc bằng dấu chấm
+  // - Không được có hai dấu chấm liên tiếp
+  // - Tổng độ dài tối đa 253 ký tự (254 ký tự nếu tính cả dấu chấm cuối)
+  const dnsRegex = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 
-  if (dns.length < 3 || dns.length > 63) {
+  if (dns.length < 1 || dns.length > 253) {
     return {
       valid: false,
-      message: "Tên DNS phải có độ dài từ 3 đến 63 ký tự.",
+      message: "Tên DNS phải có độ dài từ 1 đến 253 ký tự.",
+    }
+  }
+
+  // Kiểm tra không được bắt đầu hoặc kết thúc bằng dấu chấm
+  if (dns.startsWith(".") || dns.endsWith(".")) {
+    return {
+      valid: false,
+      message: "Tên DNS không được bắt đầu hoặc kết thúc bằng dấu chấm.",
+    }
+  }
+
+  // Kiểm tra không được có hai dấu chấm liên tiếp
+  if (dns.includes("..")) {
+    return {
+      valid: false,
+      message: "Tên DNS không được chứa hai dấu chấm liên tiếp.",
+    }
+  }
+
+  // Kiểm tra mỗi label (phần giữa các dấu chấm) không quá 63 ký tự
+  const labels = dns.split(".")
+  for (const label of labels) {
+    if (label.length < 1 || label.length > 63) {
+      return {
+        valid: false,
+        message: `Mỗi phần của DNS (giữa các dấu chấm) phải có độ dài từ 1 đến 63 ký tự. Phần "${label}" không hợp lệ.`,
+      }
+    }
+    // Kiểm tra label không bắt đầu hoặc kết thúc bằng dấu gạch nối
+    if (label.startsWith("-") || label.endsWith("-")) {
+      return {
+        valid: false,
+        message: `Mỗi phần của DNS không được bắt đầu hoặc kết thúc bằng dấu gạch nối. Phần "${label}" không hợp lệ.`,
+      }
     }
   }
 
@@ -23,7 +66,7 @@ export const validateDNS = (dns: string): { valid: boolean; message?: string } =
     return {
       valid: false,
       message:
-        "Tên DNS chỉ bao gồm chữ thường (a-z), số (0-9) và dấu gạch nối (-), không được bắt đầu hoặc kết thúc bằng dấu gạch nối.",
+        "Tên DNS chỉ bao gồm chữ thường (a-z), số (0-9), dấu gạch nối (-) và dấu chấm (.), không được bắt đầu hoặc kết thúc bằng dấu gạch nối hoặc dấu chấm.",
     }
   }
 

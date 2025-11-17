@@ -19,9 +19,12 @@ import org.springframework.transaction.annotation.Transactional;
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.models.V1Namespace;
 import io.kubernetes.client.openapi.models.V1ObjectMeta;
+import io.kubernetes.client.openapi.models.V1Scale;
+import io.kubernetes.client.openapi.models.V1ScaleSpec;
 import io.kubernetes.client.util.Config;
 
 import java.io.ByteArrayInputStream;
@@ -770,6 +773,312 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
             }
             System.out.println("[deployDatabase] Đã đóng các kết nối SSH/SFTP");
         }
+    }
+
+    /**
+     * Dừng database bằng cách scale StatefulSet về 0 replicas
+     * 
+     * @param projectId ID của project
+     * @param databaseId ID của database cần dừng
+     */
+    @Override
+    public void stopDatabase(Long projectId, Long databaseId) {
+        System.out.println("[stopDatabase] Yêu cầu dừng database projectId=" + projectId + ", databaseId=" + databaseId);
+
+        // Lấy project để kiểm tra quyền sở hữu database
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy database cần dừng
+        ProjectDatabaseEntity database = projectDatabaseRepository.findById(databaseId)
+                .orElseThrow(() -> new RuntimeException("Database project không tồn tại với id: " + databaseId));
+
+        // Đảm bảo database thuộc về đúng project
+        if (database.getProject() == null || !database.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Database project không thuộc về project này");
+        }
+
+        // Scale StatefulSet về 0 để dừng database
+        scaleDatabaseStatefulSet(project, database, 0);
+
+        // Cập nhật trạng thái
+        database.setStatus("STOPPED");
+        projectDatabaseRepository.save(database);
+        System.out.println("[stopDatabase] Đã dừng database thành công");
+    }
+
+    /**
+     * Khởi động database bằng cách scale StatefulSet về 1 replica
+     * 
+     * @param projectId ID của project
+     * @param databaseId ID của database cần khởi động
+     */
+    @Override
+    public void startDatabase(Long projectId, Long databaseId) {
+        System.out.println("[startDatabase] Yêu cầu khởi động database projectId=" + projectId + ", databaseId=" + databaseId);
+
+        // Lấy project để kiểm tra quyền sở hữu database
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy database cần khởi động
+        ProjectDatabaseEntity database = projectDatabaseRepository.findById(databaseId)
+                .orElseThrow(() -> new RuntimeException("Database project không tồn tại với id: " + databaseId));
+
+        // Đảm bảo database thuộc về đúng project
+        if (database.getProject() == null || !database.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Database project không thuộc về project này");
+        }
+
+        // Scale StatefulSet về 1 để khởi động database
+        scaleDatabaseStatefulSet(project, database, 1);
+
+        // Cập nhật trạng thái
+        database.setStatus("RUNNING");
+        projectDatabaseRepository.save(database);
+        System.out.println("[startDatabase] Đã khởi động database thành công");
+    }
+
+    /**
+     * Helper method để tạo Kubernetes client từ SSH session
+     * 
+     * @param session SSH session đến MASTER server
+     * @return ApiClient để tương tác với Kubernetes API
+     * @throws Exception Nếu có lỗi khi tạo client
+     */
+    private ApiClient createKubernetesClient(Session session) throws Exception {
+        String kubeconfigPath = "~/.kube/config";
+        System.out.println("[createKubernetesClient] Đang đọc kubeconfig từ: " + kubeconfigPath);
+        File tempKubeconfig = null;
+        try {
+            String kubeconfigContent = executeCommand(session, "cat " + kubeconfigPath);
+            if (kubeconfigContent == null || kubeconfigContent.trim().isEmpty()) {
+                throw new RuntimeException("Không thể đọc kubeconfig từ master server");
+            }
+
+            tempKubeconfig = File.createTempFile("kubeconfig-", ".yaml");
+            try (FileWriter writer = new FileWriter(tempKubeconfig)) {
+                writer.write(kubeconfigContent);
+            }
+            System.out.println("[createKubernetesClient] Đã tạo kubeconfig tạm tại: " + tempKubeconfig.getAbsolutePath());
+
+            ApiClient client = Config.fromConfig(tempKubeconfig.getAbsolutePath());
+            Configuration.setDefaultApiClient(client);
+            return client;
+        } finally {
+            if (tempKubeconfig != null && tempKubeconfig.exists()) {
+                boolean deleted = tempKubeconfig.delete();
+                if (!deleted) {
+                    tempKubeconfig.deleteOnExit();
+                }
+            }
+        }
+    }
+
+    /**
+     * Helper method để scale StatefulSet của database
+     * 
+     * @param project Project chứa database
+     * @param database Database cần scale
+     * @param replicas Số replicas (0 để dừng, 1 để chạy)
+     */
+    private void scaleDatabaseStatefulSet(ProjectEntity project, ProjectDatabaseEntity database, int replicas) {
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Không thể thay đổi replicas database.");
+        }
+
+        // Tên StatefulSet là "db-" + uuid_k8s
+        String statefulSetName = "db-" + database.getUuid_k8s();
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[scaleDatabaseStatefulSet] Đã kết nối tới MASTER server");
+
+            ApiClient client = createKubernetesClient(clusterSession);
+            AppsV1Api appsApi = new AppsV1Api(client);
+
+            // Đọc scale hiện tại của StatefulSet
+            V1Scale scale = appsApi.readNamespacedStatefulSetScale(statefulSetName, namespace, null);
+            if (scale.getSpec() == null) {
+                scale.setSpec(new V1ScaleSpec());
+            }
+            scale.getSpec().setReplicas(replicas);
+            
+            // Cập nhật scale
+            appsApi.replaceNamespacedStatefulSetScale(statefulSetName, namespace, scale, null, null, null, null);
+            System.out.println("[scaleDatabaseStatefulSet] Đã scale StatefulSet " + statefulSetName + " về " + replicas + " replica(s)");
+        } catch (Exception e) {
+            System.err.println("[scaleDatabaseStatefulSet] Lỗi: " + e.getMessage());
+            throw new RuntimeException("Không thể scale database: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Xóa database project và tất cả các tài nguyên liên quan trên Kubernetes
+     * Xóa StatefulSet, Service, Secret (nếu là MySQL), PVC và YAML files
+     * 
+     * @param projectId ID của project
+     * @param databaseId ID của database cần xóa
+     */
+    @Override
+    public void deleteDatabase(Long projectId, Long databaseId) {
+        System.out.println("[deleteDatabase] Yêu cầu xóa database projectId=" + projectId + ", databaseId=" + databaseId);
+
+        // Lấy project để kiểm tra quyền sở hữu database
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project không tồn tại với id: " + projectId));
+
+        // Lấy database cần xóa
+        ProjectDatabaseEntity database = projectDatabaseRepository.findById(databaseId)
+                .orElseThrow(() -> new RuntimeException("Database project không tồn tại với id: " + databaseId));
+
+        // Đảm bảo database thuộc về đúng project
+        if (database.getProject() == null || !database.getProject().getId().equals(project.getId())) {
+            throw new RuntimeException("Database project không thuộc về project này");
+        }
+
+        // Xóa tài nguyên trên Kubernetes
+        deleteDatabaseResources(project, database);
+
+        // Xóa record khỏi database
+        projectDatabaseRepository.delete(database);
+        System.out.println("[deleteDatabase] Đã xóa database thành công");
+    }
+
+    /**
+     * Helper method để xóa các tài nguyên Kubernetes của database
+     * Xóa StatefulSet, Service, Secret (cho MySQL), PVC và YAML files
+     * 
+     * @param project Project chứa database
+     * @param database Database cần xóa
+     */
+    private void deleteDatabaseResources(ProjectEntity project, ProjectDatabaseEntity database) {
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace. Không thể xóa resources database.");
+        }
+
+        String uuid = database.getUuid_k8s();
+        if (uuid == null || uuid.trim().isEmpty()) {
+            throw new RuntimeException("Database không có uuid_k8s. Không thể xóa resources database.");
+        }
+
+        String statefulSetName = "db-" + uuid;
+        String serviceName = statefulSetName + "-svc";
+        String secretName = statefulSetName + "-secret"; // Chỉ cho MySQL
+        
+        // Xác định PVC name dựa trên loại database
+        String pvcName;
+        String databaseType = database.getDatabaseType();
+        if ("MYSQL".equalsIgnoreCase(databaseType)) {
+            pvcName = "mysql-data-" + statefulSetName + "-0";
+        } else if ("MONGODB".equalsIgnoreCase(databaseType)) {
+            pvcName = "mongodb-data-" + statefulSetName + "-0";
+        } else {
+            // Fallback: thử xóa cả 2 loại PVC
+            pvcName = null;
+        }
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            // Kết nối SSH tới MASTER server để có thể chạy lệnh kubectl
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[deleteDatabaseResources] Đã kết nối MASTER server để xóa resources");
+
+            // Xóa StatefulSet
+            String deleteStatefulSetCmd = String.format("kubectl -n %s delete statefulset/%s || true", namespace, statefulSetName);
+            System.out.println("[deleteDatabaseResources] " + deleteStatefulSetCmd);
+            executeCommand(clusterSession, deleteStatefulSetCmd, true);
+
+            // Xóa Service
+            String deleteServiceCmd = String.format("kubectl -n %s delete svc/%s || true", namespace, serviceName);
+            System.out.println("[deleteDatabaseResources] " + deleteServiceCmd);
+            executeCommand(clusterSession, deleteServiceCmd, true);
+
+            // Xóa Secret (chỉ cho MySQL)
+            if ("MYSQL".equalsIgnoreCase(databaseType)) {
+                String deleteSecretCmd = String.format("kubectl -n %s delete secret/%s || true", namespace, secretName);
+                System.out.println("[deleteDatabaseResources] " + deleteSecretCmd);
+                executeCommand(clusterSession, deleteSecretCmd, true);
+            }
+
+            // Xóa PVC chứa dữ liệu
+            if (pvcName != null) {
+                String deletePvcCmd = String.format("kubectl -n %s delete pvc/%s || true", namespace, pvcName);
+                System.out.println("[deleteDatabaseResources] " + deletePvcCmd);
+                executeCommand(clusterSession, deletePvcCmd, true);
+            } else {
+                // Nếu không xác định được loại database, thử xóa cả 2 loại PVC
+                String deleteMySqlPvcCmd = String.format("kubectl -n %s delete pvc/mysql-data-%s-0 || true", namespace, statefulSetName);
+                System.out.println("[deleteDatabaseResources] " + deleteMySqlPvcCmd);
+                executeCommand(clusterSession, deleteMySqlPvcCmd, true);
+                
+                String deleteMongoPvcCmd = String.format("kubectl -n %s delete pvc/mongodb-data-%s-0 || true", namespace, statefulSetName);
+                System.out.println("[deleteDatabaseResources] " + deleteMongoPvcCmd);
+                executeCommand(clusterSession, deleteMongoPvcCmd, true);
+            }
+
+            // Xóa YAML file và thư mục chứa nó
+            String yamlPath = database.getYamlPath();
+            if (yamlPath != null && !yamlPath.trim().isEmpty()) {
+                String cleanedPath = yamlPath.trim();
+                String deleteYamlCmd = String.format("rm -f '%s'", escapeSingleQuotes(cleanedPath));
+                System.out.println("[deleteDatabaseResources] " + deleteYamlCmd);
+                executeCommand(clusterSession, deleteYamlCmd, true);
+
+                // Xóa thư mục chứa file YAML
+                java.io.File yamlFile = new java.io.File(cleanedPath);
+                String parentDir = yamlFile.getParent();
+                if (parentDir != null && !parentDir.trim().isEmpty()) {
+                    String deleteDirCmd = String.format("rm -rf '%s'", escapeSingleQuotes(parentDir.trim()));
+                    System.out.println("[deleteDatabaseResources] " + deleteDirCmd);
+                    executeCommand(clusterSession, deleteDirCmd, true);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[deleteDatabaseResources] Lỗi: " + e.getMessage());
+            throw new RuntimeException("Không thể xóa resources database: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Helper method để escape single quotes trong shell command
+     * 
+     * @param input Chuỗi cần escape
+     * @return Chuỗi đã escape
+     */
+    private String escapeSingleQuotes(String input) {
+        return input.replace("'", "'\"'\"'");
     }
 }
 

@@ -637,6 +637,42 @@ export async function deleteProjectFrontend(projectId: string | number, frontend
 }
 
 /**
+ * Điều khiển database đang triển khai
+ */
+export async function stopProjectDatabase(projectId: string | number, databaseId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-databases/${projectId}/${databaseId}/stop`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể tạm dừng database" }))
+    throw new Error(error.message || "Không thể tạm dừng database")
+  }
+}
+
+export async function startProjectDatabase(projectId: string | number, databaseId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-databases/${projectId}/${databaseId}/start`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể khởi động database" }))
+    throw new Error(error.message || "Không thể khởi động database")
+  }
+}
+
+export async function deleteProjectDatabase(projectId: string | number, databaseId: string | number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/project-databases/${projectId}/${databaseId}/delete`, {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Không thể xóa database" }))
+    throw new Error(error.message || "Không thể xóa database")
+  }
+}
+
+/**
  * Kiểm tra domainNameSystem đã tồn tại chưa
  */
 export interface DNSCheckResponse {

@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { getProjectById, deployProject, addDatabaseToProject, addBackendToProject, addFrontendToProject } from "@/lib/mock-api"
-import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, deployBackend, deployFrontend, startProjectFrontend, stopProjectFrontend, startProjectBackend, stopProjectBackend, deleteProjectBackend, deleteProjectFrontend, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
+import { getProjectBasicInfo, getProjectOverview, getProjectDatabases, getProjectBackends, getProjectFrontends, deleteProject, getProjectDeploymentHistory, deployDatabase, deployBackend, deployFrontend, startProjectFrontend, stopProjectFrontend, startProjectBackend, stopProjectBackend, deleteProjectBackend, deleteProjectFrontend, startProjectDatabase, stopProjectDatabase, deleteProjectDatabase, checkDomainNameSystem, type DatabaseInfo, type BackendInfo, type FrontendInfo, type DeploymentHistoryItem } from "@/lib/project-api"
 import { useAuth } from "@/contexts/AuthContext"
 import type { Project, ComponentStatus } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -51,7 +51,7 @@ export function ProjectDetail() {
   const [showAddFrontend, setShowAddFrontend] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<{ type: "backend" | "frontend"; id: number; name: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "database" | "backend" | "frontend"; id: number; name: string } | null>(null)
   const [isDeletingResource, setIsDeletingResource] = useState(false)
   const [deploymentHistory, setDeploymentHistory] = useState<DeploymentHistoryItem[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
@@ -127,18 +127,18 @@ export function ProjectDetail() {
   }, [id])
 
   // Load project databases từ API
-  useEffect(() => {
-    const loadProjectDatabases = async () => {
-      if (!id) return
-      try {
-        const response = await getProjectDatabases(id)
-        setProjectDatabases(response.databases)
-      } catch (error) {
-        console.error("Lỗi load project databases:", error)
-        // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
-      }
+  const loadProjectDatabases = async () => {
+    if (!id) return
+    try {
+      const response = await getProjectDatabases(id)
+      setProjectDatabases(response.databases)
+    } catch (error) {
+      console.error("Lỗi load project databases:", error)
+      // Không hiển thị toast để tránh làm phiền user nếu vẫn có thể load từ mock-api
     }
+  }
 
+  useEffect(() => {
     loadProjectDatabases()
   }, [id])
 
@@ -309,23 +309,41 @@ export function ProjectDetail() {
     }
   }
 
+  // Điều khiển database thực tế
+  const handleDatabaseStart = async (databaseId: number, resourceName: string) => {
+    if (!id) return
+    setDeploying(true)
+    try {
+      await startProjectDatabase(id, databaseId)
+      toast.success(`Đã khởi động ${resourceName}!`)
+      await Promise.all([loadProjectOverview(), loadProjectDatabases()])
+    } catch (error) {
+      console.error("Lỗi khởi động database:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể khởi động database")
+    } finally {
+      setDeploying(false)
+    }
+  }
+
+  const handleDatabaseStop = async (databaseId: number, resourceName: string) => {
+    if (!id) return
+    try {
+      await stopProjectDatabase(id, databaseId)
+      toast.success(`Đã tạm dừng ${resourceName}!`)
+      await Promise.all([loadProjectOverview(), loadProjectDatabases()])
+    } catch (error) {
+      console.error("Lỗi tạm dừng database:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể tạm dừng database")
+    }
+  }
+
   // Xóa component
   const handleDelete = (resourceName: string, resourceType: "database" | "backend" | "frontend", resourceId?: number) => {
-    if (resourceType === "database") {
-      // Database chưa có API xóa
-      if (confirm(`Bạn có chắc chắn muốn xóa ${resourceName}?`)) {
-        toast.info("Tính năng xóa database đang được phát triển")
-      }
+    if (!resourceId) {
+      toast.error("Không tìm thấy ID của resource")
       return
     }
-
-    if (resourceType === "backend" || resourceType === "frontend") {
-      if (!resourceId) {
-        toast.error("Không tìm thấy ID của resource")
-        return
-      }
-      setDeleteTarget({ type: resourceType, id: resourceId, name: resourceName })
-    }
+    setDeleteTarget({ type: resourceType, id: resourceId, name: resourceName })
   }
 
   const handleConfirmDeleteResource = async () => {
@@ -333,7 +351,11 @@ export function ProjectDetail() {
 
     setIsDeletingResource(true)
     try {
-      if (deleteTarget.type === "backend") {
+      if (deleteTarget.type === "database") {
+        await deleteProjectDatabase(id, deleteTarget.id)
+        toast.success(`Đã xóa database "${deleteTarget.name}" thành công!`)
+        await Promise.all([loadProjectOverview(), loadProjectDatabases()])
+      } else if (deleteTarget.type === "backend") {
         await deleteProjectBackend(id, deleteTarget.id)
         toast.success(`Đã xóa backend "${deleteTarget.name}" thành công!`)
         await Promise.all([loadProjectOverview(), loadProjectBackendsData()])
@@ -348,6 +370,26 @@ export function ProjectDetail() {
       toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa resource")
     } finally {
       setIsDeletingResource(false)
+    }
+  }
+
+  // Kiểm tra DNS
+  const handleCheckDNS = async (domainNameSystem: string) => {
+    if (!domainNameSystem) {
+      toast.error("DNS không hợp lệ")
+      return
+    }
+
+    try {
+      const result = await checkDomainNameSystem(domainNameSystem)
+      if (result.exists) {
+        toast.error(result.message || `DNS "${domainNameSystem}" đã được sử dụng`)
+      } else {
+        toast.success(result.message || `DNS "${domainNameSystem}" có thể sử dụng`)
+      }
+    } catch (error) {
+      console.error("Lỗi kiểm tra DNS:", error)
+      toast.error(error instanceof Error ? error.message : "Không thể kiểm tra DNS")
     }
   }
 
@@ -638,6 +680,9 @@ export function ProjectDetail() {
   const sourceTypeBe = watchBe("sourceKind")
   const dockerImageBe = watchBe("sourceRef")
   const dnsBe = watchBe("dns")
+  const [dnsStatusBe, setDnsStatusBe] = useState<"idle" | "valid" | "invalid">("idle")
+  const [dnsMessageBe, setDnsMessageBe] = useState("")
+  const [isCheckingDnsBe, setIsCheckingDnsBe] = useState(false)
 
   // Validate Docker image
   const validateDockerBe = () => {
@@ -649,13 +694,49 @@ export function ProjectDetail() {
     }
   }
 
+  useEffect(() => {
+    setDnsStatusBe("idle")
+    setDnsMessageBe("")
+  }, [dnsBe])
+
   // Validate DNS
   const validateDNSBe = () => {
     if (dnsBe) {
       const validation = validateDNS(dnsBe)
       if (!validation.valid) {
-        // Có thể set error state nếu cần
+        setDnsStatusBe("invalid")
+        setDnsMessageBe(validation.message || "DNS không hợp lệ")
       }
+    }
+  }
+
+  const handleCheckDnsBe = async () => {
+    if (!dnsBe) {
+      toast.info("Vui lòng nhập DNS trước khi kiểm tra")
+      return
+    }
+
+    setIsCheckingDnsBe(true)
+    setDnsStatusBe("idle")
+    setDnsMessageBe("")
+    try {
+      const response = await checkDomainNameSystem(dnsBe)
+      if (response.exists) {
+        setDnsStatusBe("invalid")
+        setDnsMessageBe(response.message || "DNS đã tồn tại")
+        toast.error(response.message || "DNS đã tồn tại")
+      } else {
+        setDnsStatusBe("valid")
+        setDnsMessageBe(response.message || "DNS có thể sử dụng")
+        toast.success(response.message || "DNS có thể sử dụng")
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Không thể kiểm tra DNS"
+      setDnsStatusBe("invalid")
+      setDnsMessageBe(message)
+      toast.error(message)
+    } finally {
+      setIsCheckingDnsBe(false)
     }
   }
 
@@ -763,6 +844,9 @@ export function ProjectDetail() {
   const sourceTypeFe = watchFe("sourceKind")
   const dockerImageFe = watchFe("sourceRef")
   const publicUrlFe = watchFe("publicUrl")
+  const [dnsStatusFe, setDnsStatusFe] = useState<"idle" | "valid" | "invalid">("idle")
+  const [dnsMessageFe, setDnsMessageFe] = useState("")
+  const [isCheckingDnsFe, setIsCheckingDnsFe] = useState(false)
 
   // Validate Docker image
   const validateDockerFe = () => {
@@ -774,13 +858,49 @@ export function ProjectDetail() {
     }
   }
 
+  useEffect(() => {
+    setDnsStatusFe("idle")
+    setDnsMessageFe("")
+  }, [publicUrlFe])
+
   // Validate DNS
   const validateDNSPublicUrl = () => {
     if (publicUrlFe) {
       const validation = validateDNS(publicUrlFe)
       if (!validation.valid) {
-        // Có thể set error state nếu cần
+        setDnsStatusFe("invalid")
+        setDnsMessageFe(validation.message || "DNS không hợp lệ")
       }
+    }
+  }
+
+  const handleCheckDnsFe = async () => {
+    if (!publicUrlFe) {
+      toast.info("Vui lòng nhập DNS trước khi kiểm tra")
+      return
+    }
+
+    setIsCheckingDnsFe(true)
+    setDnsStatusFe("idle")
+    setDnsMessageFe("")
+    try {
+      const response = await checkDomainNameSystem(publicUrlFe)
+      if (response.exists) {
+        setDnsStatusFe("invalid")
+        setDnsMessageFe(response.message || "DNS đã tồn tại")
+        toast.error(response.message || "DNS đã tồn tại")
+      } else {
+        setDnsStatusFe("valid")
+        setDnsMessageFe(response.message || "DNS có thể sử dụng")
+        toast.success(response.message || "DNS có thể sử dụng")
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Không thể kiểm tra DNS"
+      setDnsStatusFe("invalid")
+      setDnsMessageFe(message)
+      toast.error(message)
+    } finally {
+      setIsCheckingDnsFe(false)
     }
   }
 
@@ -1085,6 +1205,9 @@ export function ProjectDetail() {
                       const dbUsername = isApiData ? (db as DatabaseInfo).databaseUsername : (db as any).username
                       const dbPassword = isApiData ? (db as DatabaseInfo).databasePassword : undefined
                       const dbId = isApiData ? `api-${(db as DatabaseInfo).id}` : (db as any).id
+                      const dbApiId = isApiData ? (db as DatabaseInfo).id : null
+                      const rawDbStatus = isApiData ? (db as DatabaseInfo).status : (db as any).status
+                      const dbStatusKey = rawDbStatus ? rawDbStatus.toString().toLowerCase() : ""
 
                       return (
                         <Card key={dbId}>
@@ -1195,21 +1318,43 @@ export function ProjectDetail() {
                                 }
                               >
                                 <DropdownMenuItem
-                                  onClick={() => handleStart(dbName, "database")}
-                                  disabled={deploying || dbStatus.label === "Đang chạy"}
+                                  onClick={() => {
+                                    if (dbApiId !== null) {
+                                      handleDatabaseStart(dbApiId, dbName)
+                                    } else {
+                                      handleStart(dbName, "database")
+                                    }
+                                  }}
+                                  disabled={deploying || ["running", "deployed"].includes(dbStatusKey)}
                                 >
                                   <Play className="w-4 h-4 mr-2" />
                                   Chạy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handlePause(dbName, "database")}
-                                  disabled={dbStatus.label === "Tạm dừng" || dbStatus.label === "Chờ xử lý"}
+                                  onClick={() => {
+                                    if (dbApiId !== null) {
+                                      handleDatabaseStop(dbApiId, dbName)
+                                    } else {
+                                      handlePause(dbName, "database")
+                                    }
+                                  }}
+                                  disabled={
+                                    deploying ||
+                                    ["paused", "stopped"].includes(dbStatusKey) ||
+                                    ["pending", "building", "deploying"].includes(dbStatusKey)
+                                  }
                                 >
                                   <Pause className="w-4 h-4 mr-2" />
                                   Tạm dừng
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => handleDelete(dbName, "database")}
+                                  onClick={() => {
+                                    if (dbApiId !== null) {
+                                      handleDelete(dbName, "database", dbApiId)
+                                    } else {
+                                      handleDelete(dbName, "database")
+                                    }
+                                  }}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
@@ -1322,8 +1467,18 @@ export function ProjectDetail() {
                                       size="icon"
                                       className="h-5 w-5"
                                       onClick={() => copyToClipboard(beDns!)}
+                                      title="Sao chép DNS"
                                     >
                                       <Copy className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5"
+                                      onClick={() => handleCheckDNS(beDns)}
+                                      title="Kiểm tra DNS"
+                                    >
+                                      <CheckCircle2 className="w-3 h-3" />
                                     </Button>
                                   </div>
                                   <p className="text-sm font-mono mt-1">{beDns}</p>
@@ -1573,8 +1728,18 @@ export function ProjectDetail() {
                                       size="icon"
                                       className="h-5 w-5"
                                       onClick={() => copyToClipboard(feDns!)}
+                                      title="Sao chép DNS"
                                     >
                                       <Copy className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5"
+                                      onClick={() => handleCheckDNS(feDns)}
+                                      title="Kiểm tra DNS"
+                                    >
+                                      <CheckCircle2 className="w-3 h-3" />
                                     </Button>
                                   </div>
                                   <a
@@ -2125,31 +2290,48 @@ export function ProjectDetail() {
                     id="be-dns"
                     {...registerBe("dns")}
                     placeholder="api-myapp"
-                    className="flex-1"
+                    className={`flex-1 ${
+                      dnsStatusBe === "valid"
+                        ? "border-green-500 focus-visible:ring-green-500"
+                        : dnsStatusBe === "invalid"
+                        ? "border-red-500 focus-visible:ring-red-500 text-red-600"
+                        : ""
+                    }`}
                     disabled={isDeployingBackend}
+                    onBlur={validateDNSBe}
                   />
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={isDeployingBackend}
-                    onClick={() => {
-                      const dnsValue = watchBe("dns")
-                      if (dnsValue) {
-                        const validation = validateDNS(dnsValue)
-                        if (validation.valid) {
-                          toast.success("DNS hợp lệ!")
-                        } else {
-                          toast.error(validation.message || "DNS không hợp lệ")
-                        }
-                      } else {
-                        toast.info("Vui lòng nhập DNS trước khi kiểm tra")
-                      }
-                    }}
+                    disabled={isDeployingBackend || isCheckingDnsBe}
+                    onClick={handleCheckDnsBe}
                   >
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Kiểm tra
+                    {isCheckingDnsBe ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Đang kiểm tra...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        Kiểm tra
+                      </>
+                    )}
                   </Button>
                 </div>
+                {dnsMessageBe && (
+                  <p
+                    className={`text-sm mt-1 ${
+                      dnsStatusBe === "valid"
+                        ? "text-green-600"
+                        : dnsStatusBe === "invalid"
+                        ? "text-red-600"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {dnsMessageBe}
+                  </p>
+                )}
               </div>
 
               {/* Database connection fields */}
@@ -2416,31 +2598,47 @@ export function ProjectDetail() {
                     {...registerFe("publicUrl")}
                     placeholder="fe-myapp"
                     onBlur={validateDNSPublicUrl}
-                    className="flex-1"
+                    className={`flex-1 ${
+                      dnsStatusFe === "valid"
+                        ? "border-green-500 focus-visible:ring-green-500"
+                        : dnsStatusFe === "invalid"
+                        ? "border-red-500 focus-visible:ring-red-500 text-red-600"
+                        : ""
+                    }`}
                     disabled={isDeployingFrontend}
                   />
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      const dnsValue = watchFe("publicUrl")
-                      if (dnsValue) {
-                        const validation = validateDNS(dnsValue)
-                        if (validation.valid) {
-                          toast.success("DNS hợp lệ!")
-                        } else {
-                          toast.error(validation.message || "DNS không hợp lệ")
-                        }
-                      } else {
-                        toast.info("Vui lòng nhập DNS trước khi kiểm tra")
-                      }
-                    }}
-                    disabled={isDeployingFrontend}
+                    onClick={handleCheckDnsFe}
+                    disabled={isDeployingFrontend || isCheckingDnsFe}
                   >
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Kiểm tra
+                    {isCheckingDnsFe ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Đang kiểm tra...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        Kiểm tra
+                      </>
+                    )}
                   </Button>
                 </div>
+                {dnsMessageFe && (
+                  <p
+                    className={`text-sm mt-1 ${
+                      dnsStatusFe === "valid"
+                        ? "text-green-600"
+                        : dnsStatusFe === "invalid"
+                        ? "text-red-600"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {dnsMessageFe}
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-end gap-2">
@@ -2494,14 +2692,26 @@ export function ProjectDetail() {
           </DialogContent>
         </Dialog>
 
-        {/* Dialog xác nhận xóa backend/frontend */}
+        {/* Dialog xác nhận xóa database/backend/frontend */}
         <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Xác nhận xóa {deleteTarget?.type === "backend" ? "backend" : "frontend"}</DialogTitle>
+              <DialogTitle>
+                Xác nhận xóa{" "}
+                {deleteTarget?.type === "database"
+                  ? "database"
+                  : deleteTarget?.type === "backend"
+                  ? "backend"
+                  : "frontend"}
+              </DialogTitle>
               <DialogDescription>
-                Bạn có chắc chắn muốn xóa {deleteTarget?.type === "backend" ? "backend" : "frontend"} "{deleteTarget?.name}"? 
-                Hành động này không thể hoàn tác.
+                Bạn có chắc chắn muốn xóa{" "}
+                {deleteTarget?.type === "database"
+                  ? "database"
+                  : deleteTarget?.type === "backend"
+                  ? "backend"
+                  : "frontend"}{" "}
+                "{deleteTarget?.name}"? Hành động này không thể hoàn tác.
               </DialogDescription>
             </DialogHeader>
             <div className="flex justify-end gap-2 mt-4">
