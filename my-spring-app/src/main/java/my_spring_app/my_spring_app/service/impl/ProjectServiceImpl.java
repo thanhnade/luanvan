@@ -11,6 +11,13 @@ import my_spring_app.my_spring_app.dto.reponse.ProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.ProjectDeploymentHistoryResponse;
 import my_spring_app.my_spring_app.dto.request.CreateProjectRequest;
 import com.jcraft.jsch.*;
+import io.kubernetes.client.openapi.ApiClient;
+import io.kubernetes.client.openapi.ApiException;
+import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.CoreV1Api;
+import io.kubernetes.client.openapi.models.V1Namespace;
+import io.kubernetes.client.openapi.models.V1ObjectMeta;
+import io.kubernetes.client.util.Config;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
@@ -25,6 +32,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.File;
+import java.io.FileWriter;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -76,6 +85,17 @@ public class ProjectServiceImpl implements ProjectService {
         String uuid_k8s = fullUuid.replace("-", "").substring(0, 12);
         String namespace = "ns-" + uuid_k8s;
         System.out.println("[createProject] Tạo UUID cho project: " + uuid_k8s);
+
+        // Tạo namespace trong Kubernetes trước khi lưu vào database
+        try {
+            createProjectNamespace(namespace);
+            System.out.println("[createProject] Đã tạo namespace trong Kubernetes: " + namespace);
+        } catch (Exception e) {
+            System.err.println("[createProject] Lỗi khi tạo namespace trong Kubernetes: " + e.getMessage());
+            // Nếu không thể tạo namespace, vẫn tiếp tục tạo project trong database
+            // nhưng sẽ ghi log lỗi để xử lý sau
+            System.err.println("[createProject] Tiếp tục tạo project trong database...");
+        }
 
         // Tạo ProjectEntity
         ProjectEntity projectEntity = new ProjectEntity();
@@ -581,10 +601,13 @@ public class ProjectServiceImpl implements ProjectService {
             throw new RuntimeException("Bạn không có quyền xóa project này");
         }
 
-        // Lấy namespace trước khi xóa project
+        // Lấy thông tin cần thiết trước khi xóa project
         String namespace = project.getNamespace();
+        String uuidK8s = project.getUuid_k8s();
+        String projectOwnerUsername = project.getUser() != null ? project.getUser().getUsername() : null;
+
+        // Xóa namespace trong Kubernetes trước
         if (namespace != null && !namespace.trim().isEmpty()) {
-            // Xóa namespace trong Kubernetes trước
             try {
                 deleteProjectNamespace(namespace);
                 System.out.println("[deleteProject] Đã xóa namespace trong Kubernetes: " + namespace);
@@ -595,9 +618,121 @@ public class ProjectServiceImpl implements ProjectService {
             }
         }
 
+        // Xóa thư mục project trên server
+        if (uuidK8s != null && !uuidK8s.trim().isEmpty() && projectOwnerUsername != null && !projectOwnerUsername.trim().isEmpty()) {
+            try {
+                deleteProjectDirectory(projectOwnerUsername, uuidK8s);
+                System.out.println("[deleteProject] Đã xóa thư mục project trên server");
+            } catch (Exception e) {
+                System.err.println("[deleteProject] Lỗi khi xóa thư mục project trên server: " + e.getMessage());
+                // Vẫn tiếp tục xóa project trong database ngay cả khi xóa thư mục thất bại
+                System.err.println("[deleteProject] Tiếp tục xóa project trong database...");
+            }
+        }
+
         // Xóa project (cascade sẽ xóa các databases, backends, frontends liên quan)
         projectRepository.delete(project);
         System.out.println("[deleteProject] Đã xóa project thành công: " + project.getProjectName());
+    }
+
+    /**
+     * Tạo namespace trong Kubernetes cluster
+     * 
+     * @param namespace Tên namespace cần tạo
+     * @throws Exception Nếu có lỗi khi tạo namespace
+     */
+    private void createProjectNamespace(String namespace) throws Exception {
+        if (namespace == null || namespace.trim().isEmpty()) {
+            System.out.println("[createProjectNamespace] Namespace trống, bỏ qua tạo namespace");
+            return;
+        }
+
+        // Lấy thông tin MASTER server (Kubernetes cluster)
+        Optional<ServerEntity> masterServerOptional = serverRepository.findByRole("MASTER");
+        if (masterServerOptional.isEmpty()) {
+            System.err.println("[createProjectNamespace] Không tìm thấy server MASTER. Không thể tạo namespace trong Kubernetes.");
+            throw new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống.");
+        }
+
+        ServerEntity masterServer = masterServerOptional.get();
+        Session clusterSession = null;
+        File tempKubeconfig = null;
+
+        try {
+            // Kết nối SSH tới MASTER server
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[createProjectNamespace] Đã kết nối tới MASTER server");
+
+            // Đọc kubeconfig từ master server
+            String kubeconfigPath = "~/.kube/config";
+            System.out.println("[createProjectNamespace] Đang đọc kubeconfig từ: " + kubeconfigPath);
+            String kubeconfigContent = executeCommand(clusterSession, "cat " + kubeconfigPath, false);
+            
+            if (kubeconfigContent == null || kubeconfigContent.trim().isEmpty()) {
+                throw new RuntimeException("Không thể đọc kubeconfig từ master server");
+            }
+            
+            // Tạo file kubeconfig tạm thời trên local
+            tempKubeconfig = File.createTempFile("kubeconfig-", ".yaml");
+            tempKubeconfig.deleteOnExit();
+            try (FileWriter writer = new FileWriter(tempKubeconfig)) {
+                writer.write(kubeconfigContent);
+            }
+            System.out.println("[createProjectNamespace] Đã tạo file kubeconfig tạm thời: " + tempKubeconfig.getAbsolutePath());
+            
+            // Khởi tạo Kubernetes API client từ kubeconfig
+            ApiClient client = Config.fromConfig(tempKubeconfig.getAbsolutePath());
+            Configuration.setDefaultApiClient(client);
+            CoreV1Api api = new CoreV1Api();
+            
+            // Kiểm tra namespace đã tồn tại chưa
+            try {
+                V1Namespace ns = api.readNamespace(namespace, null);
+                System.out.println("[createProjectNamespace] Namespace đã tồn tại: " + namespace + " (Status: " + 
+                    (ns.getStatus() != null && ns.getStatus().getPhase() != null ? ns.getStatus().getPhase() : "Unknown") + ")");
+            } catch (ApiException e) {
+                if (e.getCode() == 404) {
+                    // Namespace chưa tồn tại, tạo mới
+                    System.out.println("[createProjectNamespace] Namespace chưa tồn tại, đang tạo mới: " + namespace);
+                    V1Namespace newNamespace = new V1Namespace();
+                    V1ObjectMeta metadata = new V1ObjectMeta();
+                    metadata.setName(namespace);
+                    newNamespace.setMetadata(metadata);
+                    
+                    V1Namespace createdNamespace = api.createNamespace(newNamespace, null, null, null, null);
+                    System.out.println("[createProjectNamespace] Đã tạo namespace thành công: " + namespace);
+                } else {
+                    System.err.println("[createProjectNamespace] Lỗi API khi kiểm tra namespace. Code: " + e.getCode() + ", Message: " + e.getMessage());
+                    throw new RuntimeException("Lỗi khi kiểm tra namespace: " + e.getMessage(), e);
+                }
+            }
+            
+        } catch (Exception e) {
+            System.err.println("[createProjectNamespace] Lỗi khi tạo namespace: " + e.getMessage());
+            throw new RuntimeException("Không thể tạo namespace trong Kubernetes: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+            // Đảm bảo xóa file tạm thời sau khi sử dụng
+            if (tempKubeconfig != null && tempKubeconfig.exists()) {
+                try {
+                    boolean deleted = tempKubeconfig.delete();
+                    if (!deleted) {
+                        tempKubeconfig.deleteOnExit();
+                    }
+                } catch (Exception e) {
+                    System.err.println("[createProjectNamespace] Không thể xóa file kubeconfig tạm thời: " + e.getMessage());
+                }
+            }
+        }
     }
 
     /**
@@ -648,6 +783,78 @@ public class ProjectServiceImpl implements ProjectService {
                 clusterSession.disconnect();
             }
         }
+    }
+
+    /**
+     * Xóa thư mục project trên server
+     * Thư mục có format: /home/<master_username>/uploads/<username>/<uuid_k8s>
+     * 
+     * @param username Username của user sở hữu project
+     * @param uuidK8s UUID của project trong Kubernetes
+     * @throws Exception Nếu có lỗi khi xóa thư mục
+     */
+    private void deleteProjectDirectory(String username, String uuidK8s) throws Exception {
+        if (username == null || username.trim().isEmpty()) {
+            System.out.println("[deleteProjectDirectory] Username trống, bỏ qua xóa thư mục");
+            return;
+        }
+        if (uuidK8s == null || uuidK8s.trim().isEmpty()) {
+            System.out.println("[deleteProjectDirectory] UUID trống, bỏ qua xóa thư mục");
+            return;
+        }
+
+        // Lấy thông tin MASTER server
+        Optional<ServerEntity> masterServerOptional = serverRepository.findByRole("MASTER");
+        if (masterServerOptional.isEmpty()) {
+            System.err.println("[deleteProjectDirectory] Không tìm thấy server MASTER. Không thể xóa thư mục project.");
+            throw new RuntimeException("Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống.");
+        }
+
+        ServerEntity masterServer = masterServerOptional.get();
+        Session clusterSession = null;
+
+        try {
+            // Kết nối SSH tới MASTER server
+            JSch jsch = new JSch();
+            clusterSession = jsch.getSession(masterServer.getUsername(), masterServer.getIp(), masterServer.getPort());
+            clusterSession.setPassword(masterServer.getPassword());
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            clusterSession.setConfig(config);
+            clusterSession.setTimeout(7000);
+            clusterSession.connect();
+            System.out.println("[deleteProjectDirectory] Đã kết nối tới MASTER server");
+
+            // Xác định đường dẫn thư mục project: /home/<master_username>/uploads/<username>/<uuid_k8s>
+            String projectDir = String.format("/home/%s/uploads/%s/%s", 
+                    masterServer.getUsername(), 
+                    username, 
+                    uuidK8s);
+            
+            // Xóa thư mục project và tất cả nội dung bên trong
+            String deleteDirCmd = String.format("rm -rf '%s'", escapeSingleQuotes(projectDir));
+            System.out.println("[deleteProjectDirectory] Thực thi lệnh: " + deleteDirCmd);
+            String result = executeCommand(clusterSession, deleteDirCmd, true);
+            System.out.println("[deleteProjectDirectory] Kết quả xóa thư mục: " + result);
+            
+        } catch (Exception e) {
+            System.err.println("[deleteProjectDirectory] Lỗi khi xóa thư mục project: " + e.getMessage());
+            throw new RuntimeException("Không thể xóa thư mục project trên server: " + e.getMessage(), e);
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Helper method để escape single quotes trong shell command
+     * 
+     * @param input Chuỗi cần escape
+     * @return Chuỗi đã escape
+     */
+    private String escapeSingleQuotes(String input) {
+        return input.replace("'", "'\"'\"'");
     }
 
     /**
