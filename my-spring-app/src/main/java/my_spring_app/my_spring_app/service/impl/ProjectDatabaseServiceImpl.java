@@ -267,7 +267,7 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
                 "        storageClassName: local-path\n" +
                 "        resources:\n" +
                 "          requests:\n" +
-                "            storage: 2Gi\n";
+                "            storage: 1Gi\n";
     }
 
     /**
@@ -732,6 +732,27 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
                 } catch (Exception e) {
                     System.err.println("[deployDatabase] Lỗi khi import file SQL: " + e.getMessage());
                     System.err.println("[deployDatabase] WARNING: Import SQL thất bại nhưng database đã được tạo");
+                } finally {
+                    // Dọn dẹp file SQL và file nén đã upload
+                    try {
+                        String deleteSqlCmd = String.format("rm -f '%s' || true", escapeSingleQuotes(sqlFilePath));
+                        System.out.println("[deployDatabase] Dọn dẹp file SQL: " + deleteSqlCmd);
+                        executeCommand(masterSession, deleteSqlCmd, true);
+                    } catch (Exception cleanupEx) {
+                        System.err.println("[deployDatabase] Lỗi khi dọn dẹp file SQL (bỏ qua): " + cleanupEx.getMessage());
+                    }
+
+                    String sourcePath = projectEntity.getSourcePath();
+                    if (sourcePath != null && !sourcePath.trim().isEmpty()) {
+                        String trimmedSource = sourcePath.trim();
+                        try {
+                            String deleteZipCmd = String.format("rm -f '%s' || true", escapeSingleQuotes(trimmedSource));
+                            System.out.println("[deployDatabase] Dọn dẹp file nén đã upload: " + deleteZipCmd);
+                            executeCommand(masterSession, deleteZipCmd, true);
+                        } catch (Exception cleanupEx) {
+                            System.err.println("[deployDatabase] Lỗi khi dọn dẹp file nén (bỏ qua): " + cleanupEx.getMessage());
+                        }
+                    }
                 }
             } else if (sqlFilePath != null && "MONGODB".equals(databaseType)) {
                 // TODO: Xử lý import cho MongoDB

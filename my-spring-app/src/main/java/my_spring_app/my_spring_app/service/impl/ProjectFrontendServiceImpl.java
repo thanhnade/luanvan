@@ -790,6 +790,34 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
 
                 projectEntity.setDockerImage(imageTag); // Lưu image tag vào database
 
+                // Dọn dẹp: Xóa Docker image local sau khi push thành công
+                try {
+                    String rmiCmd = "docker rmi '" + escapeSingleQuotes(imageTag) + "' || true";
+                    System.out.println("[deployFrontend] Dọn dẹp Docker image: " + rmiCmd);
+                    executeCommand(session, rmiCmd, true);
+                    System.out.println("[deployFrontend] Đã dọn dẹp Docker image: " + imageTag);
+                } catch (Exception cleanupEx) {
+                    System.err.println("[deployFrontend] Lỗi khi dọn dẹp Docker image (bỏ qua): " + cleanupEx.getMessage());
+                }
+
+                // Dọn dẹp: Xóa thư mục mã nguồn đã upload và giải nén
+                try {
+                    String cleanupDirCmd = "rm -rf '" + escapeSingleQuotes(remoteBase) + "' || true";
+                    System.out.println("[deployFrontend] Dọn dẹp thư mục mã nguồn: " + cleanupDirCmd);
+                    executeCommand(session, cleanupDirCmd, true);
+                    System.out.println("[deployFrontend] Đã dọn dẹp thư mục mã nguồn: " + remoteBase);
+                } catch (Exception cleanupEx) {
+                    System.err.println("[deployFrontend] Lỗi khi dọn dẹp thư mục mã nguồn (bỏ qua): " + cleanupEx.getMessage());
+                }
+                try {
+                    String uploadsRoot = "/home/" + docker_server.getUsername() + "/uploads";
+                    String cleanupUploadsCmd = "rm -rf '" + escapeSingleQuotes(uploadsRoot) + "' || true";
+                    System.out.println("[deployFrontend] Dọn dẹp thư mục uploads: " + cleanupUploadsCmd);
+                    executeCommand(session, cleanupUploadsCmd, true);
+                } catch (Exception cleanupEx) {
+                    System.err.println("[deployFrontend] Lỗi khi dọn dẹp thư mục uploads (bỏ qua): " + cleanupEx.getMessage());
+                }
+
                 // Bước 5: Tạo YAML và apply lên Kubernetes cluster (MASTER server)
                 System.out.println("[deployFrontend] Chuyển sang MASTER server để upload/apply YAML: " + master_server.getIp() + ":" + master_server.getPort());
 
