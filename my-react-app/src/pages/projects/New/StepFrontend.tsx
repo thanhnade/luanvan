@@ -11,10 +11,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
 import { useAuth } from "@/contexts/AuthContext"
-import { deployFrontend, getProjectFrontends, checkDomainNameSystem, type FrontendInfo } from "@/lib/project-api"
+import { deployFrontend, getProjectFrontends, deleteProjectFrontend, checkDomainNameSystem, type FrontendInfo } from "@/lib/project-api"
 import { toast } from "sonner"
 
 const frontendSchema = z.object({
@@ -52,6 +53,7 @@ export function StepFrontend() {
   const [projectFrontends, setProjectFrontends] = useState<FrontendInfo[]>([])
   const [loadingFrontends, setLoadingFrontends] = useState(false)
   const [deletingFrontendId, setDeletingFrontendId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; type: "api" | "store"; storeIndex?: number } | null>(null)
   const [isCheckingDns, setIsCheckingDns] = useState(false)
   const [dnsStatus, setDnsStatus] = useState<"idle" | "valid" | "invalid">("idle")
   const [dnsMessage, setDnsMessage] = useState("")
@@ -138,27 +140,56 @@ export function StepFrontend() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // Xóa frontend
-  const handleDeleteFrontend = async (frontendId: number, frontendName: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa frontend "${frontendName}"?`)) {
+  // Mở modal xác nhận xóa frontend (từ API)
+  const handleDeleteFrontend = (frontendId: number, frontendName: string) => {
+    setDeleteTarget({ id: frontendId, name: frontendName, type: "api" })
+  }
+
+  // Mở modal xác nhận xóa frontend (từ store)
+  const handleDeleteFrontendFromStore = (index: number, frontendName: string) => {
+    setDeleteTarget({ id: -1, name: frontendName, type: "store", storeIndex: index })
+  }
+
+  // Xác nhận xóa frontend
+  const handleConfirmDeleteFrontend = async () => {
+    if (!deleteTarget) return
+
+    if (deleteTarget.type === "store" && deleteTarget.storeIndex !== undefined) {
+      // Xóa khỏi store (chưa deploy lên server)
+      removeFrontend(deleteTarget.storeIndex)
+      toast.success(`Đã xóa frontend "${deleteTarget.name}"`)
+      setDeleteTarget(null)
       return
     }
 
-    setDeletingFrontendId(frontendId)
+    // Xóa từ API (đã deploy lên server)
+    const currentProjectId = localStorage.getItem("currentProjectId") || projectId
+    if (!currentProjectId) {
+      toast.error("Không tìm thấy project ID")
+      setDeleteTarget(null)
+      return
+    }
+
+    setDeletingFrontendId(deleteTarget.id)
     try {
-      // TODO: Gọi API xóa frontend khi có API
-      // await deleteFrontend(frontendId)
+      // Gọi API xóa frontend
+      await deleteProjectFrontend(currentProjectId, deleteTarget.id)
       
-      // Tạm thời chỉ reload danh sách
-      await loadProjectFrontends()
-      
-      // Xóa khỏi store nếu có
-      const storeIndex = frontends.findIndex((f) => f.name === frontendName)
-      if (storeIndex !== -1) {
-        removeFrontend(storeIndex)
+      // Xóa khỏi store ngay lập tức (trước khi reload để đồng bộ với localStorage)
+      // Xóa tất cả các item trong store có cùng name
+      let foundIndex = frontends.findIndex((f) => f.name === deleteTarget.name)
+      while (foundIndex !== -1) {
+        removeFrontend(foundIndex)
+        // Lấy lại state từ store sau khi xóa
+        const updatedFrontends = useWizardStore.getState().frontends
+        foundIndex = updatedFrontends.findIndex((f) => f.name === deleteTarget.name)
       }
       
-      toast.success(`Đã xóa frontend "${frontendName}"`)
+      // Reload danh sách từ API để cập nhật giao diện
+      await loadProjectFrontends()
+      
+      toast.success(`Đã xóa frontend "${deleteTarget.name}"`)
+      setDeleteTarget(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa frontend")
       console.error(error)
@@ -389,12 +420,7 @@ export function StepFrontend() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => {
-                            if (confirm(`Bạn có chắc chắn muốn xóa frontend "${fe.name}"?`)) {
-                              removeFrontend(index)
-                              toast.success(`Đã xóa frontend "${fe.name}"`)
-                            }
-                          }}
+                          onClick={() => handleDeleteFrontendFromStore(index, fe.name)}
                           className="flex-shrink-0"
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
@@ -631,6 +657,34 @@ export function StepFrontend() {
           Thêm Frontend
         </Button>
       )}
+
+      {/* Dialog xác nhận xóa frontend */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xác nhận xóa frontend</DialogTitle>
+            <DialogDescription>
+              Bạn có chắc chắn muốn xóa frontend "{deleteTarget?.name}"? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deletingFrontendId !== null}
+            >
+              Hủy
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDeleteFrontend}
+              disabled={deletingFrontendId !== null}
+            >
+              {deletingFrontendId !== null ? "Đang xóa..." : "Xóa"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

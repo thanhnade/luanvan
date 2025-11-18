@@ -11,10 +11,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
 import { useAuth } from "@/contexts/AuthContext"
-import { getProjectDatabases, getProjectBackends, deployBackend, checkDomainNameSystem, type DatabaseInfo, type BackendInfo } from "@/lib/project-api"
+import { getProjectDatabases, getProjectBackends, deployBackend, deleteProjectBackend, checkDomainNameSystem, type DatabaseInfo, type BackendInfo } from "@/lib/project-api"
 import { toast } from "sonner"
 
 const backendSchema = z.object({
@@ -64,6 +65,7 @@ export function StepBackend() {
   const [isDeploying, setIsDeploying] = useState(false)
   const [showPasswords, setShowPasswords] = useState<Record<number, boolean>>({})
   const [deletingBackendId, setDeletingBackendId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; type: "api" | "store"; storeIndex?: number } | null>(null)
   const [isCheckingDns, setIsCheckingDns] = useState(false)
   const [dnsStatus, setDnsStatus] = useState<"idle" | "valid" | "invalid">("idle")
   const [dnsMessage, setDnsMessage] = useState("")
@@ -132,20 +134,56 @@ export function StepBackend() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // Xóa backend
-  const handleDeleteBackend = async (backendId: number, backendName: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa backend "${backendName}"?`)) {
+  // Mở modal xác nhận xóa backend (từ API)
+  const handleDeleteBackend = (backendId: number, backendName: string) => {
+    setDeleteTarget({ id: backendId, name: backendName, type: "api" })
+  }
+
+  // Mở modal xác nhận xóa backend (từ store)
+  const handleDeleteBackendFromStore = (index: number, backendName: string) => {
+    setDeleteTarget({ id: -1, name: backendName, type: "store", storeIndex: index })
+  }
+
+  // Xác nhận xóa backend
+  const handleConfirmDeleteBackend = async () => {
+    if (!deleteTarget) return
+
+    if (deleteTarget.type === "store" && deleteTarget.storeIndex !== undefined) {
+      // Xóa khỏi store (chưa deploy lên server)
+      removeBackend(deleteTarget.storeIndex)
+      toast.success(`Đã xóa backend "${deleteTarget.name}"`)
+      setDeleteTarget(null)
       return
     }
 
-    setDeletingBackendId(backendId)
+    // Xóa từ API (đã deploy lên server)
+    const currentProjectId = localStorage.getItem("currentProjectId") || projectId
+    if (!currentProjectId) {
+      toast.error("Không tìm thấy project ID")
+      setDeleteTarget(null)
+      return
+    }
+
+    setDeletingBackendId(deleteTarget.id)
     try {
-      // TODO: Gọi API xóa backend khi có API
-      // await deleteBackend(backendId)
+      // Gọi API xóa backend
+      await deleteProjectBackend(currentProjectId, deleteTarget.id)
       
-      // Tạm thời chỉ reload danh sách
+      // Xóa khỏi store ngay lập tức (trước khi reload để đồng bộ với localStorage)
+      // Xóa tất cả các item trong store có cùng name
+      let foundIndex = backends.findIndex((b) => b.name === deleteTarget.name)
+      while (foundIndex !== -1) {
+        removeBackend(foundIndex)
+        // Lấy lại state từ store sau khi xóa
+        const updatedBackends = useWizardStore.getState().backends
+        foundIndex = updatedBackends.findIndex((b) => b.name === deleteTarget.name)
+      }
+      
+      // Reload danh sách từ API để cập nhật giao diện
       await loadProjectBackends()
-      toast.success(`Đã xóa backend "${backendName}"`)
+      
+      toast.success(`Đã xóa backend "${deleteTarget.name}"`)
+      setDeleteTarget(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa backend")
       console.error(error)
@@ -518,10 +556,7 @@ export function StepBackend() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => {
-                            removeBackend(index)
-                            toast.success(`Đã xóa backend "${be.name}"`)
-                          }}
+                          onClick={() => handleDeleteBackendFromStore(index, be.name)}
                         >
                           <X className="w-4 h-4" />
                         </Button>
@@ -944,6 +979,34 @@ export function StepBackend() {
           Thêm Backend
         </Button>
       )}
+
+      {/* Dialog xác nhận xóa backend */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xác nhận xóa backend</DialogTitle>
+            <DialogDescription>
+              Bạn có chắc chắn muốn xóa backend "{deleteTarget?.name}"? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deletingBackendId !== null}
+            >
+              Hủy
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDeleteBackend}
+              disabled={deletingBackendId !== null}
+            >
+              {deletingBackendId !== null ? "Đang xóa..." : "Xóa"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

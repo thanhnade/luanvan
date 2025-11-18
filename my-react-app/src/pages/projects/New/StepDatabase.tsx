@@ -11,10 +11,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { HintBox } from "@/components/user/HintBox"
 import { useWizardStore } from "@/stores/wizard-store"
 import { useAuth } from "@/contexts/AuthContext"
-import { deployDatabase, getProjectDatabases, type DatabaseInfo } from "@/lib/project-api"
+import { deployDatabase, getProjectDatabases, deleteProjectDatabase, type DatabaseInfo } from "@/lib/project-api"
 import { toast } from "sonner"
 
 // Schema validation
@@ -44,6 +45,7 @@ export function StepDatabase() {
   const [loadingDatabases, setLoadingDatabases] = useState(false)
   const [showPasswords, setShowPasswords] = useState<Record<number, boolean>>({})
   const [deletingDatabaseId, setDeletingDatabaseId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; type: "api" | "store"; storeIndex?: number } | null>(null)
 
   const {
     register,
@@ -85,29 +87,92 @@ export function StepDatabase() {
     console.log("Databases đã thay đổi:", databases)
   }, [databases])
 
-  // Xóa database
-  const handleDeleteDatabase = async (databaseId: number, databaseName: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa database "${databaseName}"?`)) {
+  // Mở modal xác nhận xóa database (từ API)
+  const handleDeleteDatabase = (databaseId: number, databaseName: string) => {
+    setDeleteTarget({ id: databaseId, name: databaseName, type: "api" })
+  }
+
+  // Mở modal xác nhận xóa database (từ store)
+  const handleDeleteDatabaseFromStore = (index: number, databaseName: string) => {
+    setDeleteTarget({ id: -1, name: databaseName, type: "store", storeIndex: index })
+  }
+
+  // Xác nhận xóa database
+  const handleConfirmDeleteDatabase = async () => {
+    if (!deleteTarget) return
+
+    if (deleteTarget.type === "store" && deleteTarget.storeIndex !== undefined) {
+      // Xóa khỏi store (chưa deploy lên server)
+      removeDatabase(deleteTarget.storeIndex)
+      toast.success(`Đã xóa database "${deleteTarget.name}"`)
+      setDeleteTarget(null)
       return
     }
 
-    setDeletingDatabaseId(databaseId)
+    // Xóa từ API (đã deploy lên server)
+    const currentProjectId = localStorage.getItem("currentProjectId") || projectId
+    if (!currentProjectId) {
+      toast.error("Không tìm thấy project ID")
+      setDeleteTarget(null)
+      return
+    }
+
+    setDeletingDatabaseId(deleteTarget.id)
     try {
-      // TODO: Gọi API xóa database khi có API
-      // await deleteDatabase(databaseId)
+      // Gọi API xóa database
+      await deleteProjectDatabase(currentProjectId, deleteTarget.id)
       
-      // Tạm thời chỉ reload danh sách
-      await loadProjectDatabases()
+      // Reload danh sách từ API để lấy dữ liệu mới nhất
+      const apiResponse = await getProjectDatabases(currentProjectId)
+      setProjectDatabases(apiResponse.databases || [])
       
-      // Xóa khỏi store nếu có
-      const storeIndex = databases.findIndex(
-        (d) => d.name === databaseName || d.databaseName === databaseName
+      // Đồng bộ store với API response: xóa tất cả các item trong store không còn trong API
+      const apiDatabaseNames = new Set((apiResponse.databases || []).map(db => {
+        const name = (db.projectName || db.databaseName || "").toLowerCase().trim()
+        return name
+      }))
+      
+      // Tìm và xóa các item trong store không còn trong API
+      const storeDatabases = useWizardStore.getState().databases
+      const indexesToRemove: number[] = []
+      
+      storeDatabases.forEach((storeDb, index) => {
+        const storeDbName = (storeDb.name || storeDb.databaseName || "").toLowerCase().trim()
+        // Xóa nếu không còn trong API hoặc có cùng name với item đã xóa
+        if (!apiDatabaseNames.has(storeDbName) || storeDbName === deleteTarget.name.toLowerCase().trim()) {
+          indexesToRemove.push(index)
+        }
+      })
+      
+      // Xóa từ cuối lên để tránh index bị thay đổi
+      indexesToRemove.reverse().forEach(index => {
+        removeDatabase(index)
+      })
+      
+      // Đảm bảo xóa hết các item có cùng name với item đã xóa (xử lý trường hợp có nhiều item cùng name)
+      let foundIndex = useWizardStore.getState().databases.findIndex(
+        (d) => {
+          const dName = (d.name || "").toLowerCase().trim()
+          const dDbName = (d.databaseName || "").toLowerCase().trim()
+          const targetName = deleteTarget.name.toLowerCase().trim()
+          return dName === targetName || dDbName === targetName
+        }
       )
-      if (storeIndex !== -1) {
-        removeDatabase(storeIndex)
+      while (foundIndex !== -1) {
+        removeDatabase(foundIndex)
+        const updatedDatabases = useWizardStore.getState().databases
+        foundIndex = updatedDatabases.findIndex(
+          (d) => {
+            const dName = (d.name || "").toLowerCase().trim()
+            const dDbName = (d.databaseName || "").toLowerCase().trim()
+            const targetName = deleteTarget.name.toLowerCase().trim()
+            return dName === targetName || dDbName === targetName
+          }
+        )
       }
       
-      toast.success(`Đã xóa database "${databaseName}"`)
+      toast.success(`Đã xóa database "${deleteTarget.name}"`)
+      setDeleteTarget(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra khi xóa database")
       console.error(error)
@@ -333,12 +398,7 @@ export function StepDatabase() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => {
-                            if (confirm(`Bạn có chắc chắn muốn xóa database "${db.name}"?`)) {
-                              removeDatabase(index)
-                              toast.success(`Đã xóa database "${db.name}"`)
-                            }
-                          }}
+                          onClick={() => handleDeleteDatabaseFromStore(index, db.name)}
                           className="flex-shrink-0"
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
@@ -571,6 +631,34 @@ export function StepDatabase() {
           Thêm Database
         </Button>
       )}
+
+      {/* Dialog xác nhận xóa database */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xác nhận xóa database</DialogTitle>
+            <DialogDescription>
+              Bạn có chắc chắn muốn xóa database "{deleteTarget?.name}"? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deletingDatabaseId !== null}
+            >
+              Hủy
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDeleteDatabase}
+              disabled={deletingDatabaseId !== null}
+            >
+              {deletingDatabaseId !== null ? "Đang xóa..." : "Xóa"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
