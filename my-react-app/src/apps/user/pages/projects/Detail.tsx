@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { OverviewStats } from "@/components/common/StatsChart"
-import { HintBox } from "@/components/user/HintBox"
+import { HintBox } from "@/apps/user/components/HintBox"
 import { validateDNS, validateDockerImage, validateIP, validatePort, validateZipFile } from "@/lib/validators"
 import { toast } from "sonner"
 

@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom"
 import { ArrowLeft, ArrowRight } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Stepper } from "@/components/user/Stepper"
+import { Stepper } from "@/apps/user/components/Stepper"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { StepProjectInfo } from "./StepProjectInfo"
@@ -9,7 +9,7 @@ import { StepDatabase } from "./StepDatabase"
 import { StepBackend } from "./StepBackend"
 import { StepFrontend } from "./StepFrontend"
 import { StepSummary } from "./StepSummary"
-import { useWizardStore } from "@/stores/wizard-store"
+import { useWizardStore } from "@/apps/user/stores/wizard-store"
 import { toast } from "sonner"
 
 const steps = ["Thông tin Project", "Database", "Backend", "Frontend", "Tổng quan"]

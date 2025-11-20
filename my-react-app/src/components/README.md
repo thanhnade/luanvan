@@ -63,7 +63,7 @@ import { EmptyState } from "@/components/common/EmptyState"
 ```
 
 **Dùng ở:**
-- `pages/projects/List.tsx` - Khi không có project
+- `apps/user/pages/projects/List.tsx` - Khi không có project
 
 ---
 
@@ -90,7 +90,7 @@ Thanh điều hướng ở đầu trang.
 Hiển thị tiến trình các bước trong wizard.
 
 **Dùng ở:**
-- `pages/projects/New/index.tsx` - Wizard tạo project
+- `apps/user/pages/projects/New/index.tsx` - Wizard tạo project
 
 **Ví dụ:**
 ```
@@ -103,9 +103,9 @@ Hiển thị tiến trình các bước trong wizard.
 Hộp hướng dẫn ở mỗi bước của wizard.
 
 **Dùng ở:**
-- `pages/projects/New/StepDatabase.tsx`
-- `pages/projects/New/StepBackend.tsx`
-- `pages/projects/New/StepFrontend.tsx`
+- `apps/user/pages/projects/New/StepDatabase.tsx`
+- `apps/user/pages/projects/New/StepBackend.tsx`
+- `apps/user/pages/projects/New/StepFrontend.tsx`
 
 **Ví dụ:**
 ```typescript
@@ -134,7 +134,7 @@ Hộp hướng dẫn ở mỗi bước của wizard.
 Ví dụ: `/projects` → Trang danh sách
 
 ### Bước 2: Tìm file Page
-Mở `pages/projects/List.tsx`
+Mở `apps/user/pages/projects/List.tsx`
 
 ### Bước 3: Xem import
 ```typescript
@@ -172,10 +172,10 @@ Mở `components/common/EmptyState.tsx` để xem code
 4. Import: `import { LoadingSpinner } from "@/components/common"`
 
 ### Component User mới
-1. Tạo file trong `components/user/`
-2. Ví dụ: `components/user/ProjectCard.tsx`
-3. Export trong `components/user/index.ts`
-4. Import: `import { ProjectCard } from "@/components/user"`
+1. Tạo file trong `apps/user/components/`
+2. Ví dụ: `apps/user/components/ProjectCard.tsx`
+3. Export trong `apps/user/components/index.ts`
+4. Import: `import { ProjectCard } from "@/apps/user/components"`
 
 ---
 
@@ -194,7 +194,7 @@ Mở `components/common/EmptyState.tsx` để xem code
 ### Ví dụ 1: Sử dụng Button trong List.tsx
 
 ```typescript
-// pages/projects/List.tsx
+// apps/user/pages/projects/List.tsx
 import { Button } from "@/components/ui/button"
 
 <Button onClick={() => navigate("/projects/new")}>
@@ -205,7 +205,7 @@ import { Button } from "@/components/ui/button"
 ### Ví dụ 2: Sử dụng EmptyState trong List.tsx
 
 ```typescript
-// pages/projects/List.tsx
+// apps/user/pages/projects/List.tsx
 import { EmptyState } from "@/components/common/EmptyState"
 
 {projects.length === 0 && (
@@ -221,8 +221,8 @@ import { EmptyState } from "@/components/common/EmptyState"
 ### Ví dụ 3: Sử dụng Stepper trong New/index.tsx
 
 ```typescript
-// pages/projects/New/index.tsx
-import { Stepper } from "@/components/user/Stepper"
+// apps/user/pages/projects/New/index.tsx
+import { Stepper } from "@/apps/user/components/Stepper"
 
 <Stepper steps={steps} currentStep={currentStep} />
 ```
