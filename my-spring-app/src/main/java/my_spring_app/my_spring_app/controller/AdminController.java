@@ -1,6 +1,7 @@
 package my_spring_app.my_spring_app.controller;
 
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectListResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.service.AdminService;
@@ -33,6 +34,12 @@ public class AdminController {
     @GetMapping("/user-services/user-summary")
     public ResponseEntity<AdminUserProjectSummaryResponse> getUserSummary(@RequestParam Long userId) {
         AdminUserProjectSummaryResponse response = adminService.getUserProjectSummary(userId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/user-services/user-projects")
+    public ResponseEntity<AdminUserProjectListResponse> getUserProjects(@RequestParam Long userId) {
+        AdminUserProjectListResponse response = adminService.getUserProjectsDetail(userId);
         return ResponseEntity.ok(response);
     }
 }

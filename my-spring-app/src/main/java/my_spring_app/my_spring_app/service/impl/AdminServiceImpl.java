@@ -4,6 +4,7 @@ import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectListResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
@@ -92,6 +93,50 @@ public class AdminServiceImpl implements AdminService {
         response.setProjectCount(userProjects.size());
         response.setCpuCores(roundToThreeDecimals(usageMap.totalUsage().getCpuCores()));
         response.setMemoryGb(roundToThreeDecimals(bytesToGb(usageMap.totalUsage().getMemoryBytes())));
+        return response;
+    }
+
+    @Override
+    public AdminUserProjectListResponse getUserProjectsDetail(Long userId) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy user với id " + userId));
+        if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
+            throw new RuntimeException("User không hợp lệ hoặc không có role USER");
+        }
+
+        List<ProjectEntity> projects = projectRepository.findAll().stream()
+                .filter(project -> project.getUser() != null && userId.equals(project.getUser().getId()))
+                .toList();
+
+        Set<String> namespaces = collectNamespaces(projects);
+        ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
+
+        List<AdminUserProjectListResponse.ProjectUsageItem> items = new ArrayList<>();
+        for (ProjectEntity project : projects) {
+            AdminUserProjectListResponse.ProjectUsageItem item = new AdminUserProjectListResponse.ProjectUsageItem();
+            item.setProjectId(project.getId());
+            item.setProjectName(project.getProjectName());
+            item.setDatabaseCount(project.getDatabases() != null ? project.getDatabases().size() : 0);
+            item.setBackendCount(project.getBackends() != null ? project.getBackends().size() : 0);
+            item.setFrontendCount(project.getFrontends() != null ? project.getFrontends().size() : 0);
+
+            ResourceUsage usage = null;
+            if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
+                usage = usageMap.namespaceUsage().get(project.getNamespace().trim());
+            }
+            double cpu = usage != null ? usage.getCpuCores() : 0.0;
+            double memoryGb = usage != null ? bytesToGb(usage.getMemoryBytes()) : 0.0;
+
+            item.setCpuCores(roundToThreeDecimals(cpu));
+            item.setMemoryGb(roundToThreeDecimals(memoryGb));
+            items.add(item);
+        }
+
+        AdminUserProjectListResponse response = new AdminUserProjectListResponse();
+        response.setUserId(user.getId());
+        response.setFullname(user.getFullname());
+        response.setUsername(user.getUsername());
+        response.setProjects(items);
         return response;
     }
 
