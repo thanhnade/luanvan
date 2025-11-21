@@ -1,6 +1,7 @@
 package my_spring_app.my_spring_app.controller;
 
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -20,5 +21,10 @@ public class AdminController {
         AdminOverviewResponse response = adminService.getOverview();
         return ResponseEntity.ok(response);
     }
-}
 
+    @GetMapping("/user-services/users")
+    public ResponseEntity<AdminUserUsageResponse> getUserUsage() {
+        AdminUserUsageResponse response = adminService.getUserResourceOverview();
+        return ResponseEntity.ok(response);
+    }
+}

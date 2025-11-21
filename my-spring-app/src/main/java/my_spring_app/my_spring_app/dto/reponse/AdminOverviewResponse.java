@@ -11,6 +11,6 @@ public class AdminOverviewResponse {
     private Long totalUsers;
     private Long totalProjects;
     private Double totalCpuCores;
-    private Long totalMemoryBytes;
+    private Double totalMemoryGb;
 }
 

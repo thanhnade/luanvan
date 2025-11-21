@@ -1,12 +1,13 @@
 package my_spring_app.my_spring_app.service.impl;
 
-import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ServerEntity;
+import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectRepository;
 import my_spring_app.my_spring_app.repository.ServerRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
@@ -17,19 +18,23 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
 /**
- * Dịch vụ dành cho admin dùng để tổng hợp các số liệu thống kê
- * (số user, số project, tổng CPU, tổng Memory) phục vụ hiển thị ở dashboard.
- * Hiện tại số liệu CPU/Memory được lấy thông qua lệnh kubectl.
+ * Dịch vụ phục vụ dashboard admin: thống kê tổng quan và usage của từng user.
  */
 @Service
 @Transactional
 public class AdminServiceImpl implements AdminService {
+
+    private static final String ROLE_USER = "USER";
+    private static final double BYTES_PER_GB = 1024d * 1024 * 1024;
 
     @Autowired
     private UserRepository userRepository;
@@ -42,100 +47,178 @@ public class AdminServiceImpl implements AdminService {
 
     @Override
     public AdminOverviewResponse getOverview() {
-        // Đếm tổng số user với role USER
-        long totalUsers = userRepository.countByRole("USER");
+        // 1. Tổng số user có role USER
+        long totalUsers = userRepository.countByRole(ROLE_USER);
 
-        // Lấy toàn bộ project để vừa đếm số lượng vừa trích xuất namespace
+        // 2. Lấy toàn bộ project vừa để đếm vừa để thu thập namespace
         List<ProjectEntity> projects = projectRepository.findAll();
         long totalProjects = projects.size();
 
-        // Thu thập danh sách namespace (mỗi project tương ứng 1 namespace)
+        // 3. Gom các namespace đang được sử dụng
+        Set<String> namespaces = collectNamespaces(projects);
+
+        // 4. Chạy kubectl top pods để lấy tổng CPU/Memory
+        ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
+
+        AdminOverviewResponse response = new AdminOverviewResponse();
+        response.setTotalUsers(totalUsers);
+        response.setTotalProjects(totalProjects);
+        response.setTotalCpuCores(usageMap.totalUsage().getCpuCores());
+        response.setTotalMemoryGb(bytesToGb(usageMap.totalUsage().getMemoryBytes()));
+        return response;
+    }
+
+    @Override
+    public AdminUserUsageResponse getUserResourceOverview() {
+        // 1. Chuẩn bị map chứa thống kê cho từng user có role USER
+        List<UserEntity> users = userRepository.findAll();
+        Map<Long, AdminUserUsageResponse.UserUsageItem> userStats = new HashMap<>();
+        for (UserEntity user : users) {
+            if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
+                continue;
+            }
+            AdminUserUsageResponse.UserUsageItem item = new AdminUserUsageResponse.UserUsageItem();
+            item.setFullname(user.getFullname());
+            item.setUsername(user.getUsername());
+            item.setTier(user.getTier());
+            item.setProjectCount(0);
+            item.setCpuCores(0.0);
+            item.setMemoryGb(0.0);
+            userStats.put(user.getId(), item);
+        }
+
+        // 2. Với mỗi project, tăng số dự án và ghi lại namespace thuộc user nào
+        List<ProjectEntity> projects = projectRepository.findAll();
+        Set<String> namespaces = new HashSet<>();
+        Map<String, Long> namespaceOwner = new HashMap<>();
+        for (ProjectEntity project : projects) {
+            UserEntity owner = project.getUser();
+            if (owner == null) {
+                continue;
+            }
+            AdminUserUsageResponse.UserUsageItem item = userStats.get(owner.getId());
+            if (item == null) {
+                continue;
+            }
+            item.setProjectCount(item.getProjectCount() + 1);
+
+            if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
+                String namespace = project.getNamespace().trim();
+                namespaces.add(namespace);
+                namespaceOwner.put(namespace, owner.getId());
+            }
+        }
+
+        // 3. Lấy metrics từng namespace rồi cộng ngược vào user tương ứng
+        ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
+        usageMap.namespaceUsage().forEach((namespace, usage) -> {
+            Long ownerId = namespaceOwner.get(namespace);
+            if (ownerId == null) {
+                return;
+            }
+            AdminUserUsageResponse.UserUsageItem item = userStats.get(ownerId);
+            if (item != null) {
+                item.setCpuCores(item.getCpuCores() + usage.getCpuCores());
+                item.setMemoryGb(item.getMemoryGb() + bytesToGb(usage.getMemoryBytes()));
+            }
+        });
+
+        AdminUserUsageResponse response = new AdminUserUsageResponse();
+        response.setUsers(new ArrayList<>(userStats.values()));
+        return response;
+    }
+
+    private Set<String> collectNamespaces(List<ProjectEntity> projects) {
         Set<String> namespaces = new HashSet<>();
         for (ProjectEntity project : projects) {
             if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
                 namespaces.add(project.getNamespace().trim());
             }
         }
-
-        double totalCpuCores = 0.0;
-        long totalMemoryBytes = 0L;
-
-        if (!namespaces.isEmpty()) {
-            // Lấy server MASTER để chạy kubectl
-            ServerEntity masterServer = serverRepository.findByRole("MASTER")
-                    .orElseThrow(() -> new RuntimeException(
-                            "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
-
-            Session clusterSession = null;
-            try {
-                JSch jsch = new JSch();
-                clusterSession = jsch.getSession(
-                        masterServer.getUsername(),
-                        masterServer.getIp(),
-                        masterServer.getPort());
-                clusterSession.setPassword(masterServer.getPassword());
-                Properties config = new Properties();
-                config.put("StrictHostKeyChecking", "no");
-                clusterSession.setConfig(config);
-                clusterSession.setTimeout(7000);
-                clusterSession.connect();
-                System.out.println("[AdminService] Đã kết nối MASTER server để lấy metrics (kubectl top pods)");
-
-                for (String namespace : namespaces) {
-                    try {
-                        // kubectl top pods trả về CPU/Memory cho từng pod trong namespace
-                        String cmd = String.format("kubectl top pods -n %s --no-headers", namespace);
-                        System.out.println("[AdminService] Thực thi: " + cmd);
-                        String output = executeCommand(clusterSession, cmd, true);
-                        if (output == null || output.trim().isEmpty()) {
-                            continue;
-                        }
-                        String[] lines = output.split("\\r?\\n");
-                        for (String line : lines) {
-                            line = line.trim();
-                            if (line.isEmpty()) continue;
-                            String[] parts = line.split("\\s+");
-                            if (parts.length < 3) continue;
-                            String cpuStr = parts[1];      // CPU(cores)
-                            String memStr = parts[2];      // MEMORY(bytes)
-                            try {
-                                totalCpuCores += parseCpuCores(cpuStr);
-                                totalMemoryBytes += parseMemoryBytes(memStr);
-                            } catch (NumberFormatException ex) {
-                                System.err.println("[AdminService] Không thể parse metrics từ dòng: " + line);
-                            }
-                        }
-                    } catch (Exception e) {
-                        System.err.println("[AdminService] Lỗi khi lấy metrics cho namespace " + namespace + ": " + e.getMessage());
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi kết nối MASTER server để lấy metrics: " + e.getMessage());
-            } finally {
-                if (clusterSession != null && clusterSession.isConnected()) {
-                    clusterSession.disconnect();
-                }
-            }
-        }
-
-        AdminOverviewResponse response = new AdminOverviewResponse();
-        response.setTotalUsers(totalUsers);
-        response.setTotalProjects(totalProjects);
-        response.setTotalCpuCores(totalCpuCores);
-        response.setTotalMemoryBytes(totalMemoryBytes);
-
-        return response;
+        return namespaces;
     }
 
     /**
-     * Thực thi lệnh qua SSH và trả về output
+     * Chạy kubectl top pods cho danh sách namespace để thu thập CPU/Memory.
+     * Kết quả trả về cả tổng usage và usage theo từng namespace.
      */
+    private ResourceUsageMap calculateUsagePerNamespace(Set<String> namespaces) {
+        ResourceUsage totalUsage = new ResourceUsage();
+        Map<String, ResourceUsage> namespaceUsage = new HashMap<>();
+
+        if (namespaces.isEmpty()) {
+            return new ResourceUsageMap(totalUsage, namespaceUsage);
+        }
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session clusterSession = null;
+        try {
+            clusterSession = createSession(masterServer);
+            for (String namespace : namespaces) {
+                try {
+                    String cmd = String.format("kubectl top pods -n %s --no-headers", namespace);
+                    String output = executeCommand(clusterSession, cmd, true);
+                    if (output == null || output.trim().isEmpty()) {
+                        continue;
+                    }
+                    String[] lines = output.split("\\r?\\n");
+                    for (String line : lines) {
+                        line = line.trim();
+                        if (line.isEmpty()) {
+                            continue;
+                        }
+                        String[] parts = line.split("\\s+");
+                        if (parts.length < 3) {
+                            continue;
+                        }
+                        try {
+                            double cpu = parseCpuCores(parts[1]);
+                            long memory = parseMemoryBytes(parts[2]);
+
+                            totalUsage.addCpu(cpu).addMemory(memory);
+                            namespaceUsage
+                                    .computeIfAbsent(namespace, key -> new ResourceUsage())
+                                    .addCpu(cpu)
+                                    .addMemory(memory);
+                        } catch (NumberFormatException ex) {
+                            System.err.println("[AdminService] Không thể parse metrics từ dòng: " + line);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("[AdminService] Lỗi khi lấy metrics cho namespace " + namespace + ": " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[AdminService] Lỗi kết nối MASTER server để lấy metrics: " + e.getMessage());
+        } finally {
+            if (clusterSession != null && clusterSession.isConnected()) {
+                clusterSession.disconnect();
+            }
+        }
+
+        return new ResourceUsageMap(totalUsage, namespaceUsage);
+    }
+
+    private Session createSession(ServerEntity server) throws Exception {
+        JSch jsch = new JSch();
+        Session session = jsch.getSession(server.getUsername(), server.getIp(), server.getPort());
+        session.setPassword(server.getPassword());
+        Properties config = new Properties();
+        config.put("StrictHostKeyChecking", "no");
+        session.setConfig(config);
+        session.setTimeout(7000);
+        session.connect();
+        return session;
+    }
+
     private String executeCommand(Session session, String command, boolean ignoreNonZeroExit) throws Exception {
         ChannelExec channelExec = null;
 
         try {
-            Channel channel = session.openChannel("exec");
-            channelExec = (ChannelExec) channel;
+            channelExec = (ChannelExec) session.openChannel("exec");
             channelExec.setCommand(command);
             channelExec.setErrStream(System.err);
 
@@ -161,11 +244,7 @@ public class AdminServiceImpl implements AdminService {
                     break;
                 }
 
-                try {
-                    Thread.sleep(100);
-                } catch (Exception e) {
-                    // ignore
-                }
+                Thread.sleep(100);
             }
 
             int exitStatus = channelExec.getExitStatus();
@@ -189,9 +268,6 @@ public class AdminServiceImpl implements AdminService {
         }
     }
 
-    /**
-     * Parse CPU string từ kubectl (ví dụ: \"10m\" hoặc \"0.1\") sang số cores
-     */
     private double parseCpuCores(String cpuStr) {
         if (cpuStr == null || cpuStr.isEmpty()) return 0.0;
         cpuStr = cpuStr.trim().toLowerCase();
@@ -202,9 +278,6 @@ public class AdminServiceImpl implements AdminService {
         return Double.parseDouble(cpuStr);
     }
 
-    /**
-     * Parse Memory string từ kubectl (ví dụ: \"50Mi\", \"1024Ki\") sang bytes
-     */
     private long parseMemoryBytes(String memStr) {
         if (memStr == null || memStr.isEmpty()) return 0L;
         memStr = memStr.trim().toUpperCase();
@@ -237,6 +310,36 @@ public class AdminServiceImpl implements AdminService {
 
         double value = Double.parseDouble(numericPart);
         return (long) (value * factor);
+    }
+
+    private double bytesToGb(long bytes) {
+        return bytes / BYTES_PER_GB;
+    }
+
+    private static class ResourceUsage {
+        private double cpuCores = 0.0;
+        private long memoryBytes = 0L;
+
+        public ResourceUsage addCpu(double cores) {
+            this.cpuCores += cores;
+            return this;
+        }
+
+        public ResourceUsage addMemory(long bytes) {
+            this.memoryBytes += bytes;
+            return this;
+        }
+
+        public double getCpuCores() {
+            return cpuCores;
+        }
+
+        public long getMemoryBytes() {
+            return memoryBytes;
+        }
+    }
+
+    private record ResourceUsageMap(ResourceUsage totalUsage, Map<String, ResourceUsage> namespaceUsage) {
     }
 }
 
