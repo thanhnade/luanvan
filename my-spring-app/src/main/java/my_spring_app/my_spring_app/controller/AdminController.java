@@ -1,12 +1,14 @@
 package my_spring_app.my_spring_app.controller;
 
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -25,6 +27,12 @@ public class AdminController {
     @GetMapping("/user-services/users")
     public ResponseEntity<AdminUserUsageResponse> getUserUsage() {
         AdminUserUsageResponse response = adminService.getUserResourceOverview();
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/user-services/user-summary")
+    public ResponseEntity<AdminUserProjectSummaryResponse> getUserSummary(@RequestParam Long userId) {
+        AdminUserProjectSummaryResponse response = adminService.getUserProjectSummary(userId);
         return ResponseEntity.ok(response);
     }
 }

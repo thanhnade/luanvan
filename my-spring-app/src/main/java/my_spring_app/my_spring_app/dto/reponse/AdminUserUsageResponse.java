@@ -16,6 +16,7 @@ public class AdminUserUsageResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class UserUsageItem {
+        private Long id;
         private String fullname;
         private String username;
         private int projectCount;

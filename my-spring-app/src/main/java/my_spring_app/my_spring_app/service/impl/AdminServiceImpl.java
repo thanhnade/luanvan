@@ -4,6 +4,7 @@ import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ServerEntity;
@@ -63,8 +64,34 @@ public class AdminServiceImpl implements AdminService {
         AdminOverviewResponse response = new AdminOverviewResponse();
         response.setTotalUsers(totalUsers);
         response.setTotalProjects(totalProjects);
-        response.setTotalCpuCores(usageMap.totalUsage().getCpuCores());
-        response.setTotalMemoryGb(bytesToGb(usageMap.totalUsage().getMemoryBytes()));
+        response.setTotalCpuCores(roundToThreeDecimals(usageMap.totalUsage().getCpuCores()));
+        response.setTotalMemoryGb(roundToThreeDecimals(bytesToGb(usageMap.totalUsage().getMemoryBytes())));
+        return response;
+    }
+
+    @Override
+    public AdminUserProjectSummaryResponse getUserProjectSummary(Long userId) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy user với id " + userId));
+        if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
+            throw new RuntimeException("User không hợp lệ hoặc không có role USER");
+        }
+
+        List<ProjectEntity> projects = projectRepository.findAll();
+        List<ProjectEntity> userProjects = projects.stream()
+                .filter(project -> project.getUser() != null && userId.equals(project.getUser().getId()))
+                .toList();
+
+        Set<String> namespaces = collectNamespaces(userProjects);
+        ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
+
+        AdminUserProjectSummaryResponse response = new AdminUserProjectSummaryResponse();
+        response.setUserId(user.getId());
+        response.setFullname(user.getFullname());
+        response.setUsername(user.getUsername());
+        response.setProjectCount(userProjects.size());
+        response.setCpuCores(roundToThreeDecimals(usageMap.totalUsage().getCpuCores()));
+        response.setMemoryGb(roundToThreeDecimals(bytesToGb(usageMap.totalUsage().getMemoryBytes())));
         return response;
     }
 
@@ -78,6 +105,7 @@ public class AdminServiceImpl implements AdminService {
                 continue;
             }
             AdminUserUsageResponse.UserUsageItem item = new AdminUserUsageResponse.UserUsageItem();
+            item.setId(user.getId());
             item.setFullname(user.getFullname());
             item.setUsername(user.getUsername());
             item.setTier(user.getTier());
@@ -121,6 +149,11 @@ public class AdminServiceImpl implements AdminService {
                 item.setCpuCores(item.getCpuCores() + usage.getCpuCores());
                 item.setMemoryGb(item.getMemoryGb() + bytesToGb(usage.getMemoryBytes()));
             }
+        });
+
+        userStats.values().forEach(item -> {
+            item.setCpuCores(roundToThreeDecimals(item.getCpuCores()));
+            item.setMemoryGb(roundToThreeDecimals(item.getMemoryGb()));
         });
 
         AdminUserUsageResponse response = new AdminUserUsageResponse();
@@ -314,6 +347,10 @@ public class AdminServiceImpl implements AdminService {
 
     private double bytesToGb(long bytes) {
         return bytes / BYTES_PER_GB;
+    }
+
+    private double roundToThreeDecimals(double value) {
+        return Math.round(value * 1000d) / 1000d;
     }
 
     private static class ResourceUsage {
