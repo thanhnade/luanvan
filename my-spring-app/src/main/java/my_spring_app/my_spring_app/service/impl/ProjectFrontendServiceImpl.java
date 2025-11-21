@@ -595,6 +595,7 @@ public class ProjectFrontendServiceImpl implements ProjectFrontendService {
         projectEntity.setFrameworkType(framework);
         projectEntity.setDeploymentType(request.getDeploymentType().toUpperCase());
         projectEntity.setStatus("BUILDING"); // Trạng thái ban đầu là BUILDING
+        projectEntity.setReplicas(1); // Mặc định deploy với 1 replica
         projectEntity.setProject(project);
         // Lưu UUID vào entity để truy vết và tránh trùng tên resource trên K8s
         projectEntity.setUuid_k8s(uuid_k8s);

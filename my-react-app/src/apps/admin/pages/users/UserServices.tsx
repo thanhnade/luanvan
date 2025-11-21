@@ -14,6 +14,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Loader2,
   ArrowLeft,
   Users,
@@ -43,6 +50,11 @@ export function UserServices() {
   const [selectedProject, setSelectedProject] = useState<AdminUserProject | null>(null);
   const [projectDetail, setProjectDetail] = useState<AdminProjectDetail | null>(null);
   const [projectDetailLoading, setProjectDetailLoading] = useState(false);
+  const [componentDetail, setComponentDetail] = useState<{
+    item: AdminProjectComponent;
+    type: "databases" | "backends" | "frontends";
+  } | null>(null);
+  const [isComponentDialogOpen, setComponentDialogOpen] = useState(false);
 
   const [view, setView] = useState<ViewState>("users");
   const [currentPage, setCurrentPage] = useState(1);
@@ -257,11 +269,14 @@ export function UserServices() {
 
   const handleComponentAction = (
     component: AdminProjectComponent,
-    action: "pause" | "start" | "delete" | "view"
+    action: "pause" | "start" | "delete" | "view",
+    resourceType?: "databases" | "backends" | "frontends"
   ) => {
     if (action === "view") {
-      toast.info(`Xem chi tiết ${component.name}`);
-      // TODO: Implement view detail functionality
+      if (resourceType) {
+        setComponentDetail({ item: component, type: resourceType });
+        setComponentDialogOpen(true);
+      }
       return;
     }
     const actionLabel =
@@ -269,7 +284,14 @@ export function UserServices() {
     toast.success(`Đã ${actionLabel} ${component.name}`);
   };
 
-  const renderComponents = (items: AdminProjectComponent[]) => {
+  const renderComponents = (items: AdminProjectComponent[], type: "databases" | "backends" | "frontends") => {
+    const metricLabel = (metric: "cpu" | "memory", item: AdminProjectComponent) => {
+      if (type === "backends" || type === "frontends" || item.projectName) {
+        return metric === "cpu" ? "CPU đang dùng" : "Memory đang dùng";
+      }
+      return metric === "cpu" ? "CPU" : "Memory";
+    };
+
     if (items.length === 0) {
       return <p className="text-sm text-muted-foreground">Chưa có thành phần nào.</p>;
     }
@@ -300,23 +322,23 @@ export function UserServices() {
                   </Button>
                 }
               >
-                <DropdownMenuItem onClick={() => handleComponentAction(item, "view")}>
+                <DropdownMenuItem onClick={() => handleComponentAction(item, "view", type)}>
                   <Eye className="mr-2 h-4 w-4" />
                   Xem chi tiết
                 </DropdownMenuItem>
                 {item.status === "running" && (
-                  <DropdownMenuItem onClick={() => handleComponentAction(item, "pause")}>
+                  <DropdownMenuItem onClick={() => handleComponentAction(item, "pause", type)}>
                     <PauseCircle className="mr-2 h-4 w-4" />
                     Tạm dừng
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => handleComponentAction(item, "start")}>
+                <DropdownMenuItem onClick={() => handleComponentAction(item, "start", type)}>
                   <PlayCircle className="mr-2 h-4 w-4" />
                   Chạy
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="text-destructive"
-                  onClick={() => handleComponentAction(item, "delete")}
+                  onClick={() => handleComponentAction(item, "delete", type)}
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Xóa
@@ -325,12 +347,14 @@ export function UserServices() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm text-muted-foreground">
               <div className="flex items-center justify-between">
-                <span>CPU</span>
-                <span className="text-foreground font-medium">{item.cpu}</span>
+                <span>{metricLabel("cpu", item)}</span>
+                <span className="text-foreground font-medium">{item.cpuUsed ?? item.cpu}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Memory</span>
-                <span className="text-foreground font-medium">{item.memory}</span>
+                <span>{metricLabel("memory", item)}</span>
+                <span className="text-foreground font-medium">
+                  {item.memoryUsed ?? item.memory}
+                </span>
               </div>
               {item.replicas && (
                 <div className="flex items-center justify-between">
@@ -342,6 +366,91 @@ export function UserServices() {
           </Card>
         ))}
       </div>
+    );
+  };
+
+  const renderComponentDetailDialog = () => {
+    const type = componentDetail?.type;
+    const detail = componentDetail?.item;
+    const isDatabase = type === "databases";
+    const detailRow = (label: string, value?: string | number) => (
+      <div className="rounded-lg border bg-muted/30 p-3">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-sm font-medium text-foreground">{value ?? "-"}</p>
+      </div>
+    );
+
+    return (
+      <Dialog
+        open={isComponentDialogOpen && !!detail}
+        onOpenChange={(open) => {
+          setComponentDialogOpen(open);
+          if (!open) {
+            setComponentDetail(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl w-[90vw]">
+          <DialogHeader>
+            <DialogTitle>
+              {type === "backends"
+                ? "Chi tiết Backend"
+                : type === "frontends"
+                  ? "Chi tiết Frontend"
+                  : "Chi tiết Database"}
+            </DialogTitle>
+            <DialogDescription>
+              Thông tin cấu hình và tài nguyên của thành phần đang chọn.
+            </DialogDescription>
+          </DialogHeader>
+          {detail && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-lg font-semibold text-foreground">{detail.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Thuộc dự án {detail.projectName ?? selectedProject?.name ?? ""}
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    detail.status === "running"
+                      ? "success"
+                      : detail.status === "error"
+                        ? "destructive"
+                        : "secondary"
+                  }
+                >
+                  {detail.status}
+                </Badge>
+              </div>
+              {isDatabase ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}
+                  {detailRow("IP", detail.ip)}
+                  {detailRow("Port", detail.port?.toString())}
+                  {detailRow("Database name", detail.databaseName)}
+                  {detailRow("Username", detail.dbUsername)}
+                  {detailRow("Password", detail.dbPassword)}
+                  {detailRow("CPU đang dùng", detail.cpuUsed ?? detail.cpu)}
+                  {detailRow("Memory đang dùng", detail.memoryUsed ?? detail.memory)}
+                  {detailRow("Pod đang chạy trên node", detail.node)}
+                  {detailRow("PVC", detail.pvc)}
+                  {detailRow("PV", detail.pv)}
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}
+                  {detailRow("CPU đang dùng", detail.cpuUsed ?? detail.cpu)}
+                  {detailRow("Memory đang dùng", detail.memoryUsed ?? detail.memory)}
+                  {detailRow("Replicas", detail.replicas)}
+                  {detailRow("Trạng thái", detail.status)}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     );
   };
 
@@ -570,13 +679,13 @@ export function UserServices() {
                     </TabsTrigger>
                   </TabsList>
                   <TabsContent value="databases" className="pt-4">
-                    {renderComponents(projectDetail.databases)}
+                    {renderComponents(projectDetail.databases, "databases")}
                   </TabsContent>
                   <TabsContent value="backends" className="pt-4">
-                    {renderComponents(projectDetail.backends)}
+                    {renderComponents(projectDetail.backends, "backends")}
                   </TabsContent>
                   <TabsContent value="frontends" className="pt-4">
-                    {renderComponents(projectDetail.frontends)}
+                    {renderComponents(projectDetail.frontends, "frontends")}
                   </TabsContent>
                 </Tabs>
               </CardContent>
@@ -584,6 +693,7 @@ export function UserServices() {
           )}
         </div>
       )}
+      {renderComponentDetailDialog()}
     </div>
   );
 }

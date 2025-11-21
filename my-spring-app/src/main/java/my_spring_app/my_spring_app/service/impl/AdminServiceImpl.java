@@ -4,10 +4,14 @@ import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.AdminOverviewResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminProjectResourceDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectListResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
+import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
+import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
+import my_spring_app.my_spring_app.entity.ProjectFrontendEntity;
 import my_spring_app.my_spring_app.entity.ServerEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectRepository;
@@ -35,24 +39,32 @@ import java.util.Set;
 @Transactional
 public class AdminServiceImpl implements AdminService {
 
+    // Role chuẩn dùng để lọc user thuộc nhóm khách hàng (không phải admin/devops)
     private static final String ROLE_USER = "USER";
+    // Hằng số quy đổi bytes -> GB (1024^3) để sử dụng ở nhiều nơi
     private static final double BYTES_PER_GB = 1024d * 1024 * 1024;
 
+    // Repository thao tác bảng user
     @Autowired
     private UserRepository userRepository;
 
+    // Repository thao tác bảng project
     @Autowired
     private ProjectRepository projectRepository;
 
+    // Repository lấy thông tin server (MASTER) để chạy kubectl
     @Autowired
     private ServerRepository serverRepository;
 
+    /**
+     * Tổng hợp số lượng user, project và tài nguyên CPU/Memory đang sử dụng trên toàn hệ thống.
+     */
     @Override
     public AdminOverviewResponse getOverview() {
-        // 1. Tổng số user có role USER
+        // 1. Đếm tổng user có role USER
         long totalUsers = userRepository.countByRole(ROLE_USER);
 
-        // 2. Lấy toàn bộ project vừa để đếm vừa để thu thập namespace
+        // 2. Lấy toàn bộ project để đếm và gom namespace
         List<ProjectEntity> projects = projectRepository.findAll();
         long totalProjects = projects.size();
 
@@ -62,6 +74,7 @@ public class AdminServiceImpl implements AdminService {
         // 4. Chạy kubectl top pods để lấy tổng CPU/Memory
         ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
 
+        // 5. Mapping dữ liệu trả về
         AdminOverviewResponse response = new AdminOverviewResponse();
         response.setTotalUsers(totalUsers);
         response.setTotalProjects(totalProjects);
@@ -70,6 +83,9 @@ public class AdminServiceImpl implements AdminService {
         return response;
     }
 
+    /**
+     * Lấy tổng quan usage (CPU/Memory) của các project thuộc một user cụ thể.
+     */
     @Override
     public AdminUserProjectSummaryResponse getUserProjectSummary(Long userId) {
         UserEntity user = userRepository.findById(userId)
@@ -86,6 +102,7 @@ public class AdminServiceImpl implements AdminService {
         Set<String> namespaces = collectNamespaces(userProjects);
         ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
 
+        // 4. Build response
         AdminUserProjectSummaryResponse response = new AdminUserProjectSummaryResponse();
         response.setUserId(user.getId());
         response.setFullname(user.getFullname());
@@ -96,6 +113,9 @@ public class AdminServiceImpl implements AdminService {
         return response;
     }
 
+    /**
+     * Lấy danh sách project chi tiết cho một user (số resource theo từng project).
+     */
     @Override
     public AdminUserProjectListResponse getUserProjectsDetail(Long userId) {
         UserEntity user = userRepository.findById(userId)
@@ -113,6 +133,7 @@ public class AdminServiceImpl implements AdminService {
 
         List<AdminUserProjectListResponse.ProjectUsageItem> items = new ArrayList<>();
         for (ProjectEntity project : projects) {
+            // Tạo item thống kê cho từng project
             AdminUserProjectListResponse.ProjectUsageItem item = new AdminUserProjectListResponse.ProjectUsageItem();
             item.setProjectId(project.getId());
             item.setProjectName(project.getProjectName());
@@ -132,6 +153,7 @@ public class AdminServiceImpl implements AdminService {
             items.add(item);
         }
 
+        // 4. Trả về dữ liệu
         AdminUserProjectListResponse response = new AdminUserProjectListResponse();
         response.setUserId(user.getId());
         response.setFullname(user.getFullname());
@@ -140,11 +162,141 @@ public class AdminServiceImpl implements AdminService {
         return response;
     }
 
+    /**
+     * Lấy chi tiết tài nguyên (CPU/Memory) của một project, bao gồm từng Database/Backend/Frontend.
+     */
+    @Override
+    public AdminProjectResourceDetailResponse getProjectResourceDetail(Long projectId) {
+        System.out.println("[AdminService] Bắt đầu lấy metrics cho projectId=" + projectId);
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy project với id " + projectId));
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project chưa được cấu hình namespace, không thể lấy metrics");
+        }
+        namespace = namespace.trim();
+
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        AdminProjectResourceDetailResponse response = new AdminProjectResourceDetailResponse();
+        response.setProjectId(project.getId());               // Lưu lại id để FE biết project nào
+        response.setProjectName(project.getProjectName());    // Lưu lại tên hiển thị
+
+        // Các list lưu usage chi tiết theo từng nhóm thành phần
+        List<AdminProjectResourceDetailResponse.ComponentUsage> databaseUsages = new ArrayList<>();
+        List<AdminProjectResourceDetailResponse.ComponentUsage> backendUsages = new ArrayList<>();
+        List<AdminProjectResourceDetailResponse.ComponentUsage> frontendUsages = new ArrayList<>();
+
+        double totalCpu = 0.0;       // Tổng CPU cộng dồn
+        double totalMemoryGb = 0.0;  // Tổng Memory cộng dồn
+
+        Session session = null;      // Session SSH tới MASTER để chạy kubectl
+        try {
+            session = createSession(masterServer);
+            System.out.println("[AdminService] Đã kết nối MASTER server để lấy metrics project=" + project.getProjectName());
+
+            if (project.getDatabases() != null) {
+                for (ProjectDatabaseEntity database : project.getDatabases()) {
+                    if (database.getUuid_k8s() == null || database.getUuid_k8s().trim().isEmpty()) {
+                        continue;
+                    }
+                    String appLabel = "db-" + database.getUuid_k8s().trim(); // Tên app label khi deploy database
+                    System.out.println("[AdminService] Đang lấy metrics database app=" + appLabel);
+                    ResourceUsage usage = fetchUsageForApp(session, namespace, appLabel);
+                    double cpu = usage.getCpuCores();
+                    double memoryGb = bytesToGb(usage.getMemoryBytes());
+
+                    databaseUsages.add(new AdminProjectResourceDetailResponse.ComponentUsage(
+                            database.getId(),
+                            database.getProjectName(),
+                            database.getStatus(),
+                            roundToThreeDecimals(cpu),
+                            roundToThreeDecimals(memoryGb)
+                    ));
+
+                    totalCpu += cpu;
+                    totalMemoryGb += memoryGb;
+                }
+            }
+
+            if (project.getBackends() != null) {
+                for (ProjectBackendEntity backend : project.getBackends()) {
+                    if (backend.getUuid_k8s() == null || backend.getUuid_k8s().trim().isEmpty()) {
+                        continue;
+                    }
+                    String appLabel = "app-" + backend.getUuid_k8s().trim(); // Các backend dùng prefix app-
+                    System.out.println("[AdminService] Đang lấy metrics backend app=" + appLabel);
+                    ResourceUsage usage = fetchUsageForApp(session, namespace, appLabel);
+                    double cpu = usage.getCpuCores();
+                    double memoryGb = bytesToGb(usage.getMemoryBytes());
+
+                    backendUsages.add(new AdminProjectResourceDetailResponse.ComponentUsage(
+                            backend.getId(),
+                            backend.getProjectName(),
+                            backend.getStatus(),
+                            roundToThreeDecimals(cpu),
+                            roundToThreeDecimals(memoryGb)
+                    ));
+
+                    totalCpu += cpu;
+                    totalMemoryGb += memoryGb;
+                }
+            }
+
+            if (project.getFrontends() != null) {
+                for (ProjectFrontendEntity frontend : project.getFrontends()) {
+                    if (frontend.getUuid_k8s() == null || frontend.getUuid_k8s().trim().isEmpty()) {
+                        continue;
+                    }
+                    String appLabel = "app-" + frontend.getUuid_k8s().trim(); // Frontend cũng dùng prefix app-
+                    System.out.println("[AdminService] Đang lấy metrics frontend app=" + appLabel);
+                    ResourceUsage usage = fetchUsageForApp(session, namespace, appLabel);
+                    double cpu = usage.getCpuCores();
+                    double memoryGb = bytesToGb(usage.getMemoryBytes());
+
+                    frontendUsages.add(new AdminProjectResourceDetailResponse.ComponentUsage(
+                            frontend.getId(),
+                            frontend.getProjectName(),
+                            frontend.getStatus(),
+                            roundToThreeDecimals(cpu),
+                            roundToThreeDecimals(memoryGb)
+                    ));
+
+                    totalCpu += cpu;
+                    totalMemoryGb += memoryGb;
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy metrics cho project: " + e.getMessage(), e);
+        } finally {
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+                System.out.println("[AdminService] Đã đóng kết nối MASTER server sau khi lấy metrics project=" + project.getProjectName());
+            }
+        }
+
+        // 4. Tổng hợp dữ liệu trả về
+        response.setDatabases(databaseUsages);
+        response.setBackends(backendUsages);
+        response.setFrontends(frontendUsages);
+        response.setTotalCpuCores(roundToThreeDecimals(totalCpu));
+        response.setTotalMemoryGb(roundToThreeDecimals(totalMemoryGb));
+        System.out.println("[AdminService] Hoàn tất metrics project=" + project.getProjectName()
+                + ", totalCpu=" + response.getTotalCpuCores()
+                + ", totalMemoryGb=" + response.getTotalMemoryGb());
+        return response;
+    }
+
+    /**
+     * Lấy usage tổng quan cho từng user (số project, CPU, Memory).
+     */
     @Override
     public AdminUserUsageResponse getUserResourceOverview() {
         // 1. Chuẩn bị map chứa thống kê cho từng user có role USER
         List<UserEntity> users = userRepository.findAll();
-        Map<Long, AdminUserUsageResponse.UserUsageItem> userStats = new HashMap<>();
+        Map<Long, AdminUserUsageResponse.UserUsageItem> userStats = new HashMap<>(); // Map userId -> usage tổng hợp
         for (UserEntity user : users) {
             if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
                 continue;
@@ -162,8 +314,8 @@ public class AdminServiceImpl implements AdminService {
 
         // 2. Với mỗi project, tăng số dự án và ghi lại namespace thuộc user nào
         List<ProjectEntity> projects = projectRepository.findAll();
-        Set<String> namespaces = new HashSet<>();
-        Map<String, Long> namespaceOwner = new HashMap<>();
+        Set<String> namespaces = new HashSet<>();          // Tập namespace cần truy vấn metrics
+        Map<String, Long> namespaceOwner = new HashMap<>(); // Map namespace -> userId sở hữu
         for (ProjectEntity project : projects) {
             UserEntity owner = project.getUser();
             if (owner == null) {
@@ -206,13 +358,19 @@ public class AdminServiceImpl implements AdminService {
         return response;
     }
 
+    /**
+     * Gom danh sách namespace từ list project để tránh gọi lặp lại.
+     */
     private Set<String> collectNamespaces(List<ProjectEntity> projects) {
+        // 1. Khởi tạo set để loại bỏ trùng
         Set<String> namespaces = new HashSet<>();
+        // 2. Duyệt từng project và thêm namespace hợp lệ
         for (ProjectEntity project : projects) {
             if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
                 namespaces.add(project.getNamespace().trim());
             }
         }
+        // 3. Trả về kết quả
         return namespaces;
     }
 
@@ -235,6 +393,7 @@ public class AdminServiceImpl implements AdminService {
         Session clusterSession = null;
         try {
             clusterSession = createSession(masterServer);
+            // 1. Lặp qua từng namespace để gọi kubectl top
             for (String namespace : namespaces) {
                 try {
                     String cmd = String.format("kubectl top pods -n %s --no-headers", namespace);
@@ -243,6 +402,7 @@ public class AdminServiceImpl implements AdminService {
                         continue;
                     }
                     String[] lines = output.split("\\r?\\n");
+                    // 2. Parse từng dòng output
                     for (String line : lines) {
                         line = line.trim();
                         if (line.isEmpty()) {
@@ -280,7 +440,47 @@ public class AdminServiceImpl implements AdminService {
         return new ResourceUsageMap(totalUsage, namespaceUsage);
     }
 
+    /**
+     * Lấy metrics CPU/Memory cho một nhóm pod theo label "app".
+     * Hàm này giúp tái sử dụng logic kubectl top pods -l app=<label>.
+     */
+    private ResourceUsage fetchUsageForApp(Session session, String namespace, String appLabel) {
+        ResourceUsage usage = new ResourceUsage();
+        if (session == null || namespace == null || namespace.isBlank() || appLabel == null || appLabel.isBlank()) {
+            return usage;
+        }
+        try {
+            String cmd = String.format("kubectl top pods -n %s -l app=%s --no-headers", namespace, appLabel);
+            String output = executeCommand(session, cmd, true);
+            if (output == null || output.trim().isEmpty()) {
+                return usage;
+            }
+            String[] lines = output.split("\\r?\\n");
+            // 1. Lặp qua từng pod thỏa label
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] parts = line.split("\\s+");
+                if (parts.length < 3) {
+                    continue;
+                }
+                double cpu = parseCpuCores(parts[1]);
+                long memory = parseMemoryBytes(parts[2]);
+                usage.addCpu(cpu).addMemory(memory);
+            }
+        } catch (Exception e) {
+            System.err.println("[AdminService] Không thể lấy metrics cho app=" + appLabel + ": " + e.getMessage());
+        }
+        return usage;
+    }
+
+    /**
+     * Mở SSH session tới server MASTER để chạy lệnh kubectl.
+     */
     private Session createSession(ServerEntity server) throws Exception {
+        // 1. Tạo session với thông tin đăng nhập server
         JSch jsch = new JSch();
         Session session = jsch.getSession(server.getUsername(), server.getIp(), server.getPort());
         session.setPassword(server.getPassword());
@@ -288,7 +488,7 @@ public class AdminServiceImpl implements AdminService {
         config.put("StrictHostKeyChecking", "no");
         session.setConfig(config);
         session.setTimeout(7000);
-        session.connect();
+        session.connect(); // 2. Kết nối thực tế
         return session;
     }
 
@@ -307,6 +507,7 @@ public class AdminServiceImpl implements AdminService {
             byte[] buffer = new byte[1024];
 
             while (true) {
+                // 1. Đọc liên tục đến khi lệnh kết thúc
                 while (inputStream.available() > 0) {
                     int bytesRead = inputStream.read(buffer, 0, 1024);
                     if (bytesRead < 0) {
@@ -346,6 +547,9 @@ public class AdminServiceImpl implements AdminService {
         }
     }
 
+    /**
+     * Parse chuỗi CPU từ kubectl (ví dụ: 15m, 0.2) về đơn vị cores (double).
+     */
     private double parseCpuCores(String cpuStr) {
         if (cpuStr == null || cpuStr.isEmpty()) return 0.0;
         cpuStr = cpuStr.trim().toLowerCase();
@@ -356,6 +560,9 @@ public class AdminServiceImpl implements AdminService {
         return Double.parseDouble(cpuStr);
     }
 
+    /**
+     * Parse chuỗi Memory (Mi, Gi, Ki, ...) từ kubectl và trả về bytes.
+     */
     private long parseMemoryBytes(String memStr) {
         if (memStr == null || memStr.isEmpty()) return 0L;
         memStr = memStr.trim().toUpperCase();
@@ -386,21 +593,27 @@ public class AdminServiceImpl implements AdminService {
             numericPart = memStr.substring(0, memStr.length() - 1);
         }
 
+        // 2. Chuyển về bytes theo đơn vị tương ứng
         double value = Double.parseDouble(numericPart);
         return (long) (value * factor);
     }
 
     private double bytesToGb(long bytes) {
+        // 1 GB = 1024^3 bytes
         return bytes / BYTES_PER_GB;
     }
 
     private double roundToThreeDecimals(double value) {
+        // Giữ tối đa 3 chữ số thập phân để hiển thị gọn hơn
         return Math.round(value * 1000d) / 1000d;
     }
 
+    /**
+     * DTO nội bộ lưu trữ CPU/Memory dạng số để dễ cộng dồn.
+     */
     private static class ResourceUsage {
-        private double cpuCores = 0.0;
-        private long memoryBytes = 0L;
+        private double cpuCores = 0.0; // Tổng CPU (cores)
+        private long memoryBytes = 0L; // Tổng Memory (bytes)
 
         public ResourceUsage addCpu(double cores) {
             this.cpuCores += cores;
@@ -421,6 +634,7 @@ public class AdminServiceImpl implements AdminService {
         }
     }
 
+    // record gom tổng usage và usage theo từng namespace để tái sử dụng ở nhiều hàm
     private record ResourceUsageMap(ResourceUsage totalUsage, Map<String, ResourceUsage> namespaceUsage) {
     }
 }

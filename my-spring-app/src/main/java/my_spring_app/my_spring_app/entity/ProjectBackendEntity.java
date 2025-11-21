@@ -52,6 +52,9 @@ public class ProjectBackendEntity {
     @Column(name = "uuid_k8s", nullable = false)
     private String uuid_k8s; // uuid short id for k8s
 
+    @Column(name = "replicas", nullable = true)
+    private Integer replicas;
+
     @Column(name = "source_path", nullable = true)
     private String sourcePath;
 

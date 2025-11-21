@@ -185,6 +185,17 @@ export type AdminProjectComponent = {
   cpu: string;
   memory: string;
   replicas?: string;
+  projectName?: string;
+  cpuUsed?: string;
+  memoryUsed?: string;
+  ip?: string;
+  port?: number;
+  databaseName?: string;
+  dbUsername?: string;
+  dbPassword?: string;
+  node?: string;
+  pvc?: string;
+  pv?: string;
 };
 
 export type AdminProjectDetail = {
