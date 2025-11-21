@@ -22,8 +22,14 @@ export function Login() {
   useEffect(() => {
     if (!authLoading) {
       const savedUsername = localStorage.getItem("username")
+      const savedRole = localStorage.getItem("role")
       if (savedUsername) {
-        navigate("/projects", { replace: true })
+        // Chuyển hướng theo role
+        if (savedRole === "ADMIN") {
+          navigate("/admin/overview", { replace: true })
+        } else {
+          navigate("/projects", { replace: true })
+        }
       }
     }
   }, [authLoading, navigate])

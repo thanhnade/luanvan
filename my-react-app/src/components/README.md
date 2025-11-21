@@ -122,7 +122,7 @@ Hộp hướng dẫn ở mỗi bước của wizard.
 
 **Dự kiến:**
 - `AdminNavbar.tsx` - Navbar riêng cho admin
-- `UserManagement.tsx` - Quản lý user
+- `UserServices.tsx` - Quản lý dịch vụ người dùng
 - `SystemSettings.tsx` - Cài đặt hệ thống
 - ...
 

@@ -28,11 +28,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const savedFullname = localStorage.getItem("fullname")
     const savedUsername = localStorage.getItem("username")
+    const savedRole = localStorage.getItem("role")
+    const savedTier = localStorage.getItem("tier")
     
     if (savedFullname && savedUsername) {
       setUser({
         fullname: savedFullname,
         username: savedUsername,
+        role: savedRole || undefined,
+        tier: savedTier || undefined,
       })
     }
     setIsLoading(false)
@@ -45,6 +49,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Lưu thông tin user vào localStorage
       localStorage.setItem("fullname", response.fullname)
       localStorage.setItem("username", response.username)
+      if (response.role) {
+        localStorage.setItem("role", response.role)
+      }
+      if (response.tier) {
+        localStorage.setItem("tier", response.tier)
+      }
       
       // Cập nhật state
       setUser({
@@ -54,8 +64,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tier: response.tier,
       })
       
-      // Chuyển hướng đến trang quản lý projects
-      navigate("/projects")
+      // Chuyển hướng theo role
+      // Nếu là ADMIN thì chuyển đến admin dashboard, ngược lại chuyển đến projects
+      if (response.role === "ADMIN") {
+        navigate("/admin/overview")
+      } else {
+        navigate("/projects")
+      }
     } catch (error) {
       throw error
     }
