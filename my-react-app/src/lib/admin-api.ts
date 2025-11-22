@@ -24,6 +24,8 @@ import type {
   AdminUserUsageResponse,
   ClusterCapacityResponse,
   ClusterAllocatableResponse,
+  AdminUserProjectSummaryResponse,
+  AdminUserProjectListResponse,
 } from "@/types/admin";
 
 // Mock data - Tạo nhiều server để test
@@ -1838,6 +1840,18 @@ export const adminAPI = {
   },
   getClusterAllocatable: async (): Promise<ClusterAllocatableResponse> => {
     const response = await api.get("/admin/cluster/allocatable");
+    return response.data;
+  },
+  getUserSummary: async (userId: string): Promise<AdminUserProjectSummaryResponse> => {
+    const response = await api.get("/admin/user-services/user-summary", {
+      params: { userId },
+    });
+    return response.data;
+  },
+  getUserProjectsDetail: async (userId: string): Promise<AdminUserProjectListResponse> => {
+    const response = await api.get("/admin/user-services/user-projects", {
+      params: { userId },
+    });
     return response.data;
   },
 };

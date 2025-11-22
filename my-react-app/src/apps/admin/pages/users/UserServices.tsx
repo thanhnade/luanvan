@@ -9,6 +9,8 @@ import type {
   AdminProjectComponent,
   AdminOverviewResponse,
   ClusterCapacityResponse,
+  AdminUserProjectSummaryResponse,
+  AdminUserProjectListResponse,
 } from "@/types/admin";
 import { ResourceTable } from "../../components/ResourceTable";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +54,9 @@ export function UserServices() {
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [projects, setProjects] = useState<AdminUserProject[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  const [userSummary, setUserSummary] = useState<AdminUserProjectSummaryResponse | null>(null);
+  const [userProjectsDetail, setUserProjectsDetail] = useState<AdminUserProjectListResponse | null>(null);
+  const [userViewClusterCapacity, setUserViewClusterCapacity] = useState<ClusterCapacityResponse | null>(null);
 
   const [selectedProject, setSelectedProject] = useState<AdminUserProject | null>(null);
   const [projectDetail, setProjectDetail] = useState<AdminProjectDetail | null>(null);
@@ -126,10 +131,39 @@ export function UserServices() {
       const loadProjects = async () => {
         try {
           setProjectsLoading(true);
-          const data = await adminAPI.getUserProjects(user.id);
-          setProjects(data);
+          
+          // Gọi 3 API song song
+          const [summaryData, projectsData, capacityData] = await Promise.all([
+            adminAPI.getUserSummary(user.id),
+            adminAPI.getUserProjectsDetail(user.id),
+            adminAPI.getClusterCapacity(),
+          ]);
+          
+          setUserSummary(summaryData);
+          setUserProjectsDetail(projectsData);
+          setUserViewClusterCapacity(capacityData);
+          
+          // Map dữ liệu từ API response sang format AdminUserProject
+          const mappedProjects: AdminUserProject[] = projectsData.projects.map((project) => ({
+            id: String(project.projectId),
+            name: project.projectName,
+            databaseCount: project.databaseCount,
+            backendCount: project.backendCount,
+            frontendCount: project.frontendCount,
+            cpuUsage: {
+              used: project.cpuCores,
+              total: capacityData.totalCpuCores,
+            },
+            memoryUsage: {
+              used: project.memoryGb,
+              total: capacityData.totalMemoryGb,
+            },
+          }));
+          
+          setProjects(mappedProjects);
         } catch (error) {
           toast.error("Không thể tải danh sách dự án của người dùng");
+          console.error("Error loading user projects:", error);
         } finally {
           setProjectsLoading(false);
         }
@@ -140,9 +174,37 @@ export function UserServices() {
       const loadProjectDetail = async () => {
         try {
           setProjectsLoading(true);
-          const projectData = await adminAPI.getUserProjects(user.id);
-          setProjects(projectData);
-          const project = projectData.find((p) => p.id === projectId);
+          
+          // Gọi 3 API song song
+          const [summaryData, projectsData, capacityData] = await Promise.all([
+            adminAPI.getUserSummary(user.id),
+            adminAPI.getUserProjectsDetail(user.id),
+            adminAPI.getClusterCapacity(),
+          ]);
+          
+          setUserSummary(summaryData);
+          setUserProjectsDetail(projectsData);
+          setUserViewClusterCapacity(capacityData);
+          
+          // Map dữ liệu từ API response sang format AdminUserProject
+          const mappedProjects: AdminUserProject[] = projectsData.projects.map((project) => ({
+            id: String(project.projectId),
+            name: project.projectName,
+            databaseCount: project.databaseCount,
+            backendCount: project.backendCount,
+            frontendCount: project.frontendCount,
+            cpuUsage: {
+              used: project.cpuCores,
+              total: capacityData.totalCpuCores,
+            },
+            memoryUsage: {
+              used: project.memoryGb,
+              total: capacityData.totalMemoryGb,
+            },
+          }));
+          
+          setProjects(mappedProjects);
+          const project = mappedProjects.find((p) => p.id === projectId);
           if (project) {
             setSelectedProject(project);
             setProjectDetailLoading(true);
@@ -152,6 +214,7 @@ export function UserServices() {
           }
         } catch (error) {
           toast.error("Không thể tải chi tiết dự án");
+          console.error("Error loading project detail:", error);
         } finally {
           setProjectsLoading(false);
         }
@@ -168,11 +231,40 @@ export function UserServices() {
     setSearchParams({ view: "projects", userId: user.id });
     try {
       setProjectsLoading(true);
-      const data = await adminAPI.getUserProjects(user.id);
-      setProjects(data);
+      
+      // Gọi 3 API song song
+      const [summaryData, projectsData, capacityData] = await Promise.all([
+        adminAPI.getUserSummary(user.id),
+        adminAPI.getUserProjectsDetail(user.id),
+        adminAPI.getClusterCapacity(),
+      ]);
+      
+      setUserSummary(summaryData);
+      setUserProjectsDetail(projectsData);
+      setUserViewClusterCapacity(capacityData);
+      
+      // Map dữ liệu từ API response sang format AdminUserProject
+      const mappedProjects: AdminUserProject[] = projectsData.projects.map((project) => ({
+        id: String(project.projectId),
+        name: project.projectName,
+        databaseCount: project.databaseCount,
+        backendCount: project.backendCount,
+        frontendCount: project.frontendCount,
+        cpuUsage: {
+          used: project.cpuCores,
+          total: capacityData.totalCpuCores, // Sử dụng cluster capacity
+        },
+        memoryUsage: {
+          used: project.memoryGb,
+          total: capacityData.totalMemoryGb, // Sử dụng cluster capacity
+        },
+      }));
+      
+      setProjects(mappedProjects);
     } catch (error) {
       toast.error("Không thể tải danh sách dự án của người dùng");
       setProjects([]);
+      console.error("Error loading user projects:", error);
     } finally {
       setProjectsLoading(false);
     }
@@ -205,6 +297,9 @@ export function UserServices() {
     setSelectedUser(null);
     setSelectedProject(null);
     setProjectDetail(null);
+    setUserSummary(null);
+    setUserProjectsDetail(null);
+    setUserViewClusterCapacity(null);
     setView("users");
     setSearchParams({});
   };
@@ -280,15 +375,13 @@ export function UserServices() {
       key: "cpuUsage",
       label: "CPU",
       align: "center" as const,
-      render: (project: AdminUserProject) =>
-        `${project.cpuUsage.used}/${project.cpuUsage.total} cores`,
+      render: (project: AdminUserProject) => `${project.cpuUsage.used} cores`,
     },
     {
       key: "memoryUsage",
       label: "Memory",
       align: "center" as const,
-      render: (project: AdminUserProject) =>
-        `${project.memoryUsage.used}/${project.memoryUsage.total} GB`,
+      render: (project: AdminUserProject) => `${project.memoryUsage.used} GB`,
     },
   ];
 
@@ -584,27 +677,33 @@ export function UserServices() {
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Quay lại danh sách người dùng
               </Button>
-              <h2 className="text-3xl font-semibold text-foreground">{selectedUser.name}</h2>
-              <p className="text-sm text-muted-foreground">{selectedUser.username}</p>
+              <h2 className="text-3xl font-semibold text-foreground">
+                {userSummary?.fullname ?? userProjectsDetail?.fullname ?? selectedUser.name}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {userSummary?.username ?? userProjectsDetail?.username ?? selectedUser.username}
+              </p>
             </div>
             <Card className="border shadow-sm">
               <CardContent className="flex gap-6 py-4 px-6 text-sm">
                 <div>
                   <p className="text-muted-foreground">CPU đang dùng</p>
                   <p className="text-xl font-semibold text-foreground">
-                    {selectedUser.cpuUsage.used}/{selectedUser.cpuUsage.total} cores
+                    {userSummary?.cpuCores ?? selectedUser.cpuUsage.used}/
+                    {userViewClusterCapacity?.totalCpuCores ?? selectedUser.cpuUsage.total} cores
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Memory đang dùng</p>
                   <p className="text-xl font-semibold text-foreground">
-                    {selectedUser.memoryUsage.used}/{selectedUser.memoryUsage.total} GB
+                    {userSummary?.memoryGb ?? selectedUser.memoryUsage.used}/
+                    {userViewClusterCapacity?.totalMemoryGb ?? selectedUser.memoryUsage.total} GB
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Số dự án</p>
                   <p className="text-xl font-semibold text-foreground">
-                    {selectedUser.projectCount}
+                    {userSummary?.projectCount ?? selectedUser.projectCount}
                   </p>
                 </div>
               </CardContent>

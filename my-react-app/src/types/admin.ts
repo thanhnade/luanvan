@@ -259,3 +259,27 @@ export type ClusterAllocatableResponse = {
   totalMemoryGb: number;
 };
 
+export type AdminUserProjectSummaryResponse = {
+  userId: number;
+  fullname: string;
+  username: string;
+  projectCount: number;
+  cpuCores: number;
+  memoryGb: number;
+};
+
+export type AdminUserProjectListResponse = {
+  userId: number;
+  fullname: string;
+  username: string;
+  projects: Array<{
+    projectId: number;
+    projectName: string;
+    databaseCount: number;
+    backendCount: number;
+    frontendCount: number;
+    cpuCores: number;
+    memoryGb: number;
+  }>;
+};
+
