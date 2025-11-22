@@ -8,6 +8,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -68,6 +69,12 @@ public class AdminController {
     @GetMapping("/database/detail")
     public ResponseEntity<AdminDatabaseDetailResponse> getDatabaseDetail(@RequestParam Long databaseId) {
         AdminDatabaseDetailResponse response = adminService.getDatabaseDetail(databaseId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/backend/detail")
+    public ResponseEntity<AdminBackendDetailResponse> getBackendDetail(@RequestParam Long backendId) {
+        AdminBackendDetailResponse response = adminService.getBackendDetail(backendId);
         return ResponseEntity.ok(response);
     }
 }

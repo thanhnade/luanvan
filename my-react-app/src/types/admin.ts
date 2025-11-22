@@ -335,3 +335,30 @@ export type AdminDatabaseDetailResponse = {
   pvNode?: string;
 };
 
+export type AdminBackendDetailResponse = {
+  backendId: number;
+  projectName: string;
+  deploymentType: string;
+  frameworkType: string;
+  domainNameSystem?: string;
+  dockerImage?: string;
+  databaseIp?: string;
+  databasePort?: number;
+  databaseName?: string;
+  databaseUsername?: string;
+  databasePassword?: string;
+  deploymentName?: string;
+  replicas?: number;
+  podName?: string;
+  podNode?: string;
+  podStatus?: string;
+  serviceName?: string;
+  serviceType?: string;
+  servicePort?: string;
+  ingressName?: string;
+  ingressHosts?: string;
+  ingressAddress?: string;
+  ingressPort?: string;
+  ingressClass?: string;
+};
+

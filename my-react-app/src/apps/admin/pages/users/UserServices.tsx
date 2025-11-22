@@ -13,6 +13,7 @@ import type {
   AdminUserProjectListResponse,
   AdminProjectResourceDetailResponse,
   AdminDatabaseDetailResponse,
+  AdminBackendDetailResponse,
 } from "@/types/admin";
 import { ResourceTable } from "../../components/ResourceTable";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +77,8 @@ export function UserServices() {
   const [isComponentDialogOpen, setComponentDialogOpen] = useState(false);
   const [databaseDetail, setDatabaseDetail] = useState<AdminDatabaseDetailResponse | null>(null);
   const [databaseDetailLoading, setDatabaseDetailLoading] = useState(false);
+  const [backendDetail, setBackendDetail] = useState<AdminBackendDetailResponse | null>(null);
+  const [backendDetailLoading, setBackendDetailLoading] = useState(false);
 
   const [view, setView] = useState<ViewState>("users");
   const [currentPage, setCurrentPage] = useState(1);
@@ -487,10 +490,11 @@ export function UserServices() {
         setComponentDetail({ item: component, type: resourceType });
         setComponentDialogOpen(true);
         
-        // Nếu là database, gọi API để lấy chi tiết
+        // Gọi API để lấy chi tiết tùy theo loại
         if (resourceType === "databases") {
           try {
             setDatabaseDetailLoading(true);
+            setBackendDetail(null);
             const detail = await adminAPI.getDatabaseDetail(component.id);
             setDatabaseDetail(detail);
           } catch (error) {
@@ -500,8 +504,22 @@ export function UserServices() {
           } finally {
             setDatabaseDetailLoading(false);
           }
+        } else if (resourceType === "backends") {
+          try {
+            setBackendDetailLoading(true);
+            setDatabaseDetail(null);
+            const detail = await adminAPI.getBackendDetail(component.id);
+            setBackendDetail(detail);
+          } catch (error) {
+            toast.error("Không thể tải chi tiết backend");
+            console.error("Error loading backend detail:", error);
+            setBackendDetail(null);
+          } finally {
+            setBackendDetailLoading(false);
+          }
         } else {
           setDatabaseDetail(null);
+          setBackendDetail(null);
         }
       }
       return;
@@ -600,6 +618,7 @@ export function UserServices() {
     const type = componentDetail?.type;
     const detail = componentDetail?.item;
     const isDatabase = type === "databases";
+    const isBackend = type === "backends";
     const detailRow = (label: string, value?: string | number) => (
       <div className="rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/50">
         <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
@@ -635,6 +654,7 @@ export function UserServices() {
           if (!open) {
             setComponentDetail(null);
             setDatabaseDetail(null);
+            setBackendDetail(null);
           }
         }}
       >
@@ -756,6 +776,82 @@ export function UserServices() {
                     {detailRow("Pod đang chạy trên node", detail.node)}
                     {detailRow("PVC", detail.pvc)}
                     {detailRow("PV", detail.pv)}
+                  </div>
+                )
+              ) : isBackend ? (
+                backendDetailLoading ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="h-8 w-8 animate-spin mb-3" />
+                    <p className="text-sm">Đang tải chi tiết backend...</p>
+                  </div>
+                ) : backendDetail ? (
+                  <div className="space-y-6">
+                    {/* Thông tin Backend */}
+                    <SectionCard title="Thông tin Backend" icon={Server}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {detailRow("Tên", backendDetail.projectName)}
+                        {detailRow("Deployment Type", backendDetail.deploymentType)}
+                        {detailRow("Framework Type", backendDetail.frameworkType)}
+                        {detailRow("Domain Name", backendDetail.domainNameSystem ?? "-")}
+                        {detailRow("Docker Image", backendDetail.dockerImage ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin kết nối Database */}
+                    <SectionCard title="Thông tin kết nối Database" icon={Database}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {detailRow("IP", backendDetail.databaseIp ?? "-")}
+                        {detailRow("Port", backendDetail.databasePort?.toString() ?? "-")}
+                        {detailRow("Database name", backendDetail.databaseName ?? "-")}
+                        {detailRow("Username", backendDetail.databaseUsername ?? "-")}
+                        {detailRow("Password", backendDetail.databasePassword ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Deployment */}
+                    <SectionCard title="Thông tin Deployment" icon={Box}>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {detailRow("Name", backendDetail.deploymentName ?? "-")}
+                        {detailRow("Replica", backendDetail.replicas?.toString() ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Pod */}
+                    <SectionCard title="Thông tin Pod" icon={Server}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", backendDetail.podName ?? "-")}
+                        {detailRow("Node", backendDetail.podNode ?? "-")}
+                        {detailRow("Trạng thái", backendDetail.podStatus ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Service */}
+                    <SectionCard title="Thông tin Service" icon={Network}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", backendDetail.serviceName ?? "-")}
+                        {detailRow("Type", backendDetail.serviceType ?? "-")}
+                        {detailRow("Port", backendDetail.servicePort ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Ingress */}
+                    <SectionCard title="Thông tin Ingress" icon={Network}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {detailRow("Name", backendDetail.ingressName ?? "-")}
+                        {detailRow("Hosts", backendDetail.ingressHosts ?? "-")}
+                        {detailRow("Address", backendDetail.ingressAddress ?? "-")}
+                        {detailRow("Port", backendDetail.ingressPort ?? "-")}
+                        {detailRow("Class", backendDetail.ingressClass ?? "-")}
+                      </div>
+                    </SectionCard>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}
+                    {detailRow("CPU đang dùng", detail.cpuUsed ?? detail.cpu)}
+                    {detailRow("Memory đang dùng", detail.memoryUsed ?? detail.memory)}
+                    {detailRow("Replicas", detail.replicas)}
+                    {detailRow("Trạng thái", detail.status)}
                   </div>
                 )
               ) : (
