@@ -169,10 +169,11 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
      * @param databaseName Database name
      * @param databaseUsername Database username
      * @param databasePassword Database password
+     * @param storageSize Storage size in GB
      * @return Nội dung YAML đầy đủ cho Secret, Service và StatefulSet
      */
     private String generateMySQLYaml(String uuid_k8s, String namespace, String databaseName, 
-                                      String databaseUsername, String databasePassword) {
+                                      String databaseUsername, String databasePassword, Integer storageSize) {
         String resourceName = "db-" + uuid_k8s;
         String secretName = resourceName + "-secret";
         String serviceName = resourceName + "-svc";
@@ -267,7 +268,7 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
                 "        storageClassName: local-path\n" +
                 "        resources:\n" +
                 "          requests:\n" +
-                "            storage: 1Gi\n";
+                "            storage: " + (storageSize != null ? storageSize : 1) + "Gi\n";
     }
 
     /**
@@ -279,10 +280,11 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
      * @param databaseName Database name
      * @param databaseUsername Database username
      * @param databasePassword Database password
+     * @param storageSize Storage size in GB
      * @return Nội dung YAML đầy đủ cho StatefulSet và Service
      */
     private String generateMongoDBYaml(String uuid_k8s, String namespace, String databaseName,
-                                       String databaseUsername, String databasePassword) {
+                                       String databaseUsername, String databasePassword, Integer storageSize) {
         String resourceName = "db-" + uuid_k8s;
         
         return "apiVersion: apps/v1\n" +
@@ -324,7 +326,7 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
                 "        accessModes: [ \"ReadWriteOnce\" ]\n" +
                 "        resources:\n" +
                 "          requests:\n" +
-                "            storage: 10Gi\n" +
+                "            storage: " + (storageSize != null ? storageSize : 10) + "Gi\n" +
                 "---\n" +
                 "apiVersion: v1\n" +
                 "kind: Service\n" +
@@ -482,6 +484,10 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
         String databaseUsername = request.getDatabaseUsername();
         String databasePassword = request.getDatabasePassword();
 
+        // Thiết lập storage size mặc định dựa trên loại database
+        // MySQL: 1GB, MongoDB: 10GB
+        Integer storageSize = "MYSQL".equals(databaseType) ? 1 : 10;
+
         // Tạo ProjectDatabaseEntity và thiết lập các thuộc tính cơ bản
         ProjectDatabaseEntity projectEntity = new ProjectDatabaseEntity();
         projectEntity.setProjectName(request.getProjectName());
@@ -492,6 +498,7 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
         projectEntity.setDatabaseName(databaseName);
         projectEntity.setDatabaseUsername(databaseUsername);
         projectEntity.setDatabasePassword(databasePassword);
+        projectEntity.setStorageSize(storageSize);
 
         // ========== BƯỚC 2: LẤY THÔNG TIN SERVER TỪ DATABASE ==========
 
@@ -603,10 +610,10 @@ public class ProjectDatabaseServiceImpl implements ProjectDatabaseService {
             String fileName = uuid_k8s + ".yaml";
             String yamlContent;
             if ("MYSQL".equals(databaseType)) {
-                yamlContent = generateMySQLYaml(uuid_k8s, namespace, databaseName, databaseUsername, databasePassword);
+                yamlContent = generateMySQLYaml(uuid_k8s, namespace, databaseName, databaseUsername, databasePassword, storageSize);
             } else {
                 // MONGODB
-                yamlContent = generateMongoDBYaml(uuid_k8s, namespace, databaseName, databaseUsername, databasePassword);
+                yamlContent = generateMongoDBYaml(uuid_k8s, namespace, databaseName, databaseUsername, databasePassword, storageSize);
             }
 
             // Mở SFTP channel để upload YAML file

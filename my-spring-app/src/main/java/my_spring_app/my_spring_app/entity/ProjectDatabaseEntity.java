@@ -47,6 +47,9 @@ public class ProjectDatabaseEntity {
     @Column(name = "uuid_k8s", nullable = false)
     private String uuid_k8s; // uuid short id for k8s
 
+    @Column(name = "storage_size", nullable = true)
+    private Integer storageSize; // storage size in GB
+
     @Column(name = "source_path", nullable = true)
     private String sourcePath; // path to the source file
 
