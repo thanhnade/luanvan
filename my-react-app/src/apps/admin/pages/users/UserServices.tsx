@@ -11,6 +11,7 @@ import type {
   ClusterCapacityResponse,
   AdminUserProjectSummaryResponse,
   AdminUserProjectListResponse,
+  AdminProjectResourceDetailResponse,
 } from "@/types/admin";
 import { ResourceTable } from "../../components/ResourceTable";
 import { Badge } from "@/components/ui/badge";
@@ -208,9 +209,53 @@ export function UserServices() {
           if (project) {
             setSelectedProject(project);
             setProjectDetailLoading(true);
-            const detail = await adminAPI.getProjectDetail(project.id);
-            setProjectDetail(detail);
-            setProjectDetailLoading(false);
+            
+            try {
+              const resourceDetail = await adminAPI.getProjectResources(project.id);
+              
+              // Map dữ liệu từ AdminProjectResourceDetailResponse sang AdminProjectDetail
+              const mappedDetail: AdminProjectDetail = {
+                id: String(resourceDetail.projectId),
+                name: resourceDetail.projectName,
+                databases: resourceDetail.databases.map((db) => ({
+                  id: String(db.id),
+                  name: `database-${db.id}`,
+                  status: db.status.toLowerCase() as "running" | "stopped" | "error",
+                  cpu: `${db.cpuCores} cores`,
+                  memory: `${db.memoryGb} GB`,
+                  cpuUsed: `${db.cpuCores} cores`,
+                  memoryUsed: `${db.memoryGb} GB`,
+                  projectName: db.projectName,
+                })),
+                backends: resourceDetail.backends.map((be) => ({
+                  id: String(be.id),
+                  name: `backend-${be.id}`,
+                  status: be.status.toLowerCase() as "running" | "stopped" | "error",
+                  cpu: `${be.cpuCores} cores`,
+                  memory: `${be.memoryGb} GB`,
+                  cpuUsed: `${be.cpuCores} cores`,
+                  memoryUsed: `${be.memoryGb} GB`,
+                  projectName: be.projectName,
+                })),
+                frontends: resourceDetail.frontends.map((fe) => ({
+                  id: String(fe.id),
+                  name: `frontend-${fe.id}`,
+                  status: fe.status.toLowerCase() as "running" | "stopped" | "error",
+                  cpu: `${fe.cpuCores} cores`,
+                  memory: `${fe.memoryGb} GB`,
+                  cpuUsed: `${fe.cpuCores} cores`,
+                  memoryUsed: `${fe.memoryGb} GB`,
+                  projectName: fe.projectName,
+                })),
+              };
+              
+              setProjectDetail(mappedDetail);
+            } catch (error) {
+              console.error("Error loading project resources:", error);
+              toast.error("Không thể tải chi tiết dự án");
+            } finally {
+              setProjectDetailLoading(false);
+            }
           }
         } catch (error) {
           toast.error("Không thể tải chi tiết dự án");
@@ -283,11 +328,49 @@ export function UserServices() {
     }
     try {
       setProjectDetailLoading(true);
-      const detail = await adminAPI.getProjectDetail(project.id);
-      setProjectDetail(detail);
+      const resourceDetail = await adminAPI.getProjectResources(project.id);
+      
+      // Map dữ liệu từ AdminProjectResourceDetailResponse sang AdminProjectDetail
+      const mappedDetail: AdminProjectDetail = {
+        id: String(resourceDetail.projectId),
+        name: resourceDetail.projectName,
+        databases: resourceDetail.databases.map((db) => ({
+          id: String(db.id),
+          name: `database-${db.id}`, // API không trả về name, tạo tên từ id
+          status: db.status.toLowerCase() as "running" | "stopped" | "error",
+          cpu: `${db.cpuCores} cores`,
+          memory: `${db.memoryGb} GB`,
+          cpuUsed: `${db.cpuCores} cores`,
+          memoryUsed: `${db.memoryGb} GB`,
+          projectName: db.projectName,
+        })),
+        backends: resourceDetail.backends.map((be) => ({
+          id: String(be.id),
+          name: `backend-${be.id}`, // API không trả về name, tạo tên từ id
+          status: be.status.toLowerCase() as "running" | "stopped" | "error",
+          cpu: `${be.cpuCores} cores`,
+          memory: `${be.memoryGb} GB`,
+          cpuUsed: `${be.cpuCores} cores`,
+          memoryUsed: `${be.memoryGb} GB`,
+          projectName: be.projectName,
+        })),
+        frontends: resourceDetail.frontends.map((fe) => ({
+          id: String(fe.id),
+          name: `frontend-${fe.id}`, // API không trả về name, tạo tên từ id
+          status: fe.status.toLowerCase() as "running" | "stopped" | "error",
+          cpu: `${fe.cpuCores} cores`,
+          memory: `${fe.memoryGb} GB`,
+          cpuUsed: `${fe.cpuCores} cores`,
+          memoryUsed: `${fe.memoryGb} GB`,
+          projectName: fe.projectName,
+        })),
+      };
+      
+      setProjectDetail(mappedDetail);
     } catch (error) {
       toast.error("Không thể tải chi tiết dự án");
       setProjectDetail(null);
+      console.error("Error loading project resources:", error);
     } finally {
       setProjectDetailLoading(false);
     }

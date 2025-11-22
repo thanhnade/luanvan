@@ -283,3 +283,31 @@ export type AdminUserProjectListResponse = {
   }>;
 };
 
+export type AdminProjectResourceDetailResponse = {
+  projectId: number;
+  projectName: string;
+  totalCpuCores: number;
+  totalMemoryGb: number;
+  databases: Array<{
+    id: number;
+    projectName: string;
+    status: string;
+    cpuCores: number;
+    memoryGb: number;
+  }>;
+  backends: Array<{
+    id: number;
+    projectName: string;
+    status: string;
+    cpuCores: number;
+    memoryGb: number;
+  }>;
+  frontends: Array<{
+    id: number;
+    projectName: string;
+    status: string;
+    cpuCores: number;
+    memoryGb: number;
+  }>;
+};
+

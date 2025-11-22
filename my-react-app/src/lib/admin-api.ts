@@ -26,6 +26,7 @@ import type {
   ClusterAllocatableResponse,
   AdminUserProjectSummaryResponse,
   AdminUserProjectListResponse,
+  AdminProjectResourceDetailResponse,
 } from "@/types/admin";
 
 // Mock data - Tạo nhiều server để test
@@ -1851,6 +1852,12 @@ export const adminAPI = {
   getUserProjectsDetail: async (userId: string): Promise<AdminUserProjectListResponse> => {
     const response = await api.get("/admin/user-services/user-projects", {
       params: { userId },
+    });
+    return response.data;
+  },
+  getProjectResources: async (projectId: string): Promise<AdminProjectResourceDetailResponse> => {
+    const response = await api.get("/admin/user-services/project-resources", {
+      params: { projectId },
     });
     return response.data;
   },
