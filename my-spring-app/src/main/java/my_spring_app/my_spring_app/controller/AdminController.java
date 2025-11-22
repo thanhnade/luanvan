@@ -5,6 +5,8 @@ import my_spring_app.my_spring_app.dto.reponse.AdminProjectResourceDetailRespons
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectListResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -47,6 +49,18 @@ public class AdminController {
     @GetMapping("/user-services/project-resources")
     public ResponseEntity<AdminProjectResourceDetailResponse> getProjectResources(@RequestParam Long projectId) {
         AdminProjectResourceDetailResponse response = adminService.getProjectResourceDetail(projectId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/cluster/capacity")
+    public ResponseEntity<ClusterCapacityResponse> getClusterCapacity() {
+        ClusterCapacityResponse response = adminService.getClusterCapacity();
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/cluster/allocatable")
+    public ResponseEntity<ClusterAllocatableResponse> getClusterAllocatable() {
+        ClusterAllocatableResponse response = adminService.getClusterAllocatable();
         return ResponseEntity.ok(response);
     }
 }

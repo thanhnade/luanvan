@@ -8,6 +8,8 @@ import my_spring_app.my_spring_app.dto.reponse.AdminProjectResourceDetailRespons
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectListResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -636,6 +638,124 @@ public class AdminServiceImpl implements AdminService {
 
     // record gom tổng usage và usage theo từng namespace để tái sử dụng ở nhiều hàm
     private record ResourceUsageMap(ResourceUsage totalUsage, Map<String, ResourceUsage> namespaceUsage) {
+    }
+
+    /**
+     * Lấy tổng CPU và RAM capacity của cluster từ kubectl get nodes.
+     * Sử dụng lệnh: kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,RAM:.status.capacity.memory
+     */
+    @Override
+    public ClusterCapacityResponse getClusterCapacity() {
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            session = createSession(masterServer);
+            String command = "kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,RAM:.status.capacity.memory";
+            String output = executeCommand(session, command, false);
+
+            double totalCpu = 0.0;
+            long totalMemoryBytes = 0L;
+
+            if (output != null && !output.trim().isEmpty()) {
+                String[] lines = output.split("\\r?\\n");
+                // Bỏ qua dòng header (dòng đầu tiên)
+                for (int i = 1; i < lines.length; i++) {
+                    String line = lines[i].trim();
+                    if (line.isEmpty()) {
+                        continue;
+                    }
+                    // Parse dòng: node-name   4   8Gi
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 3) {
+                        try {
+                            // CPU có thể là số nguyên (cores) hoặc millicores (3950m)
+                            double cpu = parseCpuCores(parts[1]);
+                            totalCpu += cpu;
+                            // RAM có thể là 8Gi, 16Gi, etc.
+                            long memoryBytes = parseMemoryBytes(parts[2]);
+                            totalMemoryBytes += memoryBytes;
+                        } catch (NumberFormatException e) {
+                            System.err.println("[AdminService] Không thể parse capacity từ dòng: " + line);
+                        }
+                    }
+                }
+            }
+
+            ClusterCapacityResponse response = new ClusterCapacityResponse();
+            response.setTotalCpuCores(roundToThreeDecimals(totalCpu));
+            response.setTotalMemoryGb(roundToThreeDecimals(bytesToGb(totalMemoryBytes)));
+            return response;
+
+        } catch (Exception e) {
+            System.err.println("[AdminService] Lỗi khi lấy cluster capacity: " + e.getMessage());
+            throw new RuntimeException("Không thể lấy cluster capacity: " + e.getMessage(), e);
+        } finally {
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy tổng CPU và RAM allocatable (khả dụng) của cluster từ kubectl get nodes.
+     * Sử dụng lệnh: kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU_ALLOC:.status.allocatable.cpu,RAM_ALLOC:.status.allocatable.memory
+     */
+    @Override
+    public ClusterAllocatableResponse getClusterAllocatable() {
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            session = createSession(masterServer);
+            String command = "kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU_ALLOC:.status.allocatable.cpu,RAM_ALLOC:.status.allocatable.memory";
+            String output = executeCommand(session, command, false);
+
+            double totalCpu = 0.0;
+            long totalMemoryBytes = 0L;
+
+            if (output != null && !output.trim().isEmpty()) {
+                String[] lines = output.split("\\r?\\n");
+                // Bỏ qua dòng header (dòng đầu tiên)
+                for (int i = 1; i < lines.length; i++) {
+                    String line = lines[i].trim();
+                    if (line.isEmpty()) {
+                        continue;
+                    }
+                    // Parse dòng: node-name   3950m   16Gi
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 3) {
+                        try {
+                            // CPU có thể là 4 hoặc 3950m (millicores)
+                            double cpu = parseCpuCores(parts[1]);
+                            totalCpu += cpu;
+                            // RAM có thể là 8Gi, 16Gi, etc.
+                            long memoryBytes = parseMemoryBytes(parts[2]);
+                            totalMemoryBytes += memoryBytes;
+                        } catch (NumberFormatException e) {
+                            System.err.println("[AdminService] Không thể parse allocatable từ dòng: " + line);
+                        }
+                    }
+                }
+            }
+
+            ClusterAllocatableResponse response = new ClusterAllocatableResponse();
+            response.setTotalCpuCores(roundToThreeDecimals(totalCpu));
+            response.setTotalMemoryGb(roundToThreeDecimals(bytesToGb(totalMemoryBytes)));
+            return response;
+
+        } catch (Exception e) {
+            System.err.println("[AdminService] Lỗi khi lấy cluster allocatable: " + e.getMessage());
+            throw new RuntimeException("Không thể lấy cluster allocatable: " + e.getMessage(), e);
+        } finally {
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
     }
 }
 

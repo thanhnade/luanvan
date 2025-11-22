@@ -2,6 +2,7 @@
  * Mock API cho Admin Dashboard
  */
 
+import api from "@/services/api";
 import type {
   Server,
   Cluster,
@@ -19,6 +20,10 @@ import type {
   AdminUserProject,
   AdminProjectDetail,
   AdminAccount,
+  AdminOverviewResponse,
+  AdminUserUsageResponse,
+  ClusterCapacityResponse,
+  ClusterAllocatableResponse,
 } from "@/types/admin";
 
 // Mock data - Tạo nhiều server để test
@@ -1754,9 +1759,48 @@ export const adminAPI = {
     mockPVs.splice(index, 1);
   },
   // User Management
+  getOverview: async (): Promise<AdminOverviewResponse> => {
+    const response = await api.get("/admin/user-services/overview");
+    return response.data;
+  },
+  getUserUsage: async (): Promise<AdminUserUsageResponse> => {
+    const response = await api.get("/admin/user-services/users");
+    return response.data;
+  },
   getAdminUsers: async (): Promise<AdminUser[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockAdminUsers;
+    // Gọi API thật để lấy dữ liệu
+    const response = await api.get("/admin/user-services/users");
+    const userUsageResponse: AdminUserUsageResponse = response.data;
+    
+    // Map dữ liệu từ API response sang format AdminUser
+    return userUsageResponse.users.map((user) => {
+      const isPremium = user.tier.toLowerCase() === "premium";
+      // Ước tính total dựa trên tier (vì API không trả về capacity)
+      // Premium: total cao hơn, Standard: total thấp hơn
+      const cpuTotal = isPremium 
+        ? Math.max(user.cpuCores * 1.5, 200) // Premium: ít nhất 200 cores hoặc 1.5x used
+        : Math.max(user.cpuCores * 1.3, 100); // Standard: ít nhất 100 cores hoặc 1.3x used
+      const memoryTotal = isPremium
+        ? Math.max(user.memoryGb * 1.5, 320) // Premium: ít nhất 320 GB hoặc 1.5x used
+        : Math.max(user.memoryGb * 1.3, 128); // Standard: ít nhất 128 GB hoặc 1.3x used
+      
+      return {
+        id: String(user.id),
+        name: user.fullname,
+        username: user.username,
+        tier: (isPremium ? "premium" : "standard") as "premium" | "standard",
+        email: "", // API không trả về email, để trống
+        projectCount: user.projectCount,
+        cpuUsage: {
+          used: user.cpuCores,
+          total: Math.round(cpuTotal),
+        },
+        memoryUsage: {
+          used: user.memoryGb,
+          total: Math.round(memoryTotal),
+        },
+      };
+    });
   },
   getUserProjects: async (userId: string): Promise<AdminUserProject[]> => {
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1786,6 +1830,15 @@ export const adminAPI = {
     await new Promise((resolve) => setTimeout(resolve, 400));
     const account = mockAdminAccounts.find((acc) => acc.id === id);
     if (!account) throw new Error("Account not found");
+  },
+  // Cluster Resources
+  getClusterCapacity: async (): Promise<ClusterCapacityResponse> => {
+    const response = await api.get("/admin/cluster/capacity");
+    return response.data;
+  },
+  getClusterAllocatable: async (): Promise<ClusterAllocatableResponse> => {
+    const response = await api.get("/admin/cluster/allocatable");
+    return response.data;
   },
 };
 

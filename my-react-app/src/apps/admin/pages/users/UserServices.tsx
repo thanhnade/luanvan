@@ -7,6 +7,8 @@ import type {
   AdminUserProject,
   AdminProjectDetail,
   AdminProjectComponent,
+  AdminOverviewResponse,
+  ClusterCapacityResponse,
 } from "@/types/admin";
 import { ResourceTable } from "../../components/ResourceTable";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +44,10 @@ export function UserServices() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
+  const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [clusterCapacity, setClusterCapacity] = useState<ClusterCapacityResponse | null>(null);
+  const [clusterCapacityLoading, setClusterCapacityLoading] = useState(true);
 
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [projects, setProjects] = useState<AdminUserProject[]>([]);
@@ -60,24 +66,43 @@ export function UserServices() {
   const [currentPage, setCurrentPage] = useState(1);
   const [currentProjectPage, setCurrentProjectPage] = useState(1);
 
-  const totalUsers = users.length;
-  const totalProjects = users.reduce((sum, user) => sum + user.projectCount, 0);
-  const totalCpuUsed = users.reduce((sum, user) => sum + user.cpuUsage.used, 0);
-  const totalCpuCapacity = users.reduce((sum, user) => sum + user.cpuUsage.total, 0);
-  const totalMemUsed = users.reduce((sum, user) => sum + user.memoryUsage.used, 0);
-  const totalMemCapacity = users.reduce((sum, user) => sum + user.memoryUsage.total, 0);
+  // Sử dụng overview cho số lượng users và projects
+  const totalUsers = overview?.totalUsers ?? users.length;
+  const totalProjects = overview?.totalProjects ?? users.reduce((sum, user) => sum + user.projectCount, 0);
+  // Sử dụng overview cho tổng CPU/Memory đang dùng
+  const totalCpuUsed = overview?.totalCpuCores ?? users.reduce((sum, user) => sum + user.cpuUsage.used, 0);
+  // Sử dụng cluster capacity từ API mới cho phần sau dấu /
+  const totalCpuCapacity = clusterCapacity?.totalCpuCores ?? 0;
+  const totalMemUsed = overview?.totalMemoryGb ?? users.reduce((sum, user) => sum + user.memoryUsage.used, 0);
+  const totalMemCapacity = clusterCapacity?.totalMemoryGb ?? 0;
 
   useEffect(() => {
-    const loadUsers = async () => {
+    const loadData = async () => {
       try {
         setUsersLoading(true);
-        const data = await adminAPI.getAdminUsers();
-        setUsers(data);
+        setOverviewLoading(true);
+        setClusterCapacityLoading(true);
+        
+        // Gọi 3 API song song
+        const [usersData, overviewData, capacityData] = await Promise.all([
+          adminAPI.getAdminUsers(),
+          adminAPI.getOverview(),
+          adminAPI.getClusterCapacity(),
+        ]);
+        
+        setUsers(usersData);
+        setOverview(overviewData);
+        setClusterCapacity(capacityData);
+      } catch (error) {
+        toast.error("Không thể tải dữ liệu");
+        console.error("Error loading data:", error);
       } finally {
         setUsersLoading(false);
+        setOverviewLoading(false);
+        setClusterCapacityLoading(false);
       }
     };
-    loadUsers();
+    loadData();
   }, []);
 
   // Restore state from URL params on mount
@@ -221,13 +246,13 @@ export function UserServices() {
       key: "cpuUsage",
       label: "CPU",
       align: "center" as const,
-      render: (user: AdminUser) => `${user.cpuUsage.used}/${user.cpuUsage.total} cores`,
+      render: (user: AdminUser) => `${user.cpuUsage.used} cores`,
     },
     {
       key: "memoryUsage",
       label: "Memory",
       align: "center" as const,
-      render: (user: AdminUser) => `${user.memoryUsage.used}/${user.memoryUsage.total} GB`,
+      render: (user: AdminUser) => `${user.memoryUsage.used} GB`,
     },
   ];
 
@@ -515,7 +540,7 @@ export function UserServices() {
             />
           </div>
 
-          {usersLoading ? (
+          {(usersLoading || overviewLoading || clusterCapacityLoading) ? (
             <div className="flex items-center justify-center py-12 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin mr-2" />
               Đang tải danh sách...

@@ -229,3 +229,33 @@ export type DashboardMetrics = {
   memoryUsage: { used: number; total: number };
 };
 
+// Admin User Services API Responses
+export type AdminOverviewResponse = {
+  totalUsers: number;
+  totalProjects: number;
+  totalCpuCores: number;
+  totalMemoryGb: number;
+};
+
+export type AdminUserUsageResponse = {
+  users: Array<{
+    id: number;
+    fullname: string;
+    username: string;
+    projectCount: number;
+    tier: string;
+    cpuCores: number;
+    memoryGb: number;
+  }>;
+};
+
+export type ClusterCapacityResponse = {
+  totalCpuCores: number;
+  totalMemoryGb: number;
+};
+
+export type ClusterAllocatableResponse = {
+  totalCpuCores: number;
+  totalMemoryGb: number;
+};
+

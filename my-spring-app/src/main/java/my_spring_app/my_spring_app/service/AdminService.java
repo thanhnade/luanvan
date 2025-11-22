@@ -5,6 +5,8 @@ import my_spring_app.my_spring_app.dto.reponse.AdminProjectResourceDetailRespons
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectListResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 
 public interface AdminService {
 
@@ -17,4 +19,8 @@ public interface AdminService {
     AdminUserProjectListResponse getUserProjectsDetail(Long userId);
 
     AdminProjectResourceDetailResponse getProjectResourceDetail(Long projectId);
+
+    ClusterCapacityResponse getClusterCapacity();
+
+    ClusterAllocatableResponse getClusterAllocatable();
 }
