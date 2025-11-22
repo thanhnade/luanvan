@@ -362,3 +362,25 @@ export type AdminBackendDetailResponse = {
   ingressClass?: string;
 };
 
+export type AdminFrontendDetailResponse = {
+  frontendId: number;
+  projectName: string;
+  deploymentType: string;
+  frameworkType: string;
+  domainNameSystem?: string;
+  dockerImage?: string;
+  deploymentName?: string;
+  replicas?: number;
+  podName?: string;
+  podNode?: string;
+  podStatus?: string;
+  serviceName?: string;
+  serviceType?: string;
+  servicePort?: string;
+  ingressName?: string;
+  ingressHosts?: string;
+  ingressAddress?: string;
+  ingressPort?: string;
+  ingressClass?: string;
+};
+

@@ -29,6 +29,7 @@ import type {
   AdminProjectResourceDetailResponse,
   AdminDatabaseDetailResponse,
   AdminBackendDetailResponse,
+  AdminFrontendDetailResponse,
 } from "@/types/admin";
 
 // Mock data - Tạo nhiều server để test
@@ -1872,6 +1873,12 @@ export const adminAPI = {
   getBackendDetail: async (backendId: string): Promise<AdminBackendDetailResponse> => {
     const response = await api.get("/admin/backend/detail", {
       params: { backendId },
+    });
+    return response.data;
+  },
+  getFrontendDetail: async (frontendId: string): Promise<AdminFrontendDetailResponse> => {
+    const response = await api.get("/admin/frontend/detail", {
+      params: { frontendId },
     });
     return response.data;
   },

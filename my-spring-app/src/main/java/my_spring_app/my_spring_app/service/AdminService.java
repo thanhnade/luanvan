@@ -9,6 +9,7 @@ import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 
 public interface AdminService {
 
@@ -29,4 +30,6 @@ public interface AdminService {
     AdminDatabaseDetailResponse getDatabaseDetail(Long databaseId);
 
     AdminBackendDetailResponse getBackendDetail(Long backendId);
+
+    AdminFrontendDetailResponse getFrontendDetail(Long frontendId);
 }

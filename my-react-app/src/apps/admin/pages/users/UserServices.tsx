@@ -14,6 +14,7 @@ import type {
   AdminProjectResourceDetailResponse,
   AdminDatabaseDetailResponse,
   AdminBackendDetailResponse,
+  AdminFrontendDetailResponse,
 } from "@/types/admin";
 import { ResourceTable } from "../../components/ResourceTable";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +80,8 @@ export function UserServices() {
   const [databaseDetailLoading, setDatabaseDetailLoading] = useState(false);
   const [backendDetail, setBackendDetail] = useState<AdminBackendDetailResponse | null>(null);
   const [backendDetailLoading, setBackendDetailLoading] = useState(false);
+  const [frontendDetail, setFrontendDetail] = useState<AdminFrontendDetailResponse | null>(null);
+  const [frontendDetailLoading, setFrontendDetailLoading] = useState(false);
 
   const [view, setView] = useState<ViewState>("users");
   const [currentPage, setCurrentPage] = useState(1);
@@ -508,6 +511,7 @@ export function UserServices() {
           try {
             setBackendDetailLoading(true);
             setDatabaseDetail(null);
+            setFrontendDetail(null);
             const detail = await adminAPI.getBackendDetail(component.id);
             setBackendDetail(detail);
           } catch (error) {
@@ -517,9 +521,24 @@ export function UserServices() {
           } finally {
             setBackendDetailLoading(false);
           }
+        } else if (resourceType === "frontends") {
+          try {
+            setFrontendDetailLoading(true);
+            setDatabaseDetail(null);
+            setBackendDetail(null);
+            const detail = await adminAPI.getFrontendDetail(component.id);
+            setFrontendDetail(detail);
+          } catch (error) {
+            toast.error("Không thể tải chi tiết frontend");
+            console.error("Error loading frontend detail:", error);
+            setFrontendDetail(null);
+          } finally {
+            setFrontendDetailLoading(false);
+          }
         } else {
           setDatabaseDetail(null);
           setBackendDetail(null);
+          setFrontendDetail(null);
         }
       }
       return;
@@ -619,6 +638,7 @@ export function UserServices() {
     const detail = componentDetail?.item;
     const isDatabase = type === "databases";
     const isBackend = type === "backends";
+    const isFrontend = type === "frontends";
     const detailRow = (label: string, value?: string | number) => (
       <div className="rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/50">
         <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
@@ -655,6 +675,7 @@ export function UserServices() {
             setComponentDetail(null);
             setDatabaseDetail(null);
             setBackendDetail(null);
+            setFrontendDetail(null);
           }
         }}
       >
@@ -842,6 +863,71 @@ export function UserServices() {
                         {detailRow("Address", backendDetail.ingressAddress ?? "-")}
                         {detailRow("Port", backendDetail.ingressPort ?? "-")}
                         {detailRow("Class", backendDetail.ingressClass ?? "-")}
+                      </div>
+                    </SectionCard>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}
+                    {detailRow("CPU đang dùng", detail.cpuUsed ?? detail.cpu)}
+                    {detailRow("Memory đang dùng", detail.memoryUsed ?? detail.memory)}
+                    {detailRow("Replicas", detail.replicas)}
+                    {detailRow("Trạng thái", detail.status)}
+                  </div>
+                )
+              ) : isFrontend ? (
+                frontendDetailLoading ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="h-8 w-8 animate-spin mb-3" />
+                    <p className="text-sm">Đang tải chi tiết frontend...</p>
+                  </div>
+                ) : frontendDetail ? (
+                  <div className="space-y-6">
+                    {/* Thông tin Frontend */}
+                    <SectionCard title="Thông tin Frontend" icon={Server}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {detailRow("Tên", frontendDetail.projectName)}
+                        {detailRow("Deployment Type", frontendDetail.deploymentType)}
+                        {detailRow("Framework Type", frontendDetail.frameworkType)}
+                        {detailRow("Domain Name", frontendDetail.domainNameSystem ?? "-")}
+                        {detailRow("Docker Image", frontendDetail.dockerImage ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Deployment */}
+                    <SectionCard title="Thông tin Deployment" icon={Box}>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {detailRow("Name", frontendDetail.deploymentName ?? "-")}
+                        {detailRow("Replica", frontendDetail.replicas?.toString() ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Pod */}
+                    <SectionCard title="Thông tin Pod" icon={Server}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", frontendDetail.podName ?? "-")}
+                        {detailRow("Node", frontendDetail.podNode ?? "-")}
+                        {detailRow("Trạng thái", frontendDetail.podStatus ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Service */}
+                    <SectionCard title="Thông tin Service" icon={Network}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", frontendDetail.serviceName ?? "-")}
+                        {detailRow("Type", frontendDetail.serviceType ?? "-")}
+                        {detailRow("Port", frontendDetail.servicePort ?? "-")}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Ingress */}
+                    <SectionCard title="Thông tin Ingress" icon={Network}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {detailRow("Name", frontendDetail.ingressName ?? "-")}
+                        {detailRow("Hosts", frontendDetail.ingressHosts ?? "-")}
+                        {detailRow("Address", frontendDetail.ingressAddress ?? "-")}
+                        {detailRow("Port", frontendDetail.ingressPort ?? "-")}
+                        {detailRow("Class", frontendDetail.ingressClass ?? "-")}
                       </div>
                     </SectionCard>
                   </div>

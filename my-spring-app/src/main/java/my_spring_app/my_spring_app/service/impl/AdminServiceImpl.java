@@ -12,6 +12,7 @@ import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -21,6 +22,7 @@ import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectRepository;
 import my_spring_app.my_spring_app.repository.ProjectDatabaseRepository;
 import my_spring_app.my_spring_app.repository.ProjectBackendRepository;
+import my_spring_app.my_spring_app.repository.ProjectFrontendRepository;
 import my_spring_app.my_spring_app.repository.ServerRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
 import my_spring_app.my_spring_app.service.AdminService;
@@ -65,6 +67,10 @@ public class AdminServiceImpl implements AdminService {
     // Repository thao tác bảng project backend
     @Autowired
     private ProjectBackendRepository projectBackendRepository;
+
+    // Repository thao tác bảng project frontend
+    @Autowired
+    private ProjectFrontendRepository projectFrontendRepository;
 
     // Repository lấy thông tin server (MASTER) để chạy kubectl
     @Autowired
@@ -1189,6 +1195,231 @@ public class AdminServiceImpl implements AdminService {
         } catch (Exception e) {
             System.err.println("[AdminService] Lỗi khi lấy chi tiết backend: " + e.getMessage());
             throw new RuntimeException("Không thể lấy chi tiết backend: " + e.getMessage(), e);
+        } finally {
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy chi tiết frontend bao gồm thông tin Deployment, Pod, Service, Ingress
+     */
+    @Override
+    public AdminFrontendDetailResponse getFrontendDetail(Long frontendId) {
+        System.out.println("[AdminService] Bắt đầu lấy chi tiết frontend với id=" + frontendId);
+        
+        // Lấy frontend entity
+        ProjectFrontendEntity frontend = projectFrontendRepository.findById(frontendId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy frontend với id " + frontendId));
+        
+        ProjectEntity project = frontend.getProject();
+        if (project == null) {
+            throw new RuntimeException("Frontend không thuộc về project nào");
+        }
+        
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace");
+        }
+        namespace = namespace.trim();
+        
+        String uuid_k8s = frontend.getUuid_k8s();
+        if (uuid_k8s == null || uuid_k8s.trim().isEmpty()) {
+            throw new RuntimeException("Frontend không có uuid_k8s");
+        }
+        uuid_k8s = uuid_k8s.trim();
+        
+        String resourceName = "app-" + uuid_k8s;
+        String deploymentName = resourceName;
+        String serviceName = resourceName + "-svc";
+        String ingressName = resourceName + "-ing";
+        
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+        
+        Session session = null;
+        AdminFrontendDetailResponse response = new AdminFrontendDetailResponse();
+        
+        try {
+            session = createSession(masterServer);
+            System.out.println("[AdminService] Đã kết nối MASTER server để lấy chi tiết frontend id=" + frontendId);
+            
+            // Set thông tin frontend từ entity
+            response.setFrontendId(frontend.getId());
+            response.setProjectName(frontend.getProjectName());
+            response.setDeploymentType(frontend.getDeploymentType());
+            response.setFrameworkType(frontend.getFrameworkType());
+            response.setDomainNameSystem(frontend.getDomainNameSystem());
+            response.setDockerImage(frontend.getDockerImage());
+            
+            // Lấy thông tin Deployment
+            try {
+                String deployNameCmd = String.format("kubectl get deployment %s -n %s -o jsonpath='{.metadata.name}'", deploymentName, namespace);
+                String deployName = executeCommand(session, deployNameCmd, true);
+                if (deployName != null && !deployName.trim().isEmpty()) {
+                    response.setDeploymentName(deployName.trim());
+                }
+                
+                String deployReplicasCmd = String.format("kubectl get deployment %s -n %s -o jsonpath='{.spec.replicas}'", deploymentName, namespace);
+                String deployReplicas = executeCommand(session, deployReplicasCmd, true);
+                if (deployReplicas != null && !deployReplicas.trim().isEmpty()) {
+                    try {
+                        response.setReplicas(Integer.parseInt(deployReplicas.trim()));
+                    } catch (NumberFormatException e) {
+                        // Fallback: sử dụng replicas từ entity
+                        response.setReplicas(frontend.getReplicas());
+                    }
+                } else {
+                    response.setReplicas(frontend.getReplicas());
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin Deployment: " + e.getMessage());
+                response.setDeploymentName(deploymentName);
+                response.setReplicas(frontend.getReplicas());
+            }
+            
+            // Lấy thông tin Pod (lấy pod đầu tiên từ deployment)
+            try {
+                String podJsonPath = "{.items[0].metadata.name},{.items[0].spec.nodeName},{.items[0].status.phase}";
+                String podCmd = String.format("kubectl get pod -l app=%s -n %s -o jsonpath='%s'", resourceName, namespace, podJsonPath);
+                String podOutput = executeCommand(session, podCmd, true);
+                if (podOutput != null && !podOutput.trim().isEmpty()) {
+                    String[] podParts = podOutput.split(",");
+                    if (podParts.length >= 3) {
+                        response.setPodName(podParts[0].trim());
+                        response.setPodNode(podParts[1].trim());
+                        response.setPodStatus(podParts[2].trim());
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin Pod: " + e.getMessage());
+            }
+            
+            // Lấy thông tin Service
+            try {
+                String svcNameCmd = String.format("kubectl get svc %s -n %s -o jsonpath='{.metadata.name}'", serviceName, namespace);
+                String svcName = executeCommand(session, svcNameCmd, true);
+                if (svcName != null && !svcName.trim().isEmpty()) {
+                    response.setServiceName(svcName.trim());
+                }
+                
+                String svcTypeCmd = String.format("kubectl get svc %s -n %s -o jsonpath='{.spec.type}'", serviceName, namespace);
+                String svcType = executeCommand(session, svcTypeCmd, true);
+                if (svcType != null && !svcType.trim().isEmpty()) {
+                    response.setServiceType(svcType.trim());
+                }
+                
+                String svcPortCmd = String.format("kubectl get svc %s -n %s -o jsonpath='{.spec.ports[0].port}'", serviceName, namespace);
+                String svcPort = executeCommand(session, svcPortCmd, true);
+                if (svcPort != null && !svcPort.trim().isEmpty()) {
+                    response.setServicePort(svcPort.trim());
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin Service: " + e.getMessage());
+            }
+            
+            // Lấy thông tin Ingress
+            try {
+                // Kiểm tra xem ingress có tồn tại không
+                String checkIngressCmd = String.format("kubectl get ingress %s -n %s --ignore-not-found -o name", ingressName, namespace);
+                String ingressExists = executeCommand(session, checkIngressCmd, true);
+                
+                if (ingressExists != null && !ingressExists.trim().isEmpty() && ingressExists.contains("ingress")) {
+                    response.setIngressName(ingressName);
+                    
+                    // Lấy hosts
+                    String ingressHostsCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].host}'", ingressName, namespace);
+                    String ingressHosts = executeCommand(session, ingressHostsCmd, true);
+                    if (ingressHosts != null && !ingressHosts.trim().isEmpty()) {
+                        response.setIngressHosts(ingressHosts.trim());
+                    }
+                    
+                    // Lấy address (có thể là IP hoặc hostname)
+                    String ingressAddressCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}'", ingressName, namespace);
+                    String ingressAddress = executeCommand(session, ingressAddressCmd, true);
+                    if (ingressAddress != null && !ingressAddress.trim().isEmpty() && !ingressAddress.trim().equals("<none>")) {
+                        response.setIngressAddress(ingressAddress.trim());
+                    }
+                    
+                    // Lấy port (từ backend service port)
+                    String ingressPortCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.port.number}'", ingressName, namespace);
+                    String ingressPort = executeCommand(session, ingressPortCmd, true);
+                    if (ingressPort != null && !ingressPort.trim().isEmpty()) {
+                        // Lấy port đầu tiên nếu có nhiều port
+                        String[] ports = ingressPort.trim().split("\\s+");
+                        if (ports.length > 0) {
+                            response.setIngressPort(ports[0]);
+                        }
+                    }
+                    
+                    // Lấy ingress class
+                    String ingressClassCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.ingressClassName}'", ingressName, namespace);
+                    String ingressClass = executeCommand(session, ingressClassCmd, true);
+                    if (ingressClass != null && !ingressClass.trim().isEmpty()) {
+                        response.setIngressClass(ingressClass.trim());
+                    }
+                } else {
+                    // Thử tìm ingress bằng cách tìm tất cả ingress trong namespace và filter theo service name
+                    String findIngressCmd = String.format("kubectl get ingress -n %s -o jsonpath='{range .items[*]}{.metadata.name}{\\\"\\t\\\"}{.spec.rules[*].http.paths[*].backend.service.name}{\\\"\\n\\\"}{end}'", namespace);
+                    String allIngresses = executeCommand(session, findIngressCmd, true);
+                    if (allIngresses != null && !allIngresses.trim().isEmpty()) {
+                        String[] lines = allIngresses.split("\n");
+                        for (String line : lines) {
+                            if (line.contains(serviceName)) {
+                                String[] parts = line.split("\t");
+                                if (parts.length > 0) {
+                                    String foundIngressName = parts[0].trim();
+                                    response.setIngressName(foundIngressName);
+                                    
+                                    // Lấy hosts
+                                    String ingressHostsCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].host}'", foundIngressName, namespace);
+                                    String ingressHosts = executeCommand(session, ingressHostsCmd, true);
+                                    if (ingressHosts != null && !ingressHosts.trim().isEmpty()) {
+                                        response.setIngressHosts(ingressHosts.trim());
+                                    }
+                                    
+                                    // Lấy address
+                                    String ingressAddressCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}'", foundIngressName, namespace);
+                                    String ingressAddress = executeCommand(session, ingressAddressCmd, true);
+                                    if (ingressAddress != null && !ingressAddress.trim().isEmpty() && !ingressAddress.trim().equals("<none>")) {
+                                        response.setIngressAddress(ingressAddress.trim());
+                                    }
+                                    
+                                    // Lấy port (từ backend service port)
+                                    String ingressPortCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.port.number}'", foundIngressName, namespace);
+                                    String ingressPort = executeCommand(session, ingressPortCmd, true);
+                                    if (ingressPort != null && !ingressPort.trim().isEmpty()) {
+                                        // Lấy port đầu tiên nếu có nhiều port
+                                        String[] ports = ingressPort.trim().split("\\s+");
+                                        if (ports.length > 0) {
+                                            response.setIngressPort(ports[0]);
+                                        }
+                                    }
+                                    
+                                    // Lấy ingress class
+                                    String ingressClassCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.ingressClassName}'", foundIngressName, namespace);
+                                    String ingressClass = executeCommand(session, ingressClassCmd, true);
+                                    if (ingressClass != null && !ingressClass.trim().isEmpty()) {
+                                        response.setIngressClass(ingressClass.trim());
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin Ingress: " + e.getMessage());
+            }
+            
+            System.out.println("[AdminService] Hoàn tất lấy chi tiết frontend id=" + frontendId);
+            return response;
+            
+        } catch (Exception e) {
+            System.err.println("[AdminService] Lỗi khi lấy chi tiết frontend: " + e.getMessage());
+            throw new RuntimeException("Không thể lấy chi tiết frontend: " + e.getMessage(), e);
         } finally {
             if (session != null && session.isConnected()) {
                 session.disconnect();
