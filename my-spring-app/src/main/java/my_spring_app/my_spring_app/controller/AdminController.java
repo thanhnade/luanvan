@@ -7,6 +7,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -61,6 +62,12 @@ public class AdminController {
     @GetMapping("/cluster/allocatable")
     public ResponseEntity<ClusterAllocatableResponse> getClusterAllocatable() {
         ClusterAllocatableResponse response = adminService.getClusterAllocatable();
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/database/detail")
+    public ResponseEntity<AdminDatabaseDetailResponse> getDatabaseDetail(@RequestParam Long databaseId) {
+        AdminDatabaseDetailResponse response = adminService.getDatabaseDetail(databaseId);
         return ResponseEntity.ok(response);
     }
 }

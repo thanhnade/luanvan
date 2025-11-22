@@ -7,6 +7,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 
 public interface AdminService {
 
@@ -23,4 +24,6 @@ public interface AdminService {
     ClusterCapacityResponse getClusterCapacity();
 
     ClusterAllocatableResponse getClusterAllocatable();
+
+    AdminDatabaseDetailResponse getDatabaseDetail(Long databaseId);
 }

@@ -311,3 +311,27 @@ export type AdminProjectResourceDetailResponse = {
   }>;
 };
 
+export type AdminDatabaseDetailResponse = {
+  databaseId: number;
+  databaseType: string;
+  databaseIp: string;
+  databasePort: number;
+  databaseName: string;
+  databaseUsername: string;
+  databasePassword: string;
+  podName?: string;
+  podNode?: string;
+  podStatus?: string;
+  serviceName?: string;
+  serviceExternalIp?: string;
+  servicePort?: number;
+  statefulSetName?: string;
+  pvcName?: string;
+  pvcStatus?: string;
+  pvcVolume?: string;
+  pvcCapacity?: string;
+  pvName?: string;
+  pvCapacity?: string;
+  pvNode?: string;
+};
+

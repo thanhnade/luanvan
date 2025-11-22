@@ -27,6 +27,7 @@ import type {
   AdminUserProjectSummaryResponse,
   AdminUserProjectListResponse,
   AdminProjectResourceDetailResponse,
+  AdminDatabaseDetailResponse,
 } from "@/types/admin";
 
 // Mock data - Tạo nhiều server để test
@@ -1858,6 +1859,12 @@ export const adminAPI = {
   getProjectResources: async (projectId: string): Promise<AdminProjectResourceDetailResponse> => {
     const response = await api.get("/admin/user-services/project-resources", {
       params: { projectId },
+    });
+    return response.data;
+  },
+  getDatabaseDetail: async (databaseId: string): Promise<AdminDatabaseDetailResponse> => {
+    const response = await api.get("/admin/database/detail", {
+      params: { databaseId },
     });
     return response.data;
   },

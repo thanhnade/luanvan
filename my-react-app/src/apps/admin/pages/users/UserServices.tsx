@@ -12,6 +12,7 @@ import type {
   AdminUserProjectSummaryResponse,
   AdminUserProjectListResponse,
   AdminProjectResourceDetailResponse,
+  AdminDatabaseDetailResponse,
 } from "@/types/admin";
 import { ResourceTable } from "../../components/ResourceTable";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,12 @@ import {
   PlayCircle,
   Trash2,
   Eye,
+  Database,
+  Server,
+  Network,
+  Box,
+  HardDrive,
+  HardDriveIcon,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
@@ -67,6 +74,8 @@ export function UserServices() {
     type: "databases" | "backends" | "frontends";
   } | null>(null);
   const [isComponentDialogOpen, setComponentDialogOpen] = useState(false);
+  const [databaseDetail, setDatabaseDetail] = useState<AdminDatabaseDetailResponse | null>(null);
+  const [databaseDetailLoading, setDatabaseDetailLoading] = useState(false);
 
   const [view, setView] = useState<ViewState>("users");
   const [currentPage, setCurrentPage] = useState(1);
@@ -468,7 +477,7 @@ export function UserServices() {
     },
   ];
 
-  const handleComponentAction = (
+  const handleComponentAction = async (
     component: AdminProjectComponent,
     action: "pause" | "start" | "delete" | "view",
     resourceType?: "databases" | "backends" | "frontends"
@@ -477,6 +486,23 @@ export function UserServices() {
       if (resourceType) {
         setComponentDetail({ item: component, type: resourceType });
         setComponentDialogOpen(true);
+        
+        // Nếu là database, gọi API để lấy chi tiết
+        if (resourceType === "databases") {
+          try {
+            setDatabaseDetailLoading(true);
+            const detail = await adminAPI.getDatabaseDetail(component.id);
+            setDatabaseDetail(detail);
+          } catch (error) {
+            toast.error("Không thể tải chi tiết database");
+            console.error("Error loading database detail:", error);
+            setDatabaseDetail(null);
+          } finally {
+            setDatabaseDetailLoading(false);
+          }
+        } else {
+          setDatabaseDetail(null);
+        }
       }
       return;
     }
@@ -575,10 +601,30 @@ export function UserServices() {
     const detail = componentDetail?.item;
     const isDatabase = type === "databases";
     const detailRow = (label: string, value?: string | number) => (
-      <div className="rounded-lg border bg-muted/30 p-3">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-sm font-medium text-foreground">{value ?? "-"}</p>
+      <div className="rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/50">
+        <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
+        <p className="text-sm font-semibold text-foreground break-words">{value ?? "-"}</p>
       </div>
+    );
+
+    const SectionCard = ({
+      title,
+      icon: Icon,
+      children,
+    }: {
+      title: string;
+      icon: ComponentType<{ className?: string }>;
+      children: React.ReactNode;
+    }) => (
+      <Card className="border shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Icon className="h-5 w-5 text-primary" />
+            <CardTitle className="text-base font-semibold">{title}</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>{children}</CardContent>
+      </Card>
     );
 
     return (
@@ -588,31 +634,26 @@ export function UserServices() {
           setComponentDialogOpen(open);
           if (!open) {
             setComponentDetail(null);
+            setDatabaseDetail(null);
           }
         }}
       >
-        <DialogContent className="max-w-3xl w-[90vw]">
-          <DialogHeader>
-            <DialogTitle>
-              {type === "backends"
-                ? "Chi tiết Backend"
-                : type === "frontends"
-                  ? "Chi tiết Frontend"
-                  : "Chi tiết Database"}
-            </DialogTitle>
-            <DialogDescription>
-              Thông tin cấu hình và tài nguyên của thành phần đang chọn.
-            </DialogDescription>
-          </DialogHeader>
-          {detail && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-lg font-semibold text-foreground">{detail.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    Thuộc dự án {detail.projectName ?? selectedProject?.name ?? ""}
-                  </p>
-                </div>
+        <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="pb-4 border-b">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-2xl font-bold">
+                  {type === "backends"
+                    ? "Chi tiết Backend"
+                    : type === "frontends"
+                      ? "Chi tiết Frontend"
+                      : "Chi tiết Database"}
+                </DialogTitle>
+                <DialogDescription className="mt-2">
+                  Thông tin cấu hình và tài nguyên của thành phần đang chọn.
+                </DialogDescription>
+              </div>
+              {detail && (
                 <Badge
                   variant={
                     detail.status === "running"
@@ -621,24 +662,102 @@ export function UserServices() {
                         ? "destructive"
                         : "secondary"
                   }
+                  className="text-sm px-3 py-1"
                 >
                   {detail.status}
                 </Badge>
+              )}
+            </div>
+            {detail && (
+              <div className="mt-3 pt-3 border-t">
+                <p className="text-base font-semibold text-foreground">{detail.name}</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Thuộc dự án: <span className="font-medium text-foreground">{detail.projectName ?? selectedProject?.name ?? "-"}</span>
+                </p>
               </div>
+            )}
+          </DialogHeader>
+          {detail && (
+            <div className="mt-6">
               {isDatabase ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}
-                  {detailRow("IP", detail.ip)}
-                  {detailRow("Port", detail.port?.toString())}
-                  {detailRow("Database name", detail.databaseName)}
-                  {detailRow("Username", detail.dbUsername)}
-                  {detailRow("Password", detail.dbPassword)}
-                  {detailRow("CPU đang dùng", detail.cpuUsed ?? detail.cpu)}
-                  {detailRow("Memory đang dùng", detail.memoryUsed ?? detail.memory)}
-                  {detailRow("Pod đang chạy trên node", detail.node)}
-                  {detailRow("PVC", detail.pvc)}
-                  {detailRow("PV", detail.pv)}
-                </div>
+                databaseDetailLoading ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="h-8 w-8 animate-spin mb-3" />
+                    <p className="text-sm">Đang tải chi tiết database...</p>
+                  </div>
+                ) : databaseDetail ? (
+                  <div className="space-y-6">
+                    {/* Thông tin Database */}
+                    <SectionCard title="Thông tin Database" icon={Database}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {detailRow("Loại", databaseDetail.databaseType)}
+                        {detailRow("IP", databaseDetail.databaseIp)}
+                        {detailRow("Port", databaseDetail.databasePort?.toString())}
+                        {detailRow("Database name", databaseDetail.databaseName)}
+                        {detailRow("Username", databaseDetail.databaseUsername)}
+                        {detailRow("Password", databaseDetail.databasePassword)}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Pod */}
+                    <SectionCard title="Thông tin Pod" icon={Server}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", databaseDetail.podName)}
+                        {detailRow("Node", databaseDetail.podNode)}
+                        {detailRow("Trạng thái", databaseDetail.podStatus)}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin Service */}
+                    <SectionCard title="Thông tin Service" icon={Network}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", databaseDetail.serviceName)}
+                        {detailRow("EXTERNAL-IP", databaseDetail.serviceExternalIp ?? "-")}
+                        {detailRow("Port", databaseDetail.servicePort?.toString())}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin StatefulSet */}
+                    <SectionCard title="Thông tin StatefulSet" icon={Box}>
+                      <div className="grid gap-3 md:grid-cols-1">
+                        {detailRow("Name", databaseDetail.statefulSetName)}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin PVC */}
+                    <SectionCard title="Thông tin PVC" icon={HardDrive}>
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                        {detailRow("Name", databaseDetail.pvcName)}
+                        {detailRow("STATUS", databaseDetail.pvcStatus)}
+                        {detailRow("VOLUME", databaseDetail.pvcVolume)}
+                        {detailRow("CAPACITY", databaseDetail.pvcCapacity)}
+                      </div>
+                    </SectionCard>
+
+                    {/* Thông tin PV */}
+                    <SectionCard title="Thông tin PV" icon={HardDriveIcon}>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {detailRow("Name", databaseDetail.pvName)}
+                        {detailRow("CAPACITY", databaseDetail.pvCapacity)}
+                        {detailRow("Node", databaseDetail.pvNode)}
+                      </div>
+                    </SectionCard>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}
+                    {detailRow("IP", detail.ip)}
+                    {detailRow("Port", detail.port?.toString())}
+                    {detailRow("Database name", detail.databaseName)}
+                    {detailRow("Username", detail.dbUsername)}
+                    {detailRow("Password", detail.dbPassword)}
+                    {detailRow("CPU đang dùng", detail.cpuUsed ?? detail.cpu)}
+                    {detailRow("Memory đang dùng", detail.memoryUsed ?? detail.memory)}
+                    {detailRow("Pod đang chạy trên node", detail.node)}
+                    {detailRow("PVC", detail.pvc)}
+                    {detailRow("PV", detail.pv)}
+                  </div>
+                )
               ) : (
                 <div className="grid gap-4 md:grid-cols-2">
                   {detailRow("Project", detail.projectName ?? selectedProject?.name ?? "-")}

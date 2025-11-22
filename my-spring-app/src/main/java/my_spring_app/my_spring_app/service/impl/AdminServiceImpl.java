@@ -10,6 +10,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
+import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -17,6 +18,7 @@ import my_spring_app.my_spring_app.entity.ProjectFrontendEntity;
 import my_spring_app.my_spring_app.entity.ServerEntity;
 import my_spring_app.my_spring_app.entity.UserEntity;
 import my_spring_app.my_spring_app.repository.ProjectRepository;
+import my_spring_app.my_spring_app.repository.ProjectDatabaseRepository;
 import my_spring_app.my_spring_app.repository.ServerRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
 import my_spring_app.my_spring_app.service.AdminService;
@@ -53,6 +55,10 @@ public class AdminServiceImpl implements AdminService {
     // Repository thao tác bảng project
     @Autowired
     private ProjectRepository projectRepository;
+
+    // Repository thao tác bảng project database
+    @Autowired
+    private ProjectDatabaseRepository projectDatabaseRepository;
 
     // Repository lấy thông tin server (MASTER) để chạy kubectl
     @Autowired
@@ -751,6 +757,202 @@ public class AdminServiceImpl implements AdminService {
         } catch (Exception e) {
             System.err.println("[AdminService] Lỗi khi lấy cluster allocatable: " + e.getMessage());
             throw new RuntimeException("Không thể lấy cluster allocatable: " + e.getMessage(), e);
+        } finally {
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy chi tiết database bao gồm thông tin Pod, Service, StatefulSet, PVC, PV
+     */
+    @Override
+    public AdminDatabaseDetailResponse getDatabaseDetail(Long databaseId) {
+        System.out.println("[AdminService] Bắt đầu lấy chi tiết database với id=" + databaseId);
+        
+        // Lấy database entity
+        ProjectDatabaseEntity database = projectDatabaseRepository.findById(databaseId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy database với id " + databaseId));
+        
+        ProjectEntity project = database.getProject();
+        if (project == null) {
+            throw new RuntimeException("Database không thuộc về project nào");
+        }
+        
+        String namespace = project.getNamespace();
+        if (namespace == null || namespace.trim().isEmpty()) {
+            throw new RuntimeException("Project không có namespace");
+        }
+        namespace = namespace.trim();
+        
+        String uuid_k8s = database.getUuid_k8s();
+        if (uuid_k8s == null || uuid_k8s.trim().isEmpty()) {
+            throw new RuntimeException("Database không có uuid_k8s");
+        }
+        uuid_k8s = uuid_k8s.trim();
+        
+        String resourceName = "db-" + uuid_k8s;
+        String serviceName = resourceName + "-svc";
+        String statefulSetName = resourceName;
+        String podName = resourceName + "-0"; // StatefulSet pod name pattern
+        
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+        
+        Session session = null;
+        AdminDatabaseDetailResponse response = new AdminDatabaseDetailResponse();
+        
+        try {
+            session = createSession(masterServer);
+            
+            // Set thông tin database từ entity
+            response.setDatabaseId(database.getId());
+            response.setDatabaseType(database.getDatabaseType());
+            response.setDatabaseIp(database.getDatabaseIp());
+            response.setDatabasePort(database.getDatabasePort());
+            response.setDatabaseName(database.getDatabaseName());
+            response.setDatabaseUsername(database.getDatabaseUsername());
+            response.setDatabasePassword(database.getDatabasePassword());
+            
+            // Lấy thông tin Pod (thử lấy theo pod name trước, nếu không có thì lấy theo label)
+            try {
+                // Thử lấy pod theo tên chính xác (StatefulSet pod name pattern)
+                String podNameCmd = String.format("kubectl get pod %s -n %s -o jsonpath='{.metadata.name}'", podName, namespace);
+                String podNameResult = executeCommand(session, podNameCmd, true);
+                if (podNameResult != null && !podNameResult.trim().isEmpty()) {
+                    response.setPodName(podNameResult.trim());
+                    
+                    String podNodeCmd = String.format("kubectl get pod %s -n %s -o jsonpath='{.spec.nodeName}'", podName, namespace);
+                    String podNodeResult = executeCommand(session, podNodeCmd, true);
+                    if (podNodeResult != null && !podNodeResult.trim().isEmpty()) {
+                        response.setPodNode(podNodeResult.trim());
+                    }
+                    
+                    String podStatusCmd = String.format("kubectl get pod %s -n %s -o jsonpath='{.status.phase}'", podName, namespace);
+                    String podStatusResult = executeCommand(session, podStatusCmd, true);
+                    if (podStatusResult != null && !podStatusResult.trim().isEmpty()) {
+                        response.setPodStatus(podStatusResult.trim());
+                    }
+                } else {
+                    // Fallback: lấy pod theo label selector
+                    String podJsonPath = "{.items[0].metadata.name},{.items[0].spec.nodeName},{.items[0].status.phase}";
+                    String podCmd = String.format("kubectl get pod -l app=%s -n %s -o jsonpath='%s'", resourceName, namespace, podJsonPath);
+                    String podOutput = executeCommand(session, podCmd, true);
+                    if (podOutput != null && !podOutput.trim().isEmpty()) {
+                        String[] podParts = podOutput.split(",");
+                        if (podParts.length >= 3) {
+                            response.setPodName(podParts[0].trim());
+                            response.setPodNode(podParts[1].trim());
+                            response.setPodStatus(podParts[2].trim());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin Pod: " + e.getMessage());
+            }
+            
+            // Lấy thông tin Service
+            try {
+                String svcJsonPath = "{.metadata.name},{.status.loadBalancer.ingress[0].ip},{.spec.ports[0].port}";
+                String svcCmd = String.format("kubectl get svc %s -n %s -o jsonpath='%s'", serviceName, namespace, svcJsonPath);
+                String svcOutput = executeCommand(session, svcCmd, true);
+                if (svcOutput != null && !svcOutput.trim().isEmpty()) {
+                    String[] svcParts = svcOutput.split(",");
+                    if (svcParts.length >= 1) {
+                        response.setServiceName(svcParts[0].trim());
+                        if (svcParts.length >= 2 && !svcParts[1].trim().isEmpty()) {
+                            response.setServiceExternalIp(svcParts[1].trim());
+                        }
+                        if (svcParts.length >= 3 && !svcParts[2].trim().isEmpty()) {
+                            try {
+                                response.setServicePort(Integer.parseInt(svcParts[2].trim()));
+                            } catch (NumberFormatException e) {
+                                // Ignore
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin Service: " + e.getMessage());
+            }
+            
+            // Lấy thông tin StatefulSet
+            try {
+                String stsCmd = String.format("kubectl get statefulset %s -n %s -o jsonpath='{.metadata.name}'", statefulSetName, namespace);
+                String stsOutput = executeCommand(session, stsCmd, true);
+                if (stsOutput != null && !stsOutput.trim().isEmpty()) {
+                    response.setStatefulSetName(stsOutput.trim());
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin StatefulSet: " + e.getMessage());
+            }
+            
+            // Lấy thông tin PVC (tìm PVC liên quan đến StatefulSet)
+            try {
+                String pvcNamePattern = database.getDatabaseType().equalsIgnoreCase("MYSQL") 
+                    ? "mysql-data-" + statefulSetName + "-0" 
+                    : "mongodb-data-" + statefulSetName + "-0";
+                String pvcJsonPath = "{.metadata.name},{.status.phase},{.spec.volumeName},{.status.capacity.storage}";
+                String pvcCmd = String.format("kubectl get pvc %s -n %s -o jsonpath='%s'", pvcNamePattern, namespace, pvcJsonPath);
+                String pvcOutput = executeCommand(session, pvcCmd, true);
+                if (pvcOutput != null && !pvcOutput.trim().isEmpty()) {
+                    String[] pvcParts = pvcOutput.split(",");
+                    if (pvcParts.length >= 1) {
+                        response.setPvcName(pvcParts[0].trim());
+                        if (pvcParts.length >= 2) {
+                            response.setPvcStatus(pvcParts[1].trim());
+                        }
+                        if (pvcParts.length >= 3) {
+                            response.setPvcVolume(pvcParts[2].trim());
+                        }
+                        if (pvcParts.length >= 4) {
+                            response.setPvcCapacity(pvcParts[3].trim());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[AdminService] Lỗi khi lấy thông tin PVC: " + e.getMessage());
+            }
+            
+            // Lấy thông tin PV (nếu có PVC volume name)
+            if (response.getPvcVolume() != null && !response.getPvcVolume().isEmpty()) {
+                try {
+                    // Lấy name và capacity
+                    String pvNameCmd = String.format("kubectl get pv %s -o jsonpath='{.metadata.name}'", response.getPvcVolume());
+                    String pvName = executeCommand(session, pvNameCmd, true);
+                    if (pvName != null && !pvName.trim().isEmpty()) {
+                        response.setPvName(pvName.trim());
+                    }
+                    
+                    String pvCapacityCmd = String.format("kubectl get pv %s -o jsonpath='{.spec.capacity.storage}'", response.getPvcVolume());
+                    String pvCapacity = executeCommand(session, pvCapacityCmd, true);
+                    if (pvCapacity != null && !pvCapacity.trim().isEmpty()) {
+                        response.setPvCapacity(pvCapacity.trim());
+                    }
+                    
+                    // Thử lấy node từ nodeAffinity (có thể không có)
+                    try {
+                        String pvNodeCmd = String.format("kubectl get pv %s -o jsonpath='{.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]}'", response.getPvcVolume());
+                        String pvNode = executeCommand(session, pvNodeCmd, true);
+                        if (pvNode != null && !pvNode.trim().isEmpty() && !pvNode.trim().equals("<none>")) {
+                            response.setPvNode(pvNode.trim());
+                        }
+                    } catch (Exception e) {
+                        // Node info có thể không có, bỏ qua
+                        System.out.println("[AdminService] Không thể lấy node từ PV (có thể không có nodeAffinity)");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[AdminService] Lỗi khi lấy thông tin PV: " + e.getMessage());
+                }
+            }
+            
+            return response;
+            
+        } catch (Exception e) {
+            System.err.println("[AdminService] Lỗi khi lấy chi tiết database: " + e.getMessage());
+            throw new RuntimeException("Không thể lấy chi tiết database: " + e.getMessage(), e);
         } finally {
             if (session != null && session.isConnected()) {
                 session.disconnect();
