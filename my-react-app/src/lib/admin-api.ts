@@ -1275,13 +1275,34 @@ const mockAdminAccounts: AdminAccount[] = [
 export const adminAPI = {
   // Dashboard
   getDashboardMetrics: async (): Promise<DashboardMetrics> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const response = await api.get("/admin/dashboard/metrics");
+    const data = response.data;
+    // Map từ backend response sang frontend type
     return {
-      nodes: { total: 5, healthy: 4, unhealthy: 1 },
-      pods: { total: 20, running: 15, pending: 3, failed: 2 },
-      deployments: { total: 10, active: 8, error: 2 },
-      cpuUsage: { used: 45, total: 100 },
-      memoryUsage: { used: 60, total: 128 },
+      nodes: {
+        total: data.nodes?.total || 0,
+        healthy: data.nodes?.healthy || 0,
+        unhealthy: data.nodes?.unhealthy || 0,
+      },
+      pods: {
+        total: data.pods?.total || 0,
+        running: data.pods?.running || 0,
+        pending: data.pods?.pending || 0,
+        failed: data.pods?.failed || 0,
+      },
+      deployments: {
+        total: data.deployments?.total || 0,
+        active: data.deployments?.active || 0,
+        error: data.deployments?.error || 0,
+      },
+      cpuUsage: {
+        used: data.cpuUsage?.used || 0,
+        total: data.cpuUsage?.total || 0,
+      },
+      memoryUsage: {
+        used: data.memoryUsage?.used || 0,
+        total: data.memoryUsage?.total || 0,
+      },
     };
   },
 

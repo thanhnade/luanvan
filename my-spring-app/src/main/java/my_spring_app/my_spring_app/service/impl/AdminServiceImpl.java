@@ -13,6 +13,7 @@ import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
+import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -1991,6 +1992,217 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy chi tiết frontend: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy thông tin tổng quan về cluster metrics (Nodes, Pods, Deployments, CPU/Memory usage).
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server
+     * 2. Lấy thông tin Nodes: kubectl get nodes - đếm total, healthy (Ready), unhealthy (NotReady)
+     * 3. Lấy thông tin Pods: kubectl get pods --all-namespaces - đếm total, running, pending, failed
+     * 4. Lấy thông tin Deployments: kubectl get deployments --all-namespaces - đếm total, active (ready > 0), error (ready = 0)
+     * 5. Lấy CPU/Memory usage từ overview API (tái sử dụng logic có sẵn)
+     * 6. Tổng hợp và trả về DashboardMetricsResponse
+     * 
+     * @return DashboardMetricsResponse chứa thông tin nodes, pods, deployments, cpuUsage, memoryUsage
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     */
+    @Override
+    public DashboardMetricsResponse getDashboardMetrics() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server
+            session = createSession(masterServer);
+            
+            DashboardMetricsResponse response = new DashboardMetricsResponse();
+            
+            // Bước 1: Lấy thông tin Nodes
+            try {
+                // Lấy danh sách nodes với status - dùng output mặc định và parse từ cột STATUS
+                String nodesCmd = "kubectl get nodes --no-headers";
+                String nodesOutput = executeCommand(session, nodesCmd, true);
+                
+                int totalNodes = 0;
+                int healthyNodes = 0;
+                int unhealthyNodes = 0;
+                
+                if (nodesOutput != null && !nodesOutput.trim().isEmpty()) {
+                    String[] lines = nodesOutput.trim().split("\n");
+                    for (String line : lines) {
+                        if (line.trim().isEmpty()) continue;
+                        totalNodes++;
+                        // Parse status từ output: format "NAME STATUS ROLES AGE VERSION"
+                        // STATUS thường là "Ready" hoặc "NotReady"
+                        String[] parts = line.trim().split("\\s+");
+                        if (parts.length >= 2) {
+                            String status = parts[1].trim();
+                            if (status.equals("Ready")) {
+                                healthyNodes++;
+                            } else {
+                                unhealthyNodes++;
+                            }
+                        } else {
+                            // Nếu không parse được, coi như unhealthy
+                            unhealthyNodes++;
+                        }
+                    }
+                }
+                
+                response.setNodes(new DashboardMetricsResponse.NodeMetrics(totalNodes, healthyNodes, unhealthyNodes));
+            } catch (Exception e) {
+                // Nếu lỗi, set giá trị mặc định
+                response.setNodes(new DashboardMetricsResponse.NodeMetrics(0, 0, 0));
+            }
+            
+            // Bước 2: Lấy thông tin Pods
+            try {
+                // Lấy danh sách pods với status từ tất cả namespaces
+                String podsCmd = "kubectl get pods --all-namespaces -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase --no-headers";
+                String podsOutput = executeCommand(session, podsCmd, true);
+                
+                int totalPods = 0;
+                int runningPods = 0;
+                int pendingPods = 0;
+                int failedPods = 0;
+                
+                if (podsOutput != null && !podsOutput.trim().isEmpty()) {
+                    String[] lines = podsOutput.trim().split("\n");
+                    for (String line : lines) {
+                        if (line.trim().isEmpty()) continue;
+                        totalPods++;
+                        // Parse status từ cột thứ 3 (sau namespace và name)
+                        String[] parts = line.trim().split("\\s+");
+                        if (parts.length >= 3) {
+                            String status = parts[2].trim();
+                            if (status.equalsIgnoreCase("Running")) {
+                                runningPods++;
+                            } else if (status.equalsIgnoreCase("Pending")) {
+                                pendingPods++;
+                            } else if (status.equalsIgnoreCase("Failed") || status.equalsIgnoreCase("Error")) {
+                                failedPods++;
+                            }
+                        }
+                    }
+                }
+                
+                response.setPods(new DashboardMetricsResponse.PodMetrics(totalPods, runningPods, pendingPods, failedPods));
+            } catch (Exception e) {
+                // Nếu lỗi, set giá trị mặc định
+                response.setPods(new DashboardMetricsResponse.PodMetrics(0, 0, 0, 0));
+            }
+            
+            // Bước 3: Lấy thông tin Deployments
+            try {
+                // Lấy danh sách deployments với ready replicas từ tất cả namespaces
+                String deploymentsCmd = "kubectl get deployments --all-namespaces -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas --no-headers";
+                String deploymentsOutput = executeCommand(session, deploymentsCmd, true);
+                
+                int totalDeployments = 0;
+                int activeDeployments = 0;
+                int errorDeployments = 0;
+                
+                if (deploymentsOutput != null && !deploymentsOutput.trim().isEmpty()) {
+                    String[] lines = deploymentsOutput.trim().split("\n");
+                    for (String line : lines) {
+                        if (line.trim().isEmpty()) continue;
+                        totalDeployments++;
+                        // Parse ready và desired replicas
+                        String[] parts = line.trim().split("\\s+");
+                        if (parts.length >= 4) {
+                            try {
+                                int ready = Integer.parseInt(parts[2].trim().equals("<none>") ? "0" : parts[2].trim());
+                                int desired = Integer.parseInt(parts[3].trim());
+                                
+                                // Active: có ít nhất 1 replica ready
+                                if (ready > 0) {
+                                    activeDeployments++;
+                                } else if (desired > 0) {
+                                    // Error: desired > 0 nhưng ready = 0
+                                    errorDeployments++;
+                                }
+                            } catch (NumberFormatException e) {
+                                // Bỏ qua dòng không parse được
+                            }
+                        }
+                    }
+                }
+                
+                response.setDeployments(new DashboardMetricsResponse.DeploymentMetrics(totalDeployments, activeDeployments, errorDeployments));
+            } catch (Exception e) {
+                // Nếu lỗi, set giá trị mặc định
+                response.setDeployments(new DashboardMetricsResponse.DeploymentMetrics(0, 0, 0));
+            }
+            
+            // Bước 4: Lấy CPU/Memory usage từ tất cả pods trong cluster (--all-namespaces)
+            try {
+                // Lấy allocatable để làm total
+                ClusterAllocatableResponse allocatable = getClusterAllocatable();
+                
+                // Tính tổng CPU/Memory từ tất cả pods trong cluster
+                String topPodsCmd = "kubectl top pods --all-namespaces --no-headers";
+                String topPodsOutput = executeCommand(session, topPodsCmd, true);
+                
+                double totalCpuUsed = 0.0;
+                long totalMemoryBytes = 0L;
+                
+                if (topPodsOutput != null && !topPodsOutput.trim().isEmpty()) {
+                    String[] lines = topPodsOutput.trim().split("\n");
+                    for (String line : lines) {
+                        if (line.trim().isEmpty()) continue;
+                        
+                        // Format: NAMESPACE POD_NAME CPU MEMORY
+                        // Ví dụ: default nginx-pod 15m 100Mi
+                        String[] parts = line.trim().split("\\s+");
+                        if (parts.length >= 4) {
+                            try {
+                                // Parse CPU từ cột thứ 3 (index 2)
+                                double cpu = parseCpuCores(parts[2]);
+                                // Parse Memory từ cột thứ 4 (index 3)
+                                long memory = parseMemoryBytes(parts[3]);
+                                
+                                totalCpuUsed += cpu;
+                                totalMemoryBytes += memory;
+                            } catch (NumberFormatException e) {
+                                // Bỏ qua dòng không parse được
+                            }
+                        }
+                    }
+                }
+                
+                // Chuyển đổi Memory từ bytes sang GB
+                double totalMemoryGb = bytesToGb(totalMemoryBytes);
+                
+                response.setCpuUsage(new DashboardMetricsResponse.ResourceUsage(
+                    roundToThreeDecimals(totalCpuUsed),
+                    allocatable.getTotalCpuCores()
+                ));
+                
+                response.setMemoryUsage(new DashboardMetricsResponse.ResourceUsage(
+                    roundToThreeDecimals(totalMemoryGb),
+                    allocatable.getTotalMemoryGb()
+                ));
+            } catch (Exception e) {
+                // Nếu lỗi, set giá trị mặc định
+                response.setCpuUsage(new DashboardMetricsResponse.ResourceUsage(0.0, 0.0));
+                response.setMemoryUsage(new DashboardMetricsResponse.ResourceUsage(0.0, 0.0));
+            }
+            
+            return response;
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy dashboard metrics: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

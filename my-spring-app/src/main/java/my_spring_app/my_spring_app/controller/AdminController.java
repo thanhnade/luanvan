@@ -10,6 +10,7 @@ import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
+import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -82,6 +83,12 @@ public class AdminController {
     @GetMapping("/frontend/detail")
     public ResponseEntity<AdminFrontendDetailResponse> getFrontendDetail(@RequestParam Long frontendId) {
         AdminFrontendDetailResponse response = adminService.getFrontendDetail(frontendId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/dashboard/metrics")
+    public ResponseEntity<DashboardMetricsResponse> getDashboardMetrics() {
+        DashboardMetricsResponse response = adminService.getDashboardMetrics();
         return ResponseEntity.ok(response);
     }
 }

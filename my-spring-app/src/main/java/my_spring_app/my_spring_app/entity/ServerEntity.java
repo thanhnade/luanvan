@@ -34,7 +34,7 @@ public class ServerEntity {
     private String password;
 
     @Column(nullable = false)
-    private String role; // MASTER, WORKER, DOCKER, DATABASE
+    private String role; // MASTER, WORKER, DOCKER
 
     @Column(name = "server_status", nullable = false)
     private String serverStatus; // RUNNING, STOPPED, BUILDING, ERROR
