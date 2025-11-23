@@ -1619,8 +1619,24 @@ export const adminAPI = {
 
   // Statefulsets
   getStatefulsets: async (): Promise<Statefulset[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockStatefulsets;
+    const response = await api.get("/admin/workloads/statefulsets");
+    const statefulsetListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return statefulsetListResponse.statefulsets.map((sts: any) => ({
+      id: sts.id || `${sts.name}-${sts.namespace}`,
+      name: sts.name,
+      namespace: sts.namespace,
+      replicas: {
+        desired: sts.replicas?.desired || 0,
+        ready: sts.replicas?.ready || 0,
+      },
+      status: sts.status === "running" ? "running" : "error",
+      service: sts.service || "",
+      containers: sts.containers || [],
+      images: sts.images || [],
+      age: sts.age || "",
+    }));
   },
   createStatefulset: async (data: Omit<Statefulset, "id" | "age">): Promise<Statefulset> => {
     await new Promise((resolve) => setTimeout(resolve, 500));

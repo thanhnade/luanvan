@@ -22,6 +22,8 @@ import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeploymentResponse;
 import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
 import my_spring_app.my_spring_app.dto.reponse.PodResponse;
+import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
+import my_spring_app.my_spring_app.dto.reponse.StatefulsetResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -43,9 +45,14 @@ import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.Configuration;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
+import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.models.V1ContainerStatus;
 import io.kubernetes.client.openapi.models.V1Pod;
 import io.kubernetes.client.openapi.models.V1PodStatus;
+import io.kubernetes.client.openapi.models.V1StatefulSet;
+import io.kubernetes.client.openapi.models.V1StatefulSetStatus;
+import io.kubernetes.client.openapi.models.V1StatefulSetCondition;
+import io.kubernetes.client.openapi.models.V1Container;
 import io.kubernetes.client.util.Config;
 import java.io.File;
 import java.io.FileWriter;
@@ -2945,6 +2952,162 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách pods: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả statefulsets trong cluster sử dụng Kubernetes Java Client.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng AppsV1Api để lấy danh sách statefulsets từ tất cả namespaces
+     * 4. Parse V1StatefulSet objects thành StatefulsetResponse:
+     *    - Namespace, Name
+     *    - Ready (ready/desired) từ status
+     *    - Status từ conditions
+     *    - Service từ spec.serviceName
+     *    - Containers và Images từ spec.template.spec.containers
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về StatefulsetListResponse
+     * 
+     * @return StatefulsetListResponse chứa danh sách statefulsets
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
+     */
+    @Override
+    public StatefulsetListResponse getStatefulsets() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
+            session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            AppsV1Api api = new AppsV1Api(client);
+            
+            List<StatefulsetResponse> statefulsets = new ArrayList<>();
+            
+            // Lấy danh sách statefulsets từ tất cả namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1StatefulSetList statefulSetList = api.listStatefulSetForAllNamespaces(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
+                
+                if (statefulSetList.getItems() == null) {
+                    return new StatefulsetListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng statefulset
+                for (V1StatefulSet v1StatefulSet : statefulSetList.getItems()) {
+                    try {
+                        StatefulsetResponse statefulset = new StatefulsetResponse();
+                        
+                        // Basic info
+                        String namespace = v1StatefulSet.getMetadata().getNamespace();
+                        String name = v1StatefulSet.getMetadata().getName();
+                        statefulset.setId(name + "-" + namespace);
+                        statefulset.setName(name);
+                        statefulset.setNamespace(namespace);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1StatefulSet.getMetadata().getCreationTimestamp();
+                        statefulset.setAge(calculateAge(creationTimestamp));
+                        
+                        // Replicas từ status
+                        V1StatefulSetStatus status = v1StatefulSet.getStatus();
+                        int desired = 0;
+                        int ready = 0;
+                        if (v1StatefulSet.getSpec() != null && v1StatefulSet.getSpec().getReplicas() != null) {
+                            desired = v1StatefulSet.getSpec().getReplicas();
+                        }
+                        if (status != null && status.getReadyReplicas() != null) {
+                            ready = status.getReadyReplicas();
+                        }
+                        
+                        StatefulsetResponse.ReplicasInfo replicas = new StatefulsetResponse.ReplicasInfo();
+                        replicas.setDesired(desired);
+                        replicas.setReady(ready);
+                        statefulset.setReplicas(replicas);
+                        
+                        // Status: running nếu ready == desired, error nếu ready < desired và có điều kiện lỗi
+                        String stsStatus = "running";
+                        if (ready < desired) {
+                            // Kiểm tra conditions để xác định có lỗi không
+                            if (status != null && status.getConditions() != null) {
+                                for (io.kubernetes.client.openapi.models.V1StatefulSetCondition condition : status.getConditions()) {
+                                    if ("False".equals(condition.getStatus()) && "Progressing".equals(condition.getType())) {
+                                        stsStatus = "error";
+                                        break;
+                                    }
+                                }
+                            } else {
+                                stsStatus = "error";
+                            }
+                        }
+                        statefulset.setStatus(stsStatus);
+                        
+                        // Service từ spec.serviceName
+                        if (v1StatefulSet.getSpec() != null && v1StatefulSet.getSpec().getServiceName() != null) {
+                            statefulset.setService(v1StatefulSet.getSpec().getServiceName());
+                        } else {
+                            statefulset.setService("");
+                        }
+                        
+                        // Containers và Images từ spec.template.spec.containers
+                        List<String> containers = new ArrayList<>();
+                        List<String> images = new ArrayList<>();
+                        if (v1StatefulSet.getSpec() != null 
+                                && v1StatefulSet.getSpec().getTemplate() != null
+                                && v1StatefulSet.getSpec().getTemplate().getSpec() != null
+                                && v1StatefulSet.getSpec().getTemplate().getSpec().getContainers() != null) {
+                            for (io.kubernetes.client.openapi.models.V1Container container : 
+                                    v1StatefulSet.getSpec().getTemplate().getSpec().getContainers()) {
+                                if (container.getName() != null) {
+                                    containers.add(container.getName());
+                                }
+                                if (container.getImage() != null) {
+                                    images.add(container.getImage());
+                                }
+                            }
+                        }
+                        statefulset.setContainers(containers);
+                        statefulset.setImages(images);
+                        
+                        statefulsets.add(statefulset);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua statefulset nếu có lỗi, tiếp tục với statefulset tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách statefulsets từ Kubernetes API: " + e.getMessage(), e);
+            }
+            
+            return new StatefulsetListResponse(statefulsets);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách statefulsets: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

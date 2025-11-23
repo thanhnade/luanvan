@@ -15,6 +15,7 @@ import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
 import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
 import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
+import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
 
 public interface AdminService {
 
@@ -47,4 +48,6 @@ public interface AdminService {
     DeploymentListResponse getDeployments();
 
     PodListResponse getPods();
+
+    StatefulsetListResponse getStatefulsets();
 }
