@@ -191,19 +191,6 @@ export function Pods() {
       key: "node",
       label: "NODE",
     },
-    {
-      key: "nominatedNode",
-      label: "NOMINATED NODE",
-      render: (pod: Pod) => pod.nominatedNode ?? "-",
-    },
-    {
-      key: "readinessGates",
-      label: "READINESS GATES",
-      render: (pod: Pod) =>
-        pod.readinessGates && pod.readinessGates.length > 0
-          ? pod.readinessGates.join(", ")
-          : "-",
-    },
   ];
 
   return (

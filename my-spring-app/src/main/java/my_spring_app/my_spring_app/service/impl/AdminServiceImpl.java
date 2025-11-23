@@ -20,6 +20,8 @@ import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.NamespaceResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeploymentResponse;
+import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PodResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -37,8 +39,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.kubernetes.client.openapi.ApiClient;
+import io.kubernetes.client.openapi.ApiException;
+import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.CoreV1Api;
+import io.kubernetes.client.openapi.models.V1ContainerStatus;
+import io.kubernetes.client.openapi.models.V1Pod;
+import io.kubernetes.client.openapi.models.V1PodStatus;
+import io.kubernetes.client.util.Config;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -2716,6 +2733,218 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách deployments: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Helper method để tạo Kubernetes client từ SSH session
+     * 
+     * @param session SSH session đến MASTER server
+     * @return ApiClient để tương tác với Kubernetes API
+     * @throws Exception Nếu có lỗi khi tạo client
+     */
+    private ApiClient createKubernetesClient(Session session) throws Exception {
+        String kubeconfigPath = "~/.kube/config";
+        File tempKubeconfig = null;
+        try {
+            String kubeconfigContent = executeCommand(session, "cat " + kubeconfigPath, false);
+            if (kubeconfigContent == null || kubeconfigContent.trim().isEmpty()) {
+                throw new RuntimeException("Không thể đọc kubeconfig từ master server");
+            }
+
+            tempKubeconfig = File.createTempFile("kubeconfig-", ".yaml");
+            try (FileWriter writer = new FileWriter(tempKubeconfig)) {
+                writer.write(kubeconfigContent);
+            }
+
+            ApiClient client = Config.fromConfig(tempKubeconfig.getAbsolutePath());
+            Configuration.setDefaultApiClient(client);
+            return client;
+        } finally {
+            if (tempKubeconfig != null && tempKubeconfig.exists()) {
+                boolean deleted = tempKubeconfig.delete();
+                if (!deleted) {
+                    tempKubeconfig.deleteOnExit();
+                }
+            }
+        }
+    }
+
+    /**
+     * Tính toán age từ creationTimestamp (OffsetDateTime)
+     */
+    private String calculateAge(OffsetDateTime creationTimestamp) {
+        try {
+            if (creationTimestamp == null) {
+                return "";
+            }
+            Instant created = creationTimestamp.toInstant();
+            Instant now = Instant.now();
+            Duration duration = Duration.between(created, now);
+            
+            long days = duration.toDays();
+            long hours = duration.toHours() % 24;
+            long minutes = duration.toMinutes() % 60;
+            
+            if (days > 0) {
+                return days + "d";
+            } else if (hours > 0) {
+                return hours + "h";
+            } else {
+                return minutes + "m";
+            }
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả pods trong cluster sử dụng Kubernetes Java Client.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng CoreV1Api để lấy danh sách pods từ tất cả namespaces
+     * 4. Parse V1Pod objects thành PodResponse:
+     *    - Namespace, Name
+     *    - Ready (ready/total) từ container statuses
+     *    - Status từ phase
+     *    - Restarts từ container statuses
+     *    - Age từ creationTimestamp
+     *    - IP từ status.podIP
+     *    - Node từ spec.nodeName
+     * 5. Tổng hợp và trả về PodListResponse
+     * 
+     * @return PodListResponse chứa danh sách pods
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
+     */
+    @Override
+    public PodListResponse getPods() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
+            session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            CoreV1Api api = new CoreV1Api(client);
+            
+            List<PodResponse> pods = new ArrayList<>();
+            
+            // Lấy danh sách pods từ tất cả namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1PodList podList = api.listPodForAllNamespaces(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
+                
+                if (podList.getItems() == null) {
+                    return new PodListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng pod
+                for (V1Pod v1Pod : podList.getItems()) {
+                    try {
+                        PodResponse pod = new PodResponse();
+                        
+                        // Basic info
+                        String namespace = v1Pod.getMetadata().getNamespace();
+                        String name = v1Pod.getMetadata().getName();
+                        pod.setId(name + "-" + namespace);
+                        pod.setName(name);
+                        pod.setNamespace(namespace);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1Pod.getMetadata().getCreationTimestamp();
+                        pod.setAge(calculateAge(creationTimestamp));
+                        
+                        // Status
+                        V1PodStatus status = v1Pod.getStatus();
+                        if (status != null) {
+                            String phase = status.getPhase();
+                            if (phase != null) {
+                                String podStatus = phase.toLowerCase();
+                                if (podStatus.contains("running")) {
+                                    pod.setStatus("running");
+                                } else if (podStatus.contains("pending")) {
+                                    pod.setStatus("pending");
+                                } else if (podStatus.contains("failed")) {
+                                    pod.setStatus("failed");
+                                } else if (podStatus.contains("succeeded")) {
+                                    pod.setStatus("succeeded");
+                                } else {
+                                    pod.setStatus("pending");
+                                }
+                            }
+                            
+                            // IP
+                            if (status.getPodIP() != null) {
+                                pod.setIp(status.getPodIP());
+                            }
+                            
+                            // Ready count từ container statuses
+                            int ready = 0;
+                            int total = 0;
+                            int restarts = 0;
+                            
+                            if (status.getContainerStatuses() != null) {
+                                total = status.getContainerStatuses().size();
+                                for (V1ContainerStatus containerStatus : status.getContainerStatuses()) {
+                                    if (containerStatus.getReady() != null && containerStatus.getReady()) {
+                                        ready++;
+                                    }
+                                    if (containerStatus.getRestartCount() != null) {
+                                        restarts += containerStatus.getRestartCount();
+                                    }
+                                }
+                            }
+                            
+                            PodResponse.ReadyInfo readyInfo = new PodResponse.ReadyInfo();
+                            readyInfo.setReady(ready);
+                            readyInfo.setTotal(total);
+                            pod.setReady(readyInfo);
+                            pod.setRestarts(restarts);
+                        }
+                        
+                        // Node từ spec
+                        if (v1Pod.getSpec() != null && v1Pod.getSpec().getNodeName() != null) {
+                            pod.setNode(v1Pod.getSpec().getNodeName());
+                        }
+                        
+                        pods.add(pod);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua pod nếu có lỗi, tiếp tục với pod tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách pods từ Kubernetes API: " + e.getMessage(), e);
+            }
+            
+            return new PodListResponse(pods);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách pods: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

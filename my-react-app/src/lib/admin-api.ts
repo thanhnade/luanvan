@@ -1516,8 +1516,29 @@ export const adminAPI = {
 
   // Pods
   getPods: async (): Promise<Pod[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockPods;
+    const response = await api.get("/admin/workloads/pods");
+    const podListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return podListResponse.pods.map((pod: any) => ({
+      id: pod.id || `${pod.name}-${pod.namespace}`,
+      name: pod.name,
+      namespace: pod.namespace,
+      ready: {
+        ready: pod.ready?.ready || 0,
+        total: pod.ready?.total || 0,
+      },
+      node: pod.node || "",
+      status: pod.status === "running" ? "running" : 
+              pod.status === "pending" ? "pending" : 
+              pod.status === "failed" ? "failed" : 
+              pod.status === "succeeded" ? "succeeded" : "pending",
+      restarts: pod.restarts || 0,
+      age: pod.age || "",
+      ip: pod.ip || "",
+      nominatedNode: pod.nominatedNode || undefined,
+      readinessGates: pod.readinessGates || undefined,
+    }));
   },
   getPod: async (id: string): Promise<Pod> => {
     await new Promise((resolve) => setTimeout(resolve, 300));
