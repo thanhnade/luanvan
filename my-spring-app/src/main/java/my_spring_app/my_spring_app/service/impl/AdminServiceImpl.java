@@ -16,6 +16,8 @@ import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
 import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
 import my_spring_app.my_spring_app.dto.reponse.NodeResponse;
+import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
+import my_spring_app.my_spring_app.dto.reponse.NamespaceResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -2441,6 +2443,114 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách nodes: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả namespaces trong cluster.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server
+     * 2. Lấy danh sách namespaces: kubectl get namespaces --no-headers
+     * 3. Với mỗi namespace, lấy thông tin chi tiết:
+     *    - Status (Active/Terminating)
+     *    - Labels
+     *    - Age (thời gian tạo)
+     * 4. Tổng hợp và trả về NamespaceListResponse
+     * 
+     * @return NamespaceListResponse chứa danh sách namespaces
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     */
+    @Override
+    public NamespaceListResponse getNamespaces() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server
+            session = createSession(masterServer);
+            
+            List<NamespaceResponse> namespaces = new ArrayList<>();
+            
+            // Bước 1: Lấy danh sách namespaces với thông tin cơ bản
+            // Format: NAME STATUS AGE
+            String getNamespacesCmd = "kubectl get namespaces --no-headers";
+            String namespacesOutput = executeCommand(session, getNamespacesCmd, false);
+            
+            if (namespacesOutput == null || namespacesOutput.trim().isEmpty()) {
+                return new NamespaceListResponse(new ArrayList<>());
+            }
+            
+            String[] namespaceLines = namespacesOutput.trim().split("\\r?\\n");
+            
+            // Bước 2: Lấy thông tin chi tiết cho từng namespace
+            for (String line : namespaceLines) {
+                if (line.trim().isEmpty()) continue;
+                
+                // Parse dòng: NAME STATUS AGE
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length < 3) continue;
+                
+                String namespaceName = parts[0].trim();
+                String statusStr = parts[1].trim();
+                String ageStr = parts[2].trim();
+                
+                NamespaceResponse namespace = new NamespaceResponse();
+                namespace.setId(namespaceName);
+                namespace.setName(namespaceName);
+                namespace.setAge(ageStr);
+                
+                try {
+                    // Parse status từ output
+                    if (statusStr.equalsIgnoreCase("Active")) {
+                        namespace.setStatus("active");
+                    } else {
+                        namespace.setStatus("terminating");
+                    }
+                    
+                    // Lấy labels
+                    String labelsCmd = String.format("kubectl get namespace %s -o jsonpath='{.metadata.labels}'", namespaceName);
+                    String labelsOutput = executeCommand(session, labelsCmd, true);
+                    Map<String, String> labels = new HashMap<>();
+                    if (labelsOutput != null && !labelsOutput.trim().isEmpty() && !labelsOutput.trim().equals("{}")) {
+                        // Parse labels từ JSON format: {"key1":"value1","key2":"value2"}
+                        String labelsStr = labelsOutput.trim();
+                        if (labelsStr.startsWith("{") && labelsStr.endsWith("}")) {
+                            labelsStr = labelsStr.substring(1, labelsStr.length() - 1);
+                            if (!labelsStr.isEmpty()) {
+                                String[] labelPairs = labelsStr.split(",");
+                                for (String pair : labelPairs) {
+                                    String[] keyValue = pair.split(":");
+                                    if (keyValue.length == 2) {
+                                        String key = keyValue[0].trim().replace("\"", "");
+                                        String value = keyValue[1].trim().replace("\"", "");
+                                        labels.put(key, value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    namespace.setLabels(labels);
+                    
+                    namespaces.add(namespace);
+                    
+                } catch (Exception e) {
+                    // Bỏ qua namespace nếu có lỗi, tiếp tục với namespace tiếp theo
+                }
+            }
+            
+            return new NamespaceListResponse(namespaces);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách namespaces: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

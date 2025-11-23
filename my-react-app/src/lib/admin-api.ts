@@ -1411,8 +1411,17 @@ export const adminAPI = {
 
   // Namespaces
   getNamespaces: async (): Promise<Namespace[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockNamespaces;
+    const response = await api.get("/admin/cluster/namespaces");
+    const namespaceListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return namespaceListResponse.namespaces.map((ns: any) => ({
+      id: ns.id || ns.name,
+      name: ns.name,
+      status: ns.status === "active" ? "active" : "terminating",
+      labels: ns.labels || {},
+      age: ns.age || "",
+    }));
   },
   createNamespace: async (data: Omit<Namespace, "id" | "age">): Promise<Namespace> => {
     await new Promise((resolve) => setTimeout(resolve, 500));

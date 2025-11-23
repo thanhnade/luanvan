@@ -12,6 +12,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
 import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
+import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -107,10 +108,17 @@ public class AdminController {
         return ResponseEntity.ok(response);
     }
 
-    // Cluster Services - Services
+    // Cluster & Overview  - Nodes
     @GetMapping("/cluster/nodes")
     public ResponseEntity<NodeListResponse> getNodes() {
         NodeListResponse response = adminService.getNodes();
+        return ResponseEntity.ok(response);
+    }
+
+    // Cluster & Overview  - Namespaces
+    @GetMapping("/cluster/namespaces")
+    public ResponseEntity<NamespaceListResponse> getNamespaces() {
+        NamespaceListResponse response = adminService.getNamespaces();
         return ResponseEntity.ok(response);
     }
 }
