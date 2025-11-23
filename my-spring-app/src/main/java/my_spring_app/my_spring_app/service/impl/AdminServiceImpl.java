@@ -24,6 +24,8 @@ import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
 import my_spring_app.my_spring_app.dto.reponse.PodResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetResponse;
+import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
+import my_spring_app.my_spring_app.dto.reponse.ServiceResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -51,6 +53,10 @@ import io.kubernetes.client.openapi.models.V1Pod;
 import io.kubernetes.client.openapi.models.V1PodStatus;
 import io.kubernetes.client.openapi.models.V1Namespace;
 import io.kubernetes.client.openapi.models.V1NamespaceStatus;
+import io.kubernetes.client.openapi.models.V1Service;
+import io.kubernetes.client.openapi.models.V1ServiceSpec;
+import io.kubernetes.client.openapi.models.V1ServicePort;
+import io.kubernetes.client.openapi.models.V1ServiceStatus;
 import io.kubernetes.client.openapi.models.V1StatefulSet;
 import io.kubernetes.client.openapi.models.V1StatefulSetStatus;
 import io.kubernetes.client.openapi.models.V1StatefulSetCondition;
@@ -3135,6 +3141,189 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách statefulsets: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả services trong cluster sử dụng Kubernetes Java Client.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng CoreV1Api để lấy danh sách services từ tất cả namespaces
+     * 4. Parse V1Service objects thành ServiceResponse:
+     *    - Namespace, Name
+     *    - Type từ spec.type (ClusterIP, NodePort, LoadBalancer)
+     *    - ClusterIP từ spec.clusterIP
+     *    - ExternalIP từ status.loadBalancer.ingress hoặc spec.externalIPs
+     *    - Ports từ spec.ports (port, targetPort, protocol)
+     *    - Selector từ spec.selector
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về ServiceListResponse
+     * 
+     * @return ServiceListResponse chứa danh sách services
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
+     */
+    @Override
+    public ServiceListResponse getServices() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
+            session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            CoreV1Api api = new CoreV1Api(client);
+            
+            List<ServiceResponse> services = new ArrayList<>();
+            
+            // Lấy danh sách services từ tất cả namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1ServiceList serviceList = api.listServiceForAllNamespaces(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
+                
+                if (serviceList.getItems() == null) {
+                    return new ServiceListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng service
+                for (V1Service v1Service : serviceList.getItems()) {
+                    try {
+                        ServiceResponse service = new ServiceResponse();
+                        
+                        // Basic info
+                        String namespace = v1Service.getMetadata().getNamespace();
+                        String name = v1Service.getMetadata().getName();
+                        service.setId(name + "-" + namespace);
+                        service.setName(name);
+                        service.setNamespace(namespace);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1Service.getMetadata().getCreationTimestamp();
+                        service.setAge(calculateAge(creationTimestamp));
+                        
+                        // Service spec
+                        V1ServiceSpec spec = v1Service.getSpec();
+                        if (spec != null) {
+                            // Type
+                            if (spec.getType() != null) {
+                                service.setType(spec.getType());
+                            } else {
+                                service.setType("ClusterIP"); // Default
+                            }
+                            
+                            // ClusterIP
+                            if (spec.getClusterIP() != null && !spec.getClusterIP().equals("None")) {
+                                service.setClusterIP(spec.getClusterIP());
+                            } else {
+                                service.setClusterIP("-");
+                            }
+                            
+                            // Ports
+                            List<ServiceResponse.PortInfo> ports = new ArrayList<>();
+                            if (spec.getPorts() != null) {
+                                for (V1ServicePort servicePort : spec.getPorts()) {
+                                    ServiceResponse.PortInfo portInfo = new ServiceResponse.PortInfo();
+                                    if (servicePort.getPort() != null) {
+                                        portInfo.setPort(servicePort.getPort());
+                                    }
+                                    // TargetPort có thể là IntOrString (Integer hoặc String)
+                                    if (servicePort.getTargetPort() != null) {
+                                        if (servicePort.getTargetPort().isInteger()) {
+                                            portInfo.setTargetPort(servicePort.getTargetPort().getIntValue());
+                                        } else if (servicePort.getTargetPort().getStrValue() != null) {
+                                            // Nếu là string, cố gắng parse hoặc dùng port làm targetPort
+                                            try {
+                                                portInfo.setTargetPort(Integer.parseInt(servicePort.getTargetPort().getStrValue()));
+                                            } catch (NumberFormatException e) {
+                                                // Nếu không parse được, dùng port làm targetPort
+                                                portInfo.setTargetPort(servicePort.getPort());
+                                            }
+                                        }
+                                    } else {
+                                        // Nếu không có targetPort, dùng port
+                                        portInfo.setTargetPort(servicePort.getPort());
+                                    }
+                                    if (servicePort.getProtocol() != null) {
+                                        portInfo.setProtocol(servicePort.getProtocol());
+                                    } else {
+                                        portInfo.setProtocol("TCP"); // Default
+                                    }
+                                    ports.add(portInfo);
+                                }
+                            }
+                            service.setPorts(ports);
+                            
+                            // Selector
+                            if (spec.getSelector() != null && !spec.getSelector().isEmpty()) {
+                                Map<String, String> selector = new HashMap<>(spec.getSelector());
+                                service.setSelector(selector);
+                            } else {
+                                service.setSelector(new HashMap<>());
+                            }
+                        }
+                        
+                        // ExternalIP
+                        String externalIP = "-";
+                        V1ServiceStatus status = v1Service.getStatus();
+                        if (status != null && status.getLoadBalancer() != null 
+                                && status.getLoadBalancer().getIngress() != null
+                                && !status.getLoadBalancer().getIngress().isEmpty()) {
+                            // Lấy IP từ LoadBalancer ingress
+                            List<String> externalIPs = new ArrayList<>();
+                            for (io.kubernetes.client.openapi.models.V1LoadBalancerIngress ingress : 
+                                    status.getLoadBalancer().getIngress()) {
+                                if (ingress.getIp() != null) {
+                                    externalIPs.add(ingress.getIp());
+                                } else if (ingress.getHostname() != null) {
+                                    externalIPs.add(ingress.getHostname());
+                                }
+                            }
+                            if (!externalIPs.isEmpty()) {
+                                externalIP = String.join(",", externalIPs);
+                            }
+                        } else if (spec != null && spec.getExternalIPs() != null && !spec.getExternalIPs().isEmpty()) {
+                            // Fallback: lấy từ spec.externalIPs
+                            externalIP = String.join(",", spec.getExternalIPs());
+                        }
+                        service.setExternalIP(externalIP);
+                        
+                        services.add(service);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua service nếu có lỗi, tiếp tục với service tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách services từ Kubernetes API: " + e.getMessage(), e);
+            }
+            
+            return new ServiceListResponse(services);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách services: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

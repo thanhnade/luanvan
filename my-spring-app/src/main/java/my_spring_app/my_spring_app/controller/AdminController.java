@@ -16,6 +16,7 @@ import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
 import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
+import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -143,6 +144,13 @@ public class AdminController {
     @GetMapping("/workloads/statefulsets")
     public ResponseEntity<StatefulsetListResponse> getStatefulsets() {
         StatefulsetListResponse response = adminService.getStatefulsets();
+        return ResponseEntity.ok(response);
+    }
+
+    // Service Discovery - Services
+    @GetMapping("/services")
+    public ResponseEntity<ServiceListResponse> getServices() {
+        ServiceListResponse response = adminService.getServices();
         return ResponseEntity.ok(response);
     }
 }

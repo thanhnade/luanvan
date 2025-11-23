@@ -1705,8 +1705,27 @@ export const adminAPI = {
 
   // Services
   getServices: async (): Promise<Service[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockServices;
+    const response = await api.get("/admin/services");
+    const serviceListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return serviceListResponse.services.map((svc: any) => ({
+      id: svc.id || `${svc.name}-${svc.namespace}`,
+      name: svc.name,
+      namespace: svc.namespace,
+      type: (svc.type === "ClusterIP" || svc.type === "NodePort" || svc.type === "LoadBalancer") 
+        ? svc.type 
+        : "ClusterIP",
+      clusterIP: svc.clusterIP || "-",
+      externalIP: svc.externalIP || "-",
+      ports: (svc.ports || []).map((p: any) => ({
+        port: p.port || 80,
+        targetPort: p.targetPort || p.port || 8080,
+        protocol: p.protocol || "TCP",
+      })),
+      selector: svc.selector || {},
+      age: svc.age || "",
+    }));
   },
   createService: async (data: Omit<Service, "id" | "age">): Promise<Service> => {
     await new Promise((resolve) => setTimeout(resolve, 500));
