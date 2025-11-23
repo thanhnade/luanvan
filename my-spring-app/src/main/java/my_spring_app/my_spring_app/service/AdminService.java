@@ -11,6 +11,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
+import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
 
 public interface AdminService {
 
@@ -35,4 +36,6 @@ public interface AdminService {
     AdminFrontendDetailResponse getFrontendDetail(Long frontendId);
 
     DashboardMetricsResponse getDashboardMetrics();
+
+    NodeListResponse getNodes();
 }

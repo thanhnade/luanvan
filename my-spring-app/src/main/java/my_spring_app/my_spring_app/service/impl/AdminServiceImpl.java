@@ -14,6 +14,8 @@ import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
+import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
+import my_spring_app.my_spring_app.dto.reponse.NodeResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -2203,6 +2205,242 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy dashboard metrics: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả nodes trong cluster với thông tin chi tiết về CPU, Memory, Disk, Pods.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server
+     * 2. Lấy danh sách nodes với thông tin cơ bản: kubectl get nodes -o wide
+     * 3. Lấy capacity và allocatable cho từng node: kubectl get nodes -o jsonpath
+     * 4. Lấy usage (requested) từ kubectl top nodes
+     * 5. Đếm số pods trên mỗi node: kubectl get pods --all-namespaces --field-selector
+     * 6. Lấy thông tin OS và Kernel từ node info
+     * 7. Tổng hợp và trả về NodeListResponse
+     * 
+     * @return NodeListResponse chứa danh sách nodes với đầy đủ thông tin
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     */
+    @Override
+    public NodeListResponse getNodes() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server
+            session = createSession(masterServer);
+            
+            List<NodeResponse> nodes = new ArrayList<>();
+            
+            // Bước 1: Lấy danh sách tên nodes
+            String getNodesCmd = "kubectl get nodes --no-headers -o custom-columns=NAME:.metadata.name";
+            String nodesOutput = executeCommand(session, getNodesCmd, false);
+            
+            if (nodesOutput == null || nodesOutput.trim().isEmpty()) {
+                return new NodeListResponse(new ArrayList<>());
+            }
+            
+            String[] nodeNames = nodesOutput.trim().split("\\r?\\n");
+            
+            // Bước 1.5: Lấy danh sách tất cả servers từ database để match với nodes
+            List<ServerEntity> allServers = serverRepository.findAll();
+            Map<String, ServerEntity> serverMap = new HashMap<>();
+            for (ServerEntity server : allServers) {
+                // Match theo tên server (node name thường trùng với server name)
+                serverMap.put(server.getName(), server);
+                // Cũng có thể match theo IP nếu cần
+            }
+            
+            // Bước 2: Lấy thông tin chi tiết cho từng node
+            for (String nodeName : nodeNames) {
+                if (nodeName.trim().isEmpty()) continue;
+                nodeName = nodeName.trim();
+                
+                NodeResponse node = new NodeResponse();
+                node.setId(nodeName);
+                node.setName(nodeName);
+                
+                try {
+                    // Lấy status (Ready/NotReady)
+                    String statusCmd = String.format("kubectl get node %s -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'", nodeName);
+                    String status = executeCommand(session, statusCmd, true);
+                    if (status != null && status.trim().equals("True")) {
+                        node.setStatus("ready");
+                    } else {
+                        node.setStatus("notready");
+                    }
+                    
+                    // Lấy role (master/worker) từ labels
+                    String roleCmd = String.format("kubectl get node %s -o jsonpath='{.metadata.labels.node-role\\.kubernetes\\.io/control-plane}'", nodeName);
+                    String roleLabel = executeCommand(session, roleCmd, true);
+                    if (roleLabel != null && !roleLabel.trim().isEmpty()) {
+                        node.setRole("master");
+                    } else {
+                        node.setRole("worker");
+                    }
+                    
+                    // Lấy OS và Kernel
+                    String osCmd = String.format("kubectl get node %s -o jsonpath='{.status.nodeInfo.operatingSystem}'", nodeName);
+                    String os = executeCommand(session, osCmd, true);
+                    node.setOs(os != null ? os.trim() : "Unknown");
+                    
+                    String kernelCmd = String.format("kubectl get node %s -o jsonpath='{.status.nodeInfo.kernelVersion}'", nodeName);
+                    String kernel = executeCommand(session, kernelCmd, true);
+                    node.setKernel(kernel != null ? kernel.trim() : "Unknown");
+                    
+                    // Lấy CPU capacity và allocatable
+                    String cpuCapacityCmd = String.format("kubectl get node %s -o jsonpath='{.status.capacity.cpu}'", nodeName);
+                    String cpuCapacityStr = executeCommand(session, cpuCapacityCmd, true);
+                    double cpuCapacity = 0.0;
+                    if (cpuCapacityStr != null && !cpuCapacityStr.trim().isEmpty()) {
+                        cpuCapacity = parseCpuCores(cpuCapacityStr.trim());
+                    }
+                    
+                    String cpuAllocatableCmd = String.format("kubectl get node %s -o jsonpath='{.status.allocatable.cpu}'", nodeName);
+                    String cpuAllocatableStr = executeCommand(session, cpuAllocatableCmd, true);
+                    double cpuAllocatable = 0.0;
+                    if (cpuAllocatableStr != null && !cpuAllocatableStr.trim().isEmpty()) {
+                        cpuAllocatable = parseCpuCores(cpuAllocatableStr.trim());
+                    }
+                    
+                    // Lấy Memory capacity và allocatable
+                    String memCapacityCmd = String.format("kubectl get node %s -o jsonpath='{.status.capacity.memory}'", nodeName);
+                    String memCapacityStr = executeCommand(session, memCapacityCmd, true);
+                    long memCapacityBytes = 0L;
+                    if (memCapacityStr != null && !memCapacityStr.trim().isEmpty()) {
+                        memCapacityBytes = parseMemoryBytes(memCapacityStr.trim());
+                    }
+                    
+                    String memAllocatableCmd = String.format("kubectl get node %s -o jsonpath='{.status.allocatable.memory}'", nodeName);
+                    String memAllocatableStr = executeCommand(session, memAllocatableCmd, true);
+                    long memAllocatableBytes = 0L;
+                    if (memAllocatableStr != null && !memAllocatableStr.trim().isEmpty()) {
+                        memAllocatableBytes = parseMemoryBytes(memAllocatableStr.trim());
+                    }
+                    
+                    // Lấy CPU và Memory usage từ kubectl top nodes
+                    // Format output: NAME       CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+                    // Ví dụ:        master-1   145m         7%     1981Mi          70%
+                    double cpuUsed = 0.0;
+                    long memUsedBytes = 0L;
+                    try {
+                        String topNodesCmd = "kubectl top nodes --no-headers";
+                        String topOutput = executeCommand(session, topNodesCmd, true);
+                        if (topOutput != null && !topOutput.trim().isEmpty()) {
+                            String[] lines = topOutput.trim().split("\\r?\\n");
+                            for (String line : lines) {
+                                String[] parts = line.trim().split("\\s+");
+                                // parts[0] = NAME, parts[1] = CPU(cores), parts[2] = CPU%, parts[3] = MEMORY(bytes), parts[4] = MEMORY%
+                                if (parts.length >= 4 && parts[0].equals(nodeName)) {
+                                    cpuUsed = parseCpuCores(parts[1]);
+                                    memUsedBytes = parseMemoryBytes(parts[3]);
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Nếu kubectl top không khả dụng, để giá trị mặc định 0
+                    }
+                    
+                    // Đếm số pods trên node
+                    int podCount = 0;
+                    try {
+                        String podCountCmd = String.format("kubectl get pods --all-namespaces --field-selector spec.nodeName=%s --no-headers", nodeName);
+                        String podOutput = executeCommand(session, podCountCmd, true);
+                        if (podOutput != null && !podOutput.trim().isEmpty()) {
+                            String[] podLines = podOutput.trim().split("\\r?\\n");
+                            podCount = podLines.length;
+                        }
+                    } catch (Exception e) {
+                        // Nếu không đếm được, để giá trị mặc định 0
+                    }
+                    node.setPodCount(podCount);
+                    
+                    // Tạo NodeResource cho CPU
+                    NodeResponse.NodeResource cpuResource = new NodeResponse.NodeResource();
+                    cpuResource.setRequested(roundToThreeDecimals(cpuUsed));
+                    cpuResource.setLimit(roundToThreeDecimals(cpuAllocatable));
+                    cpuResource.setCapacity(roundToThreeDecimals(cpuCapacity));
+                    node.setCpu(cpuResource);
+                    
+                    // Tạo NodeResource cho Memory
+                    NodeResponse.NodeResource memResource = new NodeResponse.NodeResource();
+                    memResource.setRequested(roundToThreeDecimals(bytesToGb(memUsedBytes)));
+                    memResource.setLimit(roundToThreeDecimals(bytesToGb(memAllocatableBytes)));
+                    memResource.setCapacity(roundToThreeDecimals(bytesToGb(memCapacityBytes)));
+                    node.setMemory(memResource);
+                    
+                    // Disk: Lấy từ server bằng cách SSH vào từng server và chạy df -h /
+                    NodeResponse.NodeResource diskResource = new NodeResponse.NodeResource();
+                    double diskUsed = 0.0;
+                    double diskCapacity = 0.0;
+                    
+                    // Tìm server tương ứng với node name
+                    ServerEntity nodeServer = serverMap.get(nodeName);
+                    if (nodeServer != null) {
+                        Session nodeSession = null;
+                        try {
+                            // SSH vào server của node
+                            nodeSession = createSession(nodeServer);
+                            
+                            // Chạy lệnh df -h / để lấy thông tin disk
+                            // Output format: Filesystem      Size  Used Avail Use% Mounted on
+                            //                /dev/sda1        20G  5.0G   14G  26% /
+                            String dfCmd = "df -h / | tail -n 1";
+                            String dfOutput = executeCommand(nodeSession, dfCmd, true);
+                            
+                            if (dfOutput != null && !dfOutput.trim().isEmpty()) {
+                                // Parse output: /dev/sda1        20G  5.0G   14G  26% /
+                                String[] dfParts = dfOutput.trim().split("\\s+");
+                                if (dfParts.length >= 4) {
+                                    // dfParts[1] = Size (20G), dfParts[2] = Used (5.0G)
+                                    String sizeStr = dfParts[1]; // 20G
+                                    String usedStr = dfParts[2]; // 5.0G
+                                    
+                                    diskCapacity = parseMemoryBytes(sizeStr) / BYTES_PER_GB;
+                                    diskUsed = parseMemoryBytes(usedStr) / BYTES_PER_GB;
+                                }
+                            }
+                        } catch (Exception e) {
+                            // Nếu không thể lấy disk info, để giá trị mặc định 0
+                        } finally {
+                            if (nodeSession != null && nodeSession.isConnected()) {
+                                nodeSession.disconnect();
+                            }
+                        }
+                    }
+                    
+                    diskResource.setRequested(roundToThreeDecimals(diskUsed));
+                    diskResource.setLimit(roundToThreeDecimals(diskCapacity)); // Limit = Capacity cho disk
+                    diskResource.setCapacity(roundToThreeDecimals(diskCapacity));
+                    node.setDisk(diskResource);
+                    
+                    // UpdatedAt: Lấy từ node conditions
+                    String updatedAtCmd = String.format("kubectl get node %s -o jsonpath='{.metadata.creationTimestamp}'", nodeName);
+                    String updatedAt = executeCommand(session, updatedAtCmd, true);
+                    node.setUpdatedAt(updatedAt != null ? updatedAt.trim() : "");
+                    
+                    nodes.add(node);
+                    
+                } catch (Exception e) {
+                    // Bỏ qua node nếu có lỗi, tiếp tục với node tiếp theo
+                }
+            }
+            
+            return new NodeListResponse(nodes);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách nodes: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

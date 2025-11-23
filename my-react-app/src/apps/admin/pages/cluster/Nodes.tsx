@@ -54,7 +54,7 @@ export function Nodes() {
       align: "center" as const,
       render: (node: Node) => (
         <span className="text-sm">
-          {node.cpu.requested}/{node.cpu.limit} / {node.cpu.capacity}
+          {node.cpu.requested.toFixed(2)} / {node.cpu.capacity.toFixed(2)}
         </span>
       ),
     },
@@ -64,7 +64,7 @@ export function Nodes() {
       align: "center" as const,
       render: (node: Node) => (
         <span className="text-sm">
-          {node.memory.requested}/{node.memory.limit} / {node.memory.capacity} GB
+          {node.memory.requested.toFixed(2)} / {node.memory.capacity.toFixed(2)} GB
         </span>
       ),
     },
@@ -74,7 +74,7 @@ export function Nodes() {
       align: "center" as const,
       render: (node: Node) => (
         <span className="text-sm">
-          {node.disk.requested}/{node.disk.limit} / {node.disk.capacity} GB
+          {node.disk.requested.toFixed(2)} / {node.disk.capacity.toFixed(2)} GB
         </span>
       ),
     },

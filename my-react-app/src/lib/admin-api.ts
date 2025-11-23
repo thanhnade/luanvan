@@ -1372,8 +1372,35 @@ export const adminAPI = {
 
   // Nodes
   getNodes: async (): Promise<Node[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockNodes;
+    const response = await api.get("/admin/cluster/nodes");
+    const nodeListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return nodeListResponse.nodes.map((node: any) => ({
+      id: node.id || node.name,
+      name: node.name,
+      status: node.status === "ready" ? "ready" : "notready",
+      role: node.role === "master" ? "master" : "worker",
+      cpu: {
+        requested: node.cpu?.requested || 0,
+        limit: node.cpu?.limit || 0,
+        capacity: node.cpu?.capacity || 0,
+      },
+      memory: {
+        requested: node.memory?.requested || 0,
+        limit: node.memory?.limit || 0,
+        capacity: node.memory?.capacity || 0,
+      },
+      disk: {
+        requested: node.disk?.requested || 0,
+        limit: node.disk?.limit || 0,
+        capacity: node.disk?.capacity || 0,
+      },
+      podCount: node.podCount || 0,
+      os: node.os || "Unknown",
+      kernel: node.kernel || "Unknown",
+      updatedAt: node.updatedAt || "",
+    }));
   },
   getNode: async (id: string): Promise<Node> => {
     await new Promise((resolve) => setTimeout(resolve, 300));
