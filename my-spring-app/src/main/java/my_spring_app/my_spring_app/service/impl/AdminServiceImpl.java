@@ -28,6 +28,10 @@ import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServiceResponse;
 import my_spring_app.my_spring_app.dto.reponse.IngressListResponse;
 import my_spring_app.my_spring_app.dto.reponse.IngressResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVCListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVCResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -65,6 +69,13 @@ import io.kubernetes.client.openapi.models.V1IngressSpec;
 import io.kubernetes.client.openapi.models.V1IngressRule;
 import io.kubernetes.client.openapi.models.V1IngressStatus;
 import io.kubernetes.client.openapi.models.V1IngressLoadBalancerIngress;
+import io.kubernetes.client.openapi.models.V1PersistentVolumeClaim;
+import io.kubernetes.client.openapi.models.V1PersistentVolumeClaimSpec;
+import io.kubernetes.client.openapi.models.V1PersistentVolumeClaimStatus;
+import io.kubernetes.client.openapi.models.V1PersistentVolume;
+import io.kubernetes.client.openapi.models.V1PersistentVolumeSpec;
+import io.kubernetes.client.openapi.models.V1PersistentVolumeStatus;
+import io.kubernetes.client.openapi.models.V1ObjectReference;
 import io.kubernetes.client.openapi.models.V1StatefulSet;
 import io.kubernetes.client.openapi.models.V1StatefulSetStatus;
 import io.kubernetes.client.openapi.models.V1StatefulSetCondition;
@@ -1035,6 +1046,61 @@ public class AdminServiceImpl implements AdminService {
     private double bytesToGb(long bytes) {
         // 1 GB = 1024^3 bytes = BYTES_PER_GB
         return bytes / BYTES_PER_GB;
+    }
+
+    /**
+     * Parse Quantity object từ Kubernetes và chuyển sang GB (Gigabytes).
+     * 
+     * Quantity trong Kubernetes có thể có format khác nhau:
+     * - BINARY_SI: Binary units (1024-based) - number đã là bytes
+     * - DECIMAL_SI: Decimal units (1000-based) - number đã là bytes
+     * 
+     * Logic:
+     * 1. Parse từ toString() của Quantity object (format: "Quantity{number=1073741824, format=BINARY_SI}")
+     * 2. Lấy number từ string (đã là bytes)
+     * 3. Chuyển sang GB bằng bytesToGb()
+     * 4. Format thành string với "GB"
+     * 
+     * @param quantity Quantity object từ Kubernetes (có thể là Object)
+     * @return String capacity dạng "X.XXX GB" hoặc "" nếu quantity null
+     */
+    private String parseQuantityToGB(Object quantity) {
+        if (quantity == null) {
+            return "";
+        }
+        
+        try {
+            // Parse từ toString() của Quantity object
+            // Format: "Quantity{number=1073741824, format=BINARY_SI}"
+            String quantityStr = quantity.toString();
+            
+            // Extract number từ string: "Quantity{number=1073741824, format=...}"
+            // Pattern: number=(\d+)
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("number=(-?\\d+)");
+            java.util.regex.Matcher matcher = pattern.matcher(quantityStr);
+            
+            if (matcher.find()) {
+                String numberStr = matcher.group(1);
+                long bytes = Long.parseLong(numberStr);
+                
+                // Chuyển sang GB
+                double gb = bytesToGb(bytes);
+                
+                // Làm tròn đến 3 chữ số thập phân và format
+                double roundedGb = roundToThreeDecimals(gb);
+                
+                // Format thành string với "GB", loại bỏ số 0 thừa
+                String result = String.format("%.3f GB", roundedGb);
+                return result.replaceAll("\\.?0+ GB$", " GB");
+            } else {
+                // Nếu không parse được, thử parse trực tiếp từ string (có thể đã là format khác)
+                // Ví dụ: "1Gi", "1073741824", etc.
+                return "";
+            }
+        } catch (Exception e) {
+            // Nếu có lỗi, trả về empty string
+            return "";
+        }
     }
 
     /**
@@ -3509,6 +3575,352 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách ingress: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả PVCs (PersistentVolumeClaims) trong cluster sử dụng Kubernetes Java Client.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng CoreV1Api để lấy danh sách PVCs từ tất cả namespaces
+     * 4. Parse V1PersistentVolumeClaim objects thành PVCResponse:
+     *    - Namespace, Name
+     *    - Status từ status.phase (Bound/Pending)
+     *    - Volume từ spec.volumeName
+     *    - Capacity từ status.capacity.storage
+     *    - AccessModes từ spec.accessModes
+     *    - StorageClass từ spec.storageClassName
+     *    - VolumeAttributesClass từ spec.volumeAttributesClassName
+     *    - VolumeMode từ spec.volumeMode
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về PVCListResponse
+     * 
+     * @return PVCListResponse chứa danh sách PVCs
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
+     */
+    @Override
+    public PVCListResponse getPVCs() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
+            session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            CoreV1Api api = new CoreV1Api(client);
+            
+            List<PVCResponse> pvcs = new ArrayList<>();
+            
+            // Lấy danh sách PVCs từ tất cả namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1PersistentVolumeClaimList pvcList = api.listPersistentVolumeClaimForAllNamespaces(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
+                
+                if (pvcList.getItems() == null) {
+                    return new PVCListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng PVC
+                for (V1PersistentVolumeClaim v1PVC : pvcList.getItems()) {
+                    try {
+                        PVCResponse pvc = new PVCResponse();
+                        
+                        // Basic info
+                        String namespace = v1PVC.getMetadata().getNamespace();
+                        String name = v1PVC.getMetadata().getName();
+                        pvc.setId(name + "-" + namespace);
+                        pvc.setName(name);
+                        pvc.setNamespace(namespace);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1PVC.getMetadata().getCreationTimestamp();
+                        pvc.setAge(calculateAge(creationTimestamp));
+                        
+                        // PVC spec
+                        V1PersistentVolumeClaimSpec spec = v1PVC.getSpec();
+                        if (spec != null) {
+                            // AccessModes
+                            List<String> accessModes = new ArrayList<>();
+                            if (spec.getAccessModes() != null) {
+                                accessModes.addAll(spec.getAccessModes());
+                            }
+                            pvc.setAccessModes(accessModes);
+                            
+                            // StorageClass
+                            if (spec.getStorageClassName() != null) {
+                                pvc.setStorageClass(spec.getStorageClassName());
+                            } else {
+                                pvc.setStorageClass("");
+                            }
+                            
+                            // VolumeAttributesClass - không có trong version hiện tại của Kubernetes Java Client
+                            pvc.setVolumeAttributesClass(null);
+                            
+                            // VolumeMode
+                            if (spec.getVolumeMode() != null) {
+                                pvc.setVolumeMode(spec.getVolumeMode());
+                            } else {
+                                pvc.setVolumeMode(null);
+                            }
+                            
+                            // Volume từ spec.volumeName
+                            if (spec.getVolumeName() != null && !spec.getVolumeName().isEmpty()) {
+                                pvc.setVolume(spec.getVolumeName());
+                            } else {
+                                pvc.setVolume(null);
+                            }
+                        }
+                        
+                        // PVC status
+                        V1PersistentVolumeClaimStatus status = v1PVC.getStatus();
+                        if (status != null) {
+                            // Status từ phase
+                            if (status.getPhase() != null) {
+                                String phase = status.getPhase();
+                                if ("Bound".equalsIgnoreCase(phase)) {
+                                    pvc.setStatus("bound");
+                                } else {
+                                    pvc.setStatus("pending");
+                                }
+                            } else {
+                                pvc.setStatus("pending");
+                            }
+                            
+                            // Capacity từ status.capacity
+                            if (status.getCapacity() != null && status.getCapacity().containsKey("storage")) {
+                                String capacity = parseQuantityToGB(status.getCapacity().get("storage"));
+                                pvc.setCapacity(capacity);
+                            } else if (spec != null && spec.getResources() != null 
+                                    && spec.getResources().getRequests() != null
+                                    && spec.getResources().getRequests().containsKey("storage")) {
+                                // Fallback: lấy từ spec.resources.requests.storage
+                                String capacity = parseQuantityToGB(spec.getResources().getRequests().get("storage"));
+                                pvc.setCapacity(capacity);
+                            } else {
+                                pvc.setCapacity("");
+                            }
+                        } else {
+                            pvc.setStatus("pending");
+                            pvc.setCapacity("");
+                        }
+                        
+                        pvcs.add(pvc);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua PVC nếu có lỗi, tiếp tục với PVC tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách PVCs từ Kubernetes API: " + e.getMessage(), e);
+            }
+            
+            return new PVCListResponse(pvcs);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách PVCs: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả PVs (PersistentVolumes) trong cluster sử dụng Kubernetes Java Client.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng CoreV1Api để lấy danh sách PVs
+     * 4. Parse V1PersistentVolume objects thành PVResponse:
+     *    - Name
+     *    - Capacity từ spec.capacity.storage
+     *    - AccessModes từ spec.accessModes
+     *    - ReclaimPolicy từ spec.persistentVolumeReclaimPolicy
+     *    - Status từ status.phase (Available/Bound/Released)
+     *    - StorageClass từ spec.storageClassName
+     *    - Claim từ spec.claimRef (namespace và name)
+     *    - VolumeAttributesClass từ spec.volumeAttributesClassName
+     *    - Reason từ status.reason
+     *    - VolumeMode từ spec.volumeMode
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về PVListResponse
+     * 
+     * @return PVListResponse chứa danh sách PVs
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
+     */
+    @Override
+    public PVListResponse getPVs() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
+            session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            CoreV1Api api = new CoreV1Api(client);
+            
+            List<PVResponse> pvs = new ArrayList<>();
+            
+            // Lấy danh sách PVs
+            try {
+                io.kubernetes.client.openapi.models.V1PersistentVolumeList pvList = api.listPersistentVolume(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
+                
+                if (pvList.getItems() == null) {
+                    return new PVListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng PV
+                for (V1PersistentVolume v1PV : pvList.getItems()) {
+                    try {
+                        PVResponse pv = new PVResponse();
+                        
+                        // Basic info
+                        String name = v1PV.getMetadata().getName();
+                        pv.setId(name);
+                        pv.setName(name);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1PV.getMetadata().getCreationTimestamp();
+                        pv.setAge(calculateAge(creationTimestamp));
+                        
+                        // PV spec
+                        V1PersistentVolumeSpec spec = v1PV.getSpec();
+                        if (spec != null) {
+                            // Capacity từ spec.capacity
+                            if (spec.getCapacity() != null && spec.getCapacity().containsKey("storage")) {
+                                String capacity = parseQuantityToGB(spec.getCapacity().get("storage"));
+                                pv.setCapacity(capacity);
+                            } else {
+                                pv.setCapacity("");
+                            }
+                            
+                            // AccessModes
+                            List<String> accessModes = new ArrayList<>();
+                            if (spec.getAccessModes() != null) {
+                                accessModes.addAll(spec.getAccessModes());
+                            }
+                            pv.setAccessModes(accessModes);
+                            
+                            // ReclaimPolicy
+                            if (spec.getPersistentVolumeReclaimPolicy() != null) {
+                                pv.setReclaimPolicy(spec.getPersistentVolumeReclaimPolicy());
+                            } else {
+                                pv.setReclaimPolicy("Retain"); // Default
+                            }
+                            
+                            // StorageClass
+                            if (spec.getStorageClassName() != null) {
+                                pv.setStorageClass(spec.getStorageClassName());
+                            } else {
+                                pv.setStorageClass("");
+                            }
+                            
+                            // Claim từ spec.claimRef
+                            if (spec.getClaimRef() != null) {
+                                V1ObjectReference claimRef = spec.getClaimRef();
+                                PVResponse.ClaimInfo claim = new PVResponse.ClaimInfo();
+                                if (claimRef.getNamespace() != null) {
+                                    claim.setNamespace(claimRef.getNamespace());
+                                }
+                                if (claimRef.getName() != null) {
+                                    claim.setName(claimRef.getName());
+                                }
+                                pv.setClaim(claim);
+                            } else {
+                                pv.setClaim(null);
+                            }
+                            
+                            // VolumeAttributesClass - không có trong version hiện tại của Kubernetes Java Client
+                            pv.setVolumeAttributesClass(null);
+                            
+                            // VolumeMode
+                            if (spec.getVolumeMode() != null) {
+                                pv.setVolumeMode(spec.getVolumeMode());
+                            } else {
+                                pv.setVolumeMode(null);
+                            }
+                        }
+                        
+                        // PV status
+                        V1PersistentVolumeStatus status = v1PV.getStatus();
+                        if (status != null) {
+                            // Status từ phase
+                            if (status.getPhase() != null) {
+                                String phase = status.getPhase();
+                                pv.setStatus(phase.toLowerCase()); // Available, Bound, Released
+                            } else {
+                                pv.setStatus("available");
+                            }
+                            
+                            // Reason
+                            if (status.getReason() != null) {
+                                pv.setReason(status.getReason());
+                            } else {
+                                pv.setReason(null);
+                            }
+                        } else {
+                            pv.setStatus("available");
+                            pv.setReason(null);
+                        }
+                        
+                        pvs.add(pv);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua PV nếu có lỗi, tiếp tục với PV tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách PVs từ Kubernetes API: " + e.getMessage(), e);
+            }
+            
+            return new PVListResponse(pvs);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách PVs: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

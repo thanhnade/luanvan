@@ -150,16 +150,6 @@ export function PVList() {
       label: "STORAGECLASS",
     },
     {
-      key: "volumeAttributesClass",
-      label: "VOLUMEATTRIBUTESCLASS",
-      render: (pv: PV) => pv.volumeAttributesClass || "-",
-    },
-    {
-      key: "reason",
-      label: "REASON",
-      render: (pv: PV) => pv.reason || "-",
-    },
-    {
       key: "age",
       label: "AGE",
     },

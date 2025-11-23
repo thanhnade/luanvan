@@ -133,11 +133,6 @@ export function PVCList() {
       label: "STORAGECLASS",
     },
     {
-      key: "volumeAttributesClass",
-      label: "VOLUMEATTRIBUTESCLASS",
-      render: (pvc: PVC) => pvc.volumeAttributesClass || "-",
-    },
-    {
       key: "age",
       label: "AGE",
     },

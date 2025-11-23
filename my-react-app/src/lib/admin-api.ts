@@ -1861,8 +1861,23 @@ export const adminAPI = {
 
   // PVC
   getPVCs: async (): Promise<PVC[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockPVCs;
+    const response = await api.get("/admin/storage/pvcs");
+    const pvcListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return pvcListResponse.pvcs.map((pvc: any) => ({
+      id: pvc.id || `${pvc.name}-${pvc.namespace}`,
+      name: pvc.name,
+      namespace: pvc.namespace,
+      status: (pvc.status === "bound" ? "bound" : "pending") as "bound" | "pending",
+      volume: pvc.volume || undefined,
+      capacity: pvc.capacity || "",
+      accessModes: pvc.accessModes || [],
+      storageClass: pvc.storageClass || "",
+      volumeAttributesClass: pvc.volumeAttributesClass || undefined,
+      volumeMode: pvc.volumeMode || undefined,
+      age: pvc.age || "",
+    }));
   },
   createPVC: async (data: Omit<PVC, "id" | "age">): Promise<PVC> => {
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1885,8 +1900,31 @@ export const adminAPI = {
 
   // PV
   getPVs: async (): Promise<PV[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockPVs;
+    const response = await api.get("/admin/storage/pvs");
+    const pvListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return pvListResponse.pvs.map((pv: any) => ({
+      id: pv.id || pv.name,
+      name: pv.name,
+      capacity: pv.capacity || "",
+      accessModes: pv.accessModes || [],
+      reclaimPolicy: (pv.reclaimPolicy === "Retain" || pv.reclaimPolicy === "Delete" || pv.reclaimPolicy === "Recycle")
+        ? pv.reclaimPolicy
+        : "Retain",
+      status: (pv.status === "available" || pv.status === "bound" || pv.status === "released")
+        ? pv.status
+        : "available",
+      storageClass: pv.storageClass || "",
+      claim: pv.claim ? {
+        namespace: pv.claim.namespace || "",
+        name: pv.claim.name || "",
+      } : undefined,
+      volumeAttributesClass: pv.volumeAttributesClass || undefined,
+      reason: pv.reason || undefined,
+      volumeMode: pv.volumeMode || undefined,
+      age: pv.age || "",
+    }));
   },
   createPV: async (data: Omit<PV, "id" | "age">): Promise<PV> => {
     await new Promise((resolve) => setTimeout(resolve, 500));

@@ -18,6 +18,8 @@ import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.IngressListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVCListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVListResponse;
 import my_spring_app.my_spring_app.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -159,6 +161,20 @@ public class AdminController {
     @GetMapping("/ingress")
     public ResponseEntity<IngressListResponse> getIngress() {
         IngressListResponse response = adminService.getIngress();
+        return ResponseEntity.ok(response);
+    }
+
+    // Storage - PVCs
+    @GetMapping("/storage/pvcs")
+    public ResponseEntity<PVCListResponse> getPVCs() {
+        PVCListResponse response = adminService.getPVCs();
+        return ResponseEntity.ok(response);
+    }
+
+    // Storage - PVs
+    @GetMapping("/storage/pvs")
+    public ResponseEntity<PVListResponse> getPVs() {
+        PVListResponse response = adminService.getPVs();
         return ResponseEntity.ok(response);
     }
 }

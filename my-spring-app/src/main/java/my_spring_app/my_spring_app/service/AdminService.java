@@ -18,6 +18,8 @@ import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.IngressListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVCListResponse;
+import my_spring_app.my_spring_app.dto.reponse.PVListResponse;
 
 public interface AdminService {
 
@@ -56,4 +58,8 @@ public interface AdminService {
     ServiceListResponse getServices();
 
     IngressListResponse getIngress();
+
+    PVCListResponse getPVCs();
+
+    PVListResponse getPVs();
 }
