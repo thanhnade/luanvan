@@ -17,6 +17,7 @@ import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
 import my_spring_app.my_spring_app.dto.reponse.PodListResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
+import my_spring_app.my_spring_app.dto.reponse.IngressListResponse;
 
 public interface AdminService {
 
@@ -53,4 +54,6 @@ public interface AdminService {
     StatefulsetListResponse getStatefulsets();
 
     ServiceListResponse getServices();
+
+    IngressListResponse getIngress();
 }

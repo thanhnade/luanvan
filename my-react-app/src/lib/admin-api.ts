@@ -1826,8 +1826,20 @@ export const adminAPI = {
 
   // Ingress
   getIngress: async (): Promise<Ingress[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockIngress;
+    const response = await api.get("/admin/ingress");
+    const ingressListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return ingressListResponse.ingress.map((ing: any) => ({
+      id: ing.id || `${ing.name}-${ing.namespace}`,
+      name: ing.name,
+      namespace: ing.namespace,
+      ingressClass: ing.ingressClass || undefined,
+      hosts: ing.hosts || [],
+      address: ing.address || undefined,
+      ports: ing.ports || [80, 443],
+      age: ing.age || "",
+    }));
   },
   createIngress: async (data: Omit<Ingress, "id" | "age">): Promise<Ingress> => {
     await new Promise((resolve) => setTimeout(resolve, 500));

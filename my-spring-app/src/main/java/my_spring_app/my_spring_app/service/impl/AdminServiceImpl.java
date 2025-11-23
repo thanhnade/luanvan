@@ -26,6 +26,8 @@ import my_spring_app.my_spring_app.dto.reponse.StatefulsetListResponse;
 import my_spring_app.my_spring_app.dto.reponse.StatefulsetResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServiceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServiceResponse;
+import my_spring_app.my_spring_app.dto.reponse.IngressListResponse;
+import my_spring_app.my_spring_app.dto.reponse.IngressResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -48,6 +50,7 @@ import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.Configuration;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.apis.AppsV1Api;
+import io.kubernetes.client.openapi.apis.NetworkingV1Api;
 import io.kubernetes.client.openapi.models.V1ContainerStatus;
 import io.kubernetes.client.openapi.models.V1Pod;
 import io.kubernetes.client.openapi.models.V1PodStatus;
@@ -57,6 +60,11 @@ import io.kubernetes.client.openapi.models.V1Service;
 import io.kubernetes.client.openapi.models.V1ServiceSpec;
 import io.kubernetes.client.openapi.models.V1ServicePort;
 import io.kubernetes.client.openapi.models.V1ServiceStatus;
+import io.kubernetes.client.openapi.models.V1Ingress;
+import io.kubernetes.client.openapi.models.V1IngressSpec;
+import io.kubernetes.client.openapi.models.V1IngressRule;
+import io.kubernetes.client.openapi.models.V1IngressStatus;
+import io.kubernetes.client.openapi.models.V1IngressLoadBalancerIngress;
 import io.kubernetes.client.openapi.models.V1StatefulSet;
 import io.kubernetes.client.openapi.models.V1StatefulSetStatus;
 import io.kubernetes.client.openapi.models.V1StatefulSetCondition;
@@ -3324,6 +3332,183 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách services: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả ingress trong cluster sử dụng Kubernetes Java Client.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng NetworkingV1Api để lấy danh sách ingress từ tất cả namespaces
+     * 4. Parse V1Ingress objects thành IngressResponse:
+     *    - Namespace, Name
+     *    - IngressClass từ spec.ingressClassName
+     *    - Hosts từ spec.rules[*].host
+     *    - Address từ status.loadBalancer.ingress[*].ip hoặc hostname
+     *    - Ports từ spec.rules[*].http.paths[*].backend.service.port.number (hoặc mặc định 80, 443)
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về IngressListResponse
+     * 
+     * @return IngressListResponse chứa danh sách ingress
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
+     */
+    @Override
+    public IngressListResponse getIngress() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
+            session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            NetworkingV1Api api = new NetworkingV1Api(client);
+            
+            List<IngressResponse> ingressList = new ArrayList<>();
+            
+            // Lấy danh sách ingress từ tất cả namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1IngressList ingressListResponse = api.listIngressForAllNamespaces(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
+                
+                if (ingressListResponse.getItems() == null) {
+                    return new IngressListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng ingress
+                for (V1Ingress v1Ingress : ingressListResponse.getItems()) {
+                    try {
+                        IngressResponse ingress = new IngressResponse();
+                        
+                        // Basic info
+                        String namespace = v1Ingress.getMetadata().getNamespace();
+                        String name = v1Ingress.getMetadata().getName();
+                        ingress.setId(name + "-" + namespace);
+                        ingress.setName(name);
+                        ingress.setNamespace(namespace);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1Ingress.getMetadata().getCreationTimestamp();
+                        ingress.setAge(calculateAge(creationTimestamp));
+                        
+                        // Ingress spec
+                        V1IngressSpec spec = v1Ingress.getSpec();
+                        if (spec != null) {
+                            // IngressClass từ spec.ingressClassName
+                            if (spec.getIngressClassName() != null) {
+                                ingress.setIngressClass(spec.getIngressClassName());
+                            } else {
+                                ingress.setIngressClass(null);
+                            }
+                            
+                            // Hosts từ spec.rules[*].host
+                            List<String> hosts = new ArrayList<>();
+                            Set<Integer> portsSet = new HashSet<>();
+                            
+                            if (spec.getRules() != null) {
+                                for (V1IngressRule rule : spec.getRules()) {
+                                    if (rule.getHost() != null && !rule.getHost().isEmpty()) {
+                                        hosts.add(rule.getHost());
+                                    }
+                                    
+                                    // Lấy ports từ paths
+                                    if (rule.getHttp() != null && rule.getHttp().getPaths() != null) {
+                                        for (io.kubernetes.client.openapi.models.V1HTTPIngressPath path : 
+                                                rule.getHttp().getPaths()) {
+                                            if (path.getBackend() != null 
+                                                    && path.getBackend().getService() != null
+                                                    && path.getBackend().getService().getPort() != null) {
+                                                io.kubernetes.client.openapi.models.V1ServiceBackendPort servicePort = 
+                                                        path.getBackend().getService().getPort();
+                                                if (servicePort.getNumber() != null) {
+                                                    portsSet.add(servicePort.getNumber());
+                                                } else if (servicePort.getName() != null) {
+                                                    // Nếu là tên port, thử parse hoặc dùng mặc định
+                                                    // Thường là "http" (80) hoặc "https" (443)
+                                                    if ("http".equalsIgnoreCase(servicePort.getName())) {
+                                                        portsSet.add(80);
+                                                    } else if ("https".equalsIgnoreCase(servicePort.getName())) {
+                                                        portsSet.add(443);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            ingress.setHosts(hosts);
+                            
+                            // Ports: nếu không có port nào được tìm thấy, dùng mặc định 80, 443
+                            List<Integer> ports = new ArrayList<>(portsSet);
+                            if (ports.isEmpty()) {
+                                ports.add(80);
+                                ports.add(443);
+                            }
+                            ports.sort(Integer::compareTo);
+                            ingress.setPorts(ports);
+                        } else {
+                            ingress.setHosts(new ArrayList<>());
+                            ingress.setPorts(Arrays.asList(80, 443));
+                        }
+                        
+                        // Address từ status.loadBalancer.ingress
+                        String address = null;
+                        V1IngressStatus status = v1Ingress.getStatus();
+                        if (status != null && status.getLoadBalancer() != null 
+                                && status.getLoadBalancer().getIngress() != null
+                                && !status.getLoadBalancer().getIngress().isEmpty()) {
+                            List<String> addresses = new ArrayList<>();
+                            for (V1IngressLoadBalancerIngress lbIngress : status.getLoadBalancer().getIngress()) {
+                                if (lbIngress.getIp() != null) {
+                                    addresses.add(lbIngress.getIp());
+                                } else if (lbIngress.getHostname() != null) {
+                                    addresses.add(lbIngress.getHostname());
+                                }
+                            }
+                            if (!addresses.isEmpty()) {
+                                address = String.join(",", addresses);
+                            }
+                        }
+                        ingress.setAddress(address);
+                        
+                        ingressList.add(ingress);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua ingress nếu có lỗi, tiếp tục với ingress tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách ingress từ Kubernetes API: " + e.getMessage(), e);
+            }
+            
+            return new IngressListResponse(ingressList);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách ingress: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {
