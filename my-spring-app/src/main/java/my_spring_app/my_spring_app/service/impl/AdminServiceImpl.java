@@ -18,6 +18,8 @@ import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
 import my_spring_app.my_spring_app.dto.reponse.NodeResponse;
 import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
 import my_spring_app.my_spring_app.dto.reponse.NamespaceResponse;
+import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
+import my_spring_app.my_spring_app.dto.reponse.DeploymentResponse;
 import my_spring_app.my_spring_app.entity.ProjectEntity;
 import my_spring_app.my_spring_app.entity.ProjectBackendEntity;
 import my_spring_app.my_spring_app.entity.ProjectDatabaseEntity;
@@ -38,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -2551,6 +2554,168 @@ public class AdminServiceImpl implements AdminService {
             
         } catch (Exception e) {
             throw new RuntimeException("Không thể lấy danh sách namespaces: " + e.getMessage(), e);
+        } finally {
+            // Đảm bảo đóng SSH session
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Lấy danh sách tất cả deployments trong cluster.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server
+     * 2. Lấy danh sách deployments: kubectl get deployments --all-namespaces --no-headers
+     * 3. Với mỗi deployment, lấy thông tin chi tiết:
+     *    - Namespace
+     *    - Replicas (desired, ready, updated, available)
+     *    - Status
+     *    - Containers và Images
+     *    - Selector
+     *    - Age (thời gian tạo)
+     * 4. Tổng hợp và trả về DeploymentListResponse
+     * 
+     * @return DeploymentListResponse chứa danh sách deployments
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     */
+    @Override
+    public DeploymentListResponse getDeployments() {
+        // Lấy thông tin server MASTER
+        ServerEntity masterServer = serverRepository.findByRole("MASTER")
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
+
+        Session session = null;
+        try {
+            // Kết nối SSH đến MASTER server
+            session = createSession(masterServer);
+            
+            List<DeploymentResponse> deployments = new ArrayList<>();
+            
+            // Bước 1: Lấy danh sách deployments với thông tin cơ bản
+            // Format: NAMESPACE NAME READY UP-TO-DATE AVAILABLE AGE
+            String getDeploymentsCmd = "kubectl get deployments --all-namespaces --no-headers";
+            String deploymentsOutput = executeCommand(session, getDeploymentsCmd, false);
+            
+            if (deploymentsOutput == null || deploymentsOutput.trim().isEmpty()) {
+                return new DeploymentListResponse(new ArrayList<>());
+            }
+            
+            String[] deploymentLines = deploymentsOutput.trim().split("\\r?\\n");
+            
+            // Bước 2: Lấy thông tin chi tiết cho từng deployment
+            for (String line : deploymentLines) {
+                if (line.trim().isEmpty()) continue;
+                
+                try {
+                    // Parse dòng: NAMESPACE NAME READY UP-TO-DATE AVAILABLE AGE
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length < 6) continue;
+                    
+                    String namespace = parts[0];
+                    String name = parts[1];
+                    String readyStr = parts[2]; // format: "2/3"
+                    int upToDate = Integer.parseInt(parts[3]);
+                    int available = Integer.parseInt(parts[4]);
+                    String age = parts[5];
+                    
+                    // Parse ready: "2/3" -> ready=2, desired=3
+                    int ready = 0;
+                    int desired = 0;
+                    if (readyStr.contains("/")) {
+                        String[] readyParts = readyStr.split("/");
+                        ready = Integer.parseInt(readyParts[0]);
+                        desired = Integer.parseInt(readyParts[1]);
+                    }
+                    
+                    DeploymentResponse deployment = new DeploymentResponse();
+                    deployment.setId(name + "-" + namespace); // Tạo ID duy nhất
+                    deployment.setName(name);
+                    deployment.setNamespace(namespace);
+                    deployment.setAge(age);
+                    
+                    // Set replicas info
+                    DeploymentResponse.ReplicasInfo replicas = new DeploymentResponse.ReplicasInfo();
+                    replicas.setDesired(desired);
+                    replicas.setReady(ready);
+                    replicas.setUpdated(upToDate);
+                    replicas.setAvailable(available);
+                    deployment.setReplicas(replicas);
+                    
+                    // Xác định status dựa trên replicas
+                    String status = "running";
+                    if (ready < desired) {
+                        status = "pending";
+                    } else if (ready == 0 && desired > 0) {
+                        status = "error";
+                    }
+                    deployment.setStatus(status);
+                    
+                    // Lấy containers và images
+                    String containersCmd = String.format(
+                            "kubectl get deployment %s -n %s -o jsonpath='{.spec.template.spec.containers[*].name}'",
+                            name, namespace);
+                    String containersOutput = executeCommand(session, containersCmd, true);
+                    List<String> containers = new ArrayList<>();
+                    if (containersOutput != null && !containersOutput.trim().isEmpty()) {
+                        String[] containerArray = containersOutput.trim().split("\\s+");
+                        containers = Arrays.asList(containerArray);
+                    }
+                    deployment.setContainers(containers);
+                    
+                    String imagesCmd = String.format(
+                            "kubectl get deployment %s -n %s -o jsonpath='{.spec.template.spec.containers[*].image}'",
+                            name, namespace);
+                    String imagesOutput = executeCommand(session, imagesCmd, true);
+                    List<String> images = new ArrayList<>();
+                    if (imagesOutput != null && !imagesOutput.trim().isEmpty()) {
+                        String[] imageArray = imagesOutput.trim().split("\\s+");
+                        images = Arrays.asList(imageArray);
+                    }
+                    deployment.setImages(images);
+                    
+                    // Lấy selector
+                    String selectorCmd = String.format(
+                            "kubectl get deployment %s -n %s -o jsonpath='{.spec.selector.matchLabels}'",
+                            name, namespace);
+                    String selectorOutput = executeCommand(session, selectorCmd, true);
+                    String selector = "";
+                    if (selectorOutput != null && !selectorOutput.trim().isEmpty() && !selectorOutput.trim().equals("{}")) {
+                        // Parse selector từ JSON format: {"app":"my-app","version":"v1"}
+                        String selectorStr = selectorOutput.trim();
+                        if (selectorStr.startsWith("{") && selectorStr.endsWith("}")) {
+                            selectorStr = selectorStr.substring(1, selectorStr.length() - 1);
+                            if (!selectorStr.isEmpty()) {
+                                // Convert {"app":"my-app"} to "app=my-app"
+                                String[] labelPairs = selectorStr.split(",");
+                                List<String> selectorParts = new ArrayList<>();
+                                for (String pair : labelPairs) {
+                                    String[] keyValue = pair.split(":");
+                                    if (keyValue.length == 2) {
+                                        String key = keyValue[0].trim().replace("\"", "");
+                                        String value = keyValue[1].trim().replace("\"", "");
+                                        selectorParts.add(key + "=" + value);
+                                    }
+                                }
+                                selector = String.join(",", selectorParts);
+                            }
+                        }
+                    }
+                    deployment.setSelector(selector);
+                    
+                    deployments.add(deployment);
+                    
+                } catch (Exception e) {
+                    // Bỏ qua deployment nếu có lỗi, tiếp tục với deployment tiếp theo
+                }
+            }
+            
+            return new DeploymentListResponse(deployments);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể lấy danh sách deployments: " + e.getMessage(), e);
         } finally {
             // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {

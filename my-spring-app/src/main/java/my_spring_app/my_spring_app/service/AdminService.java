@@ -13,6 +13,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.DashboardMetricsResponse;
 import my_spring_app.my_spring_app.dto.reponse.NodeListResponse;
 import my_spring_app.my_spring_app.dto.reponse.NamespaceListResponse;
+import my_spring_app.my_spring_app.dto.reponse.DeploymentListResponse;
 
 public interface AdminService {
 
@@ -41,4 +42,6 @@ public interface AdminService {
     NodeListResponse getNodes();
 
     NamespaceListResponse getNamespaces();
+
+    DeploymentListResponse getDeployments();
 }

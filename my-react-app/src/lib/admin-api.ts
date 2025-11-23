@@ -1442,8 +1442,26 @@ export const adminAPI = {
 
   // Deployments
   getDeployments: async (): Promise<Deployment[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockDeployments;
+    const response = await api.get("/admin/workloads/deployments");
+    const deploymentListResponse = response.data;
+    
+    // Map từ backend response sang frontend type
+    return deploymentListResponse.deployments.map((deployment: any) => ({
+      id: deployment.id || `${deployment.name}-${deployment.namespace}`,
+      name: deployment.name,
+      namespace: deployment.namespace,
+      replicas: {
+        desired: deployment.replicas?.desired || 0,
+        ready: deployment.replicas?.ready || 0,
+        updated: deployment.replicas?.updated || 0,
+        available: deployment.replicas?.available || 0,
+      },
+      status: deployment.status === "running" ? "running" : deployment.status === "error" ? "error" : "pending",
+      containers: deployment.containers || [],
+      images: deployment.images || [],
+      selector: deployment.selector || "",
+      age: deployment.age || "",
+    }));
   },
   getDeployment: async (id: string): Promise<Deployment> => {
     await new Promise((resolve) => setTimeout(resolve, 300));

@@ -20,7 +20,7 @@ export function Tooltip({ children, content, className }: TooltipProps) {
       {show && (
         <div
           className={cn(
-            "absolute z-50 px-2 py-1 text-xs text-white bg-gray-900 rounded shadow-lg bottom-full left-1/2 transform -translate-x-1/2 mb-2 whitespace-nowrap",
+            "absolute z-50 px-3 py-2 text-xs text-white bg-gray-900 rounded shadow-lg bottom-full left-1/2 transform -translate-x-1/2 mb-2 max-w-xs break-words",
             className
           )}
         >

@@ -8,7 +8,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip } from "@/components/ui/tooltip";
 import { toast } from "sonner";
+
+/**
+ * Component helper để truncate text và hiển thị tooltip khi hover
+ */
+const TruncatedText = ({ text, maxLength = 30 }: { text: string; maxLength?: number }) => {
+  const truncated = text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
+  const needsTooltip = text.length > maxLength;
+
+  if (!needsTooltip) {
+    return <span className="truncate block">{text}</span>;
+  }
+
+  return (
+    <Tooltip content={text}>
+      <span className="truncate block cursor-help">{truncated}</span>
+    </Tooltip>
+  );
+};
 
 /**
  * Trang quản lý Deployments
@@ -145,6 +164,9 @@ export function Deployments() {
     {
       key: "name",
       label: "NAME",
+      render: (deployment: Deployment) => (
+        <TruncatedText text={deployment.name} maxLength={25} />
+      ),
     },
     {
       key: "ready",
@@ -176,18 +198,26 @@ export function Deployments() {
     {
       key: "containers",
       label: "CONTAINERS",
-      render: (deployment: Deployment) =>
-        deployment.containers.length > 0 ? deployment.containers.join(", ") : "-",
+      render: (deployment: Deployment) => {
+        const containersText = deployment.containers.length > 0 ? deployment.containers.join(", ") : "-";
+        return <TruncatedText text={containersText} maxLength={40} />;
+      },
     },
     {
       key: "images",
       label: "IMAGES",
-      render: (deployment: Deployment) =>
-        deployment.images.length > 0 ? deployment.images.join(", ") : "-",
+      render: (deployment: Deployment) => {
+        const imagesText = deployment.images.length > 0 ? deployment.images.join(", ") : "-";
+        return <TruncatedText text={imagesText} maxLength={30} />;
+      },
     },
     {
       key: "selector",
       label: "SELECTOR",
+      render: (deployment: Deployment) => {
+        const selectorText = deployment.selector || "-";
+        return <TruncatedText text={selectorText} maxLength={30} />;
+      },
     },
   ];
 
