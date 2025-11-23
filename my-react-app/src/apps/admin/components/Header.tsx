@@ -1,6 +1,6 @@
 import { useLocation, Link } from "react-router-dom";
 import { Moon, Sun, LogOut, User } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -27,10 +27,10 @@ export function Header() {
     }
   }, [darkMode]);
 
-  // Tạo breadcrumb từ pathname
-  const generateBreadcrumbs = () => {
+  // Tạo breadcrumb từ pathname - sử dụng useMemo để đảm bảo tính lại khi pathname thay đổi
+  const breadcrumbs = useMemo(() => {
     const paths = location.pathname.split("/").filter(Boolean);
-    const breadcrumbs = [{ label: "Home", path: "/admin/overview" }];
+    const result = [{ label: "Home", path: "/admin/overview" }];
 
     if (paths.length > 1 && paths[0] === "admin") {
       const pathMap: Record<string, string> = {
@@ -50,27 +50,51 @@ export function Header() {
         storage: "Storage",
         pvc: "PVC",
         pv: "PV",
+        users: "User Services",
+        accounts: "Accounts",
       };
 
       let currentPath = "/admin";
       for (let i = 1; i < paths.length; i++) {
         currentPath += `/${paths[i]}`;
         const label = pathMap[paths[i]] || paths[i];
-        breadcrumbs.push({ label, path: currentPath });
+        result.push({ label, path: currentPath });
+      }
+
+      // Đặc biệt: Khi ở trang /admin/users, thêm "Services" vào cuối
+      if (location.pathname === "/admin/users") {
+        result.push({ label: "Services", path: "/admin/users" });
+      }
+
+      // Đặc biệt: Khi ở trang /admin/accounts, thêm "User Services" vào trước "Accounts"
+      if (location.pathname === "/admin/accounts") {
+        // Tìm và thêm "User Services" vào trước "Accounts"
+        const accountIndex = result.findIndex(crumb => crumb.path === "/admin/accounts");
+        if (accountIndex !== -1) {
+          result.splice(accountIndex, 0, { label: "User Services", path: "/admin/users" });
+        }
+      }
+
+      // Đặc biệt: Khi ở trang /admin/services hoặc /admin/ingress, thêm "Service Discovery" vào trước
+      if (location.pathname === "/admin/services" || location.pathname === "/admin/ingress") {
+        const serviceIndex = result.findIndex(crumb => 
+          crumb.path === "/admin/services" || crumb.path === "/admin/ingress"
+        );
+        if (serviceIndex !== -1) {
+          result.splice(serviceIndex, 0, { label: "Service Discovery", path: "/admin/services" });
+        }
       }
     }
 
-    return breadcrumbs;
-  };
-
-  const breadcrumbs = generateBreadcrumbs();
+    return result;
+  }, [location.pathname]);
 
   return (
     <header className="h-16 border-b border-border bg-background flex items-center justify-between px-6">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-2 text-sm text-muted-foreground">
         {breadcrumbs.map((crumb, index) => (
-          <div key={crumb.path} className="flex items-center gap-2">
+          <div key={`${crumb.path}-${index}`} className="flex items-center gap-2">
             {index > 0 && <span>/</span>}
             <Link
               to={crumb.path}

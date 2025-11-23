@@ -16,7 +16,7 @@ const statusVariant: Record<AdminAccount["status"], "success" | "warning" | "sec
   pending: "warning",
 };
 
-export function AccountManagement() {
+export function Account() {
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [filteredAccounts, setFilteredAccounts] = useState<AdminAccount[]>([]);
   const [loading, setLoading] = useState(true);

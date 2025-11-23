@@ -52,7 +52,7 @@ import { toast } from "sonner";
 
 type ViewState = "users" | "projects" | "projectDetail";
 
-export function UserServices() {
+export function Services() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);

@@ -25,8 +25,8 @@ import { Services } from "@/apps/admin/pages/services/Services"
 import { IngressList } from "@/apps/admin/pages/services/Ingress"
 import { PVCList } from "@/apps/admin/pages/storage/PVC"
 import { PVList } from "@/apps/admin/pages/storage/PV"
-import { UserServices } from "@/apps/admin/pages/users/UserServices"
-import { AccountManagement } from "@/apps/admin/pages/users/AccountManagement"
+import { Services as UserServices } from "@/apps/admin/pages/users/Services"
+import { Account } from "@/apps/admin/pages/users/Account"
 import "./index.css"
 
 /**
@@ -220,7 +220,7 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AdminLayout>
-                    <AccountManagement />
+                    <Account />
                   </AdminLayout>
                 </ProtectedRoute>
               }
