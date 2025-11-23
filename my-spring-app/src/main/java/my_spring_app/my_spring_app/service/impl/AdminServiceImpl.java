@@ -49,10 +49,16 @@ import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.models.V1ContainerStatus;
 import io.kubernetes.client.openapi.models.V1Pod;
 import io.kubernetes.client.openapi.models.V1PodStatus;
+import io.kubernetes.client.openapi.models.V1Namespace;
+import io.kubernetes.client.openapi.models.V1NamespaceStatus;
 import io.kubernetes.client.openapi.models.V1StatefulSet;
 import io.kubernetes.client.openapi.models.V1StatefulSetStatus;
 import io.kubernetes.client.openapi.models.V1StatefulSetCondition;
 import io.kubernetes.client.openapi.models.V1Container;
+import io.kubernetes.client.openapi.models.V1Deployment;
+import io.kubernetes.client.openapi.models.V1DeploymentStatus;
+import io.kubernetes.client.openapi.models.V1DeploymentCondition;
+import io.kubernetes.client.openapi.models.V1LabelSelector;
 import io.kubernetes.client.util.Config;
 import java.io.File;
 import java.io.FileWriter;
@@ -2479,19 +2485,21 @@ public class AdminServiceImpl implements AdminService {
     }
 
     /**
-     * Lấy danh sách tất cả namespaces trong cluster.
+     * Lấy danh sách tất cả namespaces trong cluster sử dụng Kubernetes Java Client.
      * 
      * Quy trình xử lý:
-     * 1. Kết nối SSH đến MASTER server
-     * 2. Lấy danh sách namespaces: kubectl get namespaces --no-headers
-     * 3. Với mỗi namespace, lấy thông tin chi tiết:
-     *    - Status (Active/Terminating)
-     *    - Labels
-     *    - Age (thời gian tạo)
-     * 4. Tổng hợp và trả về NamespaceListResponse
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng CoreV1Api để lấy danh sách namespaces
+     * 4. Parse V1Namespace objects thành NamespaceResponse:
+     *    - Name
+     *    - Status (active/terminating) từ status.phase
+     *    - Labels từ metadata.labels
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về NamespaceListResponse
      * 
      * @return NamespaceListResponse chứa danh sách namespaces
-     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
      */
     @Override
     public NamespaceListResponse getNamespaces() {
@@ -2502,76 +2510,77 @@ public class AdminServiceImpl implements AdminService {
 
         Session session = null;
         try {
-            // Kết nối SSH đến MASTER server
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
             session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            CoreV1Api api = new CoreV1Api(client);
             
             List<NamespaceResponse> namespaces = new ArrayList<>();
             
-            // Bước 1: Lấy danh sách namespaces với thông tin cơ bản
-            // Format: NAME STATUS AGE
-            String getNamespacesCmd = "kubectl get namespaces --no-headers";
-            String namespacesOutput = executeCommand(session, getNamespacesCmd, false);
-            
-            if (namespacesOutput == null || namespacesOutput.trim().isEmpty()) {
-                return new NamespaceListResponse(new ArrayList<>());
-            }
-            
-            String[] namespaceLines = namespacesOutput.trim().split("\\r?\\n");
-            
-            // Bước 2: Lấy thông tin chi tiết cho từng namespace
-            for (String line : namespaceLines) {
-                if (line.trim().isEmpty()) continue;
+            // Lấy danh sách namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1NamespaceList namespaceList = api.listNamespace(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
                 
-                // Parse dòng: NAME STATUS AGE
-                String[] parts = line.trim().split("\\s+");
-                if (parts.length < 3) continue;
-                
-                String namespaceName = parts[0].trim();
-                String statusStr = parts[1].trim();
-                String ageStr = parts[2].trim();
-                
-                NamespaceResponse namespace = new NamespaceResponse();
-                namespace.setId(namespaceName);
-                namespace.setName(namespaceName);
-                namespace.setAge(ageStr);
-                
-                try {
-                    // Parse status từ output
-                    if (statusStr.equalsIgnoreCase("Active")) {
-                        namespace.setStatus("active");
-                    } else {
-                        namespace.setStatus("terminating");
-                    }
-                    
-                    // Lấy labels
-                    String labelsCmd = String.format("kubectl get namespace %s -o jsonpath='{.metadata.labels}'", namespaceName);
-                    String labelsOutput = executeCommand(session, labelsCmd, true);
-                    Map<String, String> labels = new HashMap<>();
-                    if (labelsOutput != null && !labelsOutput.trim().isEmpty() && !labelsOutput.trim().equals("{}")) {
-                        // Parse labels từ JSON format: {"key1":"value1","key2":"value2"}
-                        String labelsStr = labelsOutput.trim();
-                        if (labelsStr.startsWith("{") && labelsStr.endsWith("}")) {
-                            labelsStr = labelsStr.substring(1, labelsStr.length() - 1);
-                            if (!labelsStr.isEmpty()) {
-                                String[] labelPairs = labelsStr.split(",");
-                                for (String pair : labelPairs) {
-                                    String[] keyValue = pair.split(":");
-                                    if (keyValue.length == 2) {
-                                        String key = keyValue[0].trim().replace("\"", "");
-                                        String value = keyValue[1].trim().replace("\"", "");
-                                        labels.put(key, value);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    namespace.setLabels(labels);
-                    
-                    namespaces.add(namespace);
-                    
-                } catch (Exception e) {
-                    // Bỏ qua namespace nếu có lỗi, tiếp tục với namespace tiếp theo
+                if (namespaceList.getItems() == null) {
+                    return new NamespaceListResponse(new ArrayList<>());
                 }
+                
+                // Parse từng namespace
+                for (V1Namespace v1Namespace : namespaceList.getItems()) {
+                    try {
+                        NamespaceResponse namespace = new NamespaceResponse();
+                        
+                        // Basic info
+                        String name = v1Namespace.getMetadata().getName();
+                        namespace.setId(name);
+                        namespace.setName(name);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1Namespace.getMetadata().getCreationTimestamp();
+                        namespace.setAge(calculateAge(creationTimestamp));
+                        
+                        // Status từ status.phase
+                        V1NamespaceStatus status = v1Namespace.getStatus();
+                        String phase = (status != null && status.getPhase() != null) 
+                                ? status.getPhase() 
+                                : "Active";
+                        
+                        if ("Active".equalsIgnoreCase(phase)) {
+                            namespace.setStatus("active");
+                        } else {
+                            namespace.setStatus("terminating");
+                        }
+                        
+                        // Labels từ metadata.labels
+                        Map<String, String> labels = new HashMap<>();
+                        if (v1Namespace.getMetadata().getLabels() != null) {
+                            labels.putAll(v1Namespace.getMetadata().getLabels());
+                        }
+                        namespace.setLabels(labels);
+                        
+                        namespaces.add(namespace);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua namespace nếu có lỗi, tiếp tục với namespace tiếp theo
+                    }
+                }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách namespaces từ Kubernetes API: " + e.getMessage(), e);
             }
             
             return new NamespaceListResponse(namespaces);
@@ -2587,22 +2596,23 @@ public class AdminServiceImpl implements AdminService {
     }
 
     /**
-     * Lấy danh sách tất cả deployments trong cluster.
+     * Lấy danh sách tất cả deployments trong cluster sử dụng Kubernetes Java Client.
      * 
      * Quy trình xử lý:
-     * 1. Kết nối SSH đến MASTER server
-     * 2. Lấy danh sách deployments: kubectl get deployments --all-namespaces --no-headers
-     * 3. Với mỗi deployment, lấy thông tin chi tiết:
-     *    - Namespace
-     *    - Replicas (desired, ready, updated, available)
-     *    - Status
-     *    - Containers và Images
-     *    - Selector
-     *    - Age (thời gian tạo)
-     * 4. Tổng hợp và trả về DeploymentListResponse
+     * 1. Kết nối SSH đến MASTER server để lấy kubeconfig
+     * 2. Tạo Kubernetes Java Client từ kubeconfig
+     * 3. Sử dụng AppsV1Api để lấy danh sách deployments từ tất cả namespaces
+     * 4. Parse V1Deployment objects thành DeploymentResponse:
+     *    - Namespace, Name
+     *    - Replicas (desired, ready, updated, available) từ spec và status
+     *    - Status từ conditions và replicas
+     *    - Containers và Images từ spec.template.spec.containers
+     *    - Selector từ spec.selector.matchLabels
+     *    - Age từ creationTimestamp
+     * 5. Tổng hợp và trả về DeploymentListResponse
      * 
      * @return DeploymentListResponse chứa danh sách deployments
-     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi gọi Kubernetes API
      */
     @Override
     public DeploymentListResponse getDeployments() {
@@ -2613,127 +2623,144 @@ public class AdminServiceImpl implements AdminService {
 
         Session session = null;
         try {
-            // Kết nối SSH đến MASTER server
+            // Kết nối SSH đến MASTER server để lấy kubeconfig
             session = createSession(masterServer);
+            
+            // Tạo Kubernetes client từ kubeconfig
+            ApiClient client = createKubernetesClient(session);
+            AppsV1Api api = new AppsV1Api(client);
             
             List<DeploymentResponse> deployments = new ArrayList<>();
             
-            // Bước 1: Lấy danh sách deployments với thông tin cơ bản
-            // Format: NAMESPACE NAME READY UP-TO-DATE AVAILABLE AGE
-            String getDeploymentsCmd = "kubectl get deployments --all-namespaces --no-headers";
-            String deploymentsOutput = executeCommand(session, getDeploymentsCmd, false);
-            
-            if (deploymentsOutput == null || deploymentsOutput.trim().isEmpty()) {
-                return new DeploymentListResponse(new ArrayList<>());
-            }
-            
-            String[] deploymentLines = deploymentsOutput.trim().split("\\r?\\n");
-            
-            // Bước 2: Lấy thông tin chi tiết cho từng deployment
-            for (String line : deploymentLines) {
-                if (line.trim().isEmpty()) continue;
+            // Lấy danh sách deployments từ tất cả namespaces
+            try {
+                io.kubernetes.client.openapi.models.V1DeploymentList deploymentList = api.listDeploymentForAllNamespaces(
+                        null,  // allowWatchBookmarks
+                        null,  // _continue
+                        null,  // fieldSelector
+                        null,  // labelSelector
+                        null,  // limit
+                        null,  // pretty
+                        null,  // resourceVersion
+                        null,  // resourceVersionMatch
+                        null,  // sendInitialEvents
+                        null,  // timeoutSeconds
+                        null   // watch
+                );
                 
-                try {
-                    // Parse dòng: NAMESPACE NAME READY UP-TO-DATE AVAILABLE AGE
-                    String[] parts = line.trim().split("\\s+");
-                    if (parts.length < 6) continue;
-                    
-                    String namespace = parts[0];
-                    String name = parts[1];
-                    String readyStr = parts[2]; // format: "2/3"
-                    int upToDate = Integer.parseInt(parts[3]);
-                    int available = Integer.parseInt(parts[4]);
-                    String age = parts[5];
-                    
-                    // Parse ready: "2/3" -> ready=2, desired=3
-                    int ready = 0;
-                    int desired = 0;
-                    if (readyStr.contains("/")) {
-                        String[] readyParts = readyStr.split("/");
-                        ready = Integer.parseInt(readyParts[0]);
-                        desired = Integer.parseInt(readyParts[1]);
-                    }
-                    
-                    DeploymentResponse deployment = new DeploymentResponse();
-                    deployment.setId(name + "-" + namespace); // Tạo ID duy nhất
-                    deployment.setName(name);
-                    deployment.setNamespace(namespace);
-                    deployment.setAge(age);
-                    
-                    // Set replicas info
-                    DeploymentResponse.ReplicasInfo replicas = new DeploymentResponse.ReplicasInfo();
-                    replicas.setDesired(desired);
-                    replicas.setReady(ready);
-                    replicas.setUpdated(upToDate);
-                    replicas.setAvailable(available);
-                    deployment.setReplicas(replicas);
-                    
-                    // Xác định status dựa trên replicas
-                    String status = "running";
-                    if (ready < desired) {
-                        status = "pending";
-                    } else if (ready == 0 && desired > 0) {
-                        status = "error";
-                    }
-                    deployment.setStatus(status);
-                    
-                    // Lấy containers và images
-                    String containersCmd = String.format(
-                            "kubectl get deployment %s -n %s -o jsonpath='{.spec.template.spec.containers[*].name}'",
-                            name, namespace);
-                    String containersOutput = executeCommand(session, containersCmd, true);
-                    List<String> containers = new ArrayList<>();
-                    if (containersOutput != null && !containersOutput.trim().isEmpty()) {
-                        String[] containerArray = containersOutput.trim().split("\\s+");
-                        containers = Arrays.asList(containerArray);
-                    }
-                    deployment.setContainers(containers);
-                    
-                    String imagesCmd = String.format(
-                            "kubectl get deployment %s -n %s -o jsonpath='{.spec.template.spec.containers[*].image}'",
-                            name, namespace);
-                    String imagesOutput = executeCommand(session, imagesCmd, true);
-                    List<String> images = new ArrayList<>();
-                    if (imagesOutput != null && !imagesOutput.trim().isEmpty()) {
-                        String[] imageArray = imagesOutput.trim().split("\\s+");
-                        images = Arrays.asList(imageArray);
-                    }
-                    deployment.setImages(images);
-                    
-                    // Lấy selector
-                    String selectorCmd = String.format(
-                            "kubectl get deployment %s -n %s -o jsonpath='{.spec.selector.matchLabels}'",
-                            name, namespace);
-                    String selectorOutput = executeCommand(session, selectorCmd, true);
-                    String selector = "";
-                    if (selectorOutput != null && !selectorOutput.trim().isEmpty() && !selectorOutput.trim().equals("{}")) {
-                        // Parse selector từ JSON format: {"app":"my-app","version":"v1"}
-                        String selectorStr = selectorOutput.trim();
-                        if (selectorStr.startsWith("{") && selectorStr.endsWith("}")) {
-                            selectorStr = selectorStr.substring(1, selectorStr.length() - 1);
-                            if (!selectorStr.isEmpty()) {
-                                // Convert {"app":"my-app"} to "app=my-app"
-                                String[] labelPairs = selectorStr.split(",");
+                if (deploymentList.getItems() == null) {
+                    return new DeploymentListResponse(new ArrayList<>());
+                }
+                
+                // Parse từng deployment
+                for (V1Deployment v1Deployment : deploymentList.getItems()) {
+                    try {
+                        DeploymentResponse deployment = new DeploymentResponse();
+                        
+                        // Basic info
+                        String namespace = v1Deployment.getMetadata().getNamespace();
+                        String name = v1Deployment.getMetadata().getName();
+                        deployment.setId(name + "-" + namespace);
+                        deployment.setName(name);
+                        deployment.setNamespace(namespace);
+                        
+                        // Age từ creationTimestamp
+                        OffsetDateTime creationTimestamp = v1Deployment.getMetadata().getCreationTimestamp();
+                        deployment.setAge(calculateAge(creationTimestamp));
+                        
+                        // Replicas từ spec và status
+                        int desired = 0;
+                        int ready = 0;
+                        int updated = 0;
+                        int available = 0;
+                        
+                        if (v1Deployment.getSpec() != null && v1Deployment.getSpec().getReplicas() != null) {
+                            desired = v1Deployment.getSpec().getReplicas();
+                        }
+                        
+                        V1DeploymentStatus status = v1Deployment.getStatus();
+                        if (status != null) {
+                            if (status.getReadyReplicas() != null) {
+                                ready = status.getReadyReplicas();
+                            }
+                            if (status.getUpdatedReplicas() != null) {
+                                updated = status.getUpdatedReplicas();
+                            }
+                            if (status.getAvailableReplicas() != null) {
+                                available = status.getAvailableReplicas();
+                            }
+                        }
+                        
+                        DeploymentResponse.ReplicasInfo replicas = new DeploymentResponse.ReplicasInfo();
+                        replicas.setDesired(desired);
+                        replicas.setReady(ready);
+                        replicas.setUpdated(updated);
+                        replicas.setAvailable(available);
+                        deployment.setReplicas(replicas);
+                        
+                        // Status: running nếu ready == desired, pending nếu ready < desired, error nếu có điều kiện lỗi
+                        String depStatus = "running";
+                        if (ready < desired) {
+                            depStatus = "pending";
+                        } else if (ready == 0 && desired > 0) {
+                            depStatus = "error";
+                        }
+                        // Kiểm tra conditions để xác định lỗi
+                        if (status != null && status.getConditions() != null) {
+                            for (V1DeploymentCondition condition : status.getConditions()) {
+                                if ("False".equals(condition.getStatus()) && 
+                                    ("Progressing".equals(condition.getType()) || "Available".equals(condition.getType()))) {
+                                    depStatus = "error";
+                                    break;
+                                }
+                            }
+                        }
+                        deployment.setStatus(depStatus);
+                        
+                        // Containers và Images từ spec.template.spec.containers
+                        List<String> containers = new ArrayList<>();
+                        List<String> images = new ArrayList<>();
+                        if (v1Deployment.getSpec() != null 
+                                && v1Deployment.getSpec().getTemplate() != null
+                                && v1Deployment.getSpec().getTemplate().getSpec() != null
+                                && v1Deployment.getSpec().getTemplate().getSpec().getContainers() != null) {
+                            for (V1Container container : 
+                                    v1Deployment.getSpec().getTemplate().getSpec().getContainers()) {
+                                if (container.getName() != null) {
+                                    containers.add(container.getName());
+                                }
+                                if (container.getImage() != null) {
+                                    images.add(container.getImage());
+                                }
+                            }
+                        }
+                        deployment.setContainers(containers);
+                        deployment.setImages(images);
+                        
+                        // Selector từ spec.selector.matchLabels
+                        String selector = "";
+                        if (v1Deployment.getSpec() != null 
+                                && v1Deployment.getSpec().getSelector() != null) {
+                            V1LabelSelector labelSelector = v1Deployment.getSpec().getSelector();
+                            if (labelSelector.getMatchLabels() != null && !labelSelector.getMatchLabels().isEmpty()) {
                                 List<String> selectorParts = new ArrayList<>();
-                                for (String pair : labelPairs) {
-                                    String[] keyValue = pair.split(":");
-                                    if (keyValue.length == 2) {
-                                        String key = keyValue[0].trim().replace("\"", "");
-                                        String value = keyValue[1].trim().replace("\"", "");
-                                        selectorParts.add(key + "=" + value);
-                                    }
+                                for (java.util.Map.Entry<String, String> entry : labelSelector.getMatchLabels().entrySet()) {
+                                    selectorParts.add(entry.getKey() + "=" + entry.getValue());
                                 }
                                 selector = String.join(",", selectorParts);
                             }
                         }
+                        deployment.setSelector(selector);
+                        
+                        deployments.add(deployment);
+                        
+                    } catch (Exception e) {
+                        // Bỏ qua deployment nếu có lỗi, tiếp tục với deployment tiếp theo
                     }
-                    deployment.setSelector(selector);
-                    
-                    deployments.add(deployment);
-                    
-                } catch (Exception e) {
-                    // Bỏ qua deployment nếu có lỗi, tiếp tục với deployment tiếp theo
                 }
+                
+            } catch (ApiException e) {
+                throw new RuntimeException("Không thể lấy danh sách deployments từ Kubernetes API: " + e.getMessage(), e);
             }
             
             return new DeploymentListResponse(deployments);
