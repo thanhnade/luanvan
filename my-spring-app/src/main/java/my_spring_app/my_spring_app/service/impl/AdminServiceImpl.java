@@ -42,14 +42,30 @@ import java.util.Set;
 
 /**
  * Dịch vụ phục vụ dashboard admin: thống kê tổng quan và usage của từng user.
+ * 
+ * Class này cung cấp các chức năng:
+ * - Lấy tổng quan hệ thống (số user, project, CPU/Memory đang dùng)
+ * - Lấy thống kê usage theo từng user
+ * - Lấy chi tiết tài nguyên của project (Database/Backend/Frontend)
+ * - Lấy thông tin cluster capacity và allocatable
+ * - Lấy chi tiết thông tin Kubernetes cho Database/Backend/Frontend
+ * 
+ * Tất cả các thao tác với Kubernetes được thực hiện qua SSH đến server MASTER.
  */
 @Service
 @Transactional
 public class AdminServiceImpl implements AdminService {
 
-    // Role chuẩn dùng để lọc user thuộc nhóm khách hàng (không phải admin/devops)
+    /**
+     * Role chuẩn dùng để lọc user thuộc nhóm khách hàng (không phải admin/devops).
+     * Chỉ các user có role "USER" mới được tính vào thống kê.
+     */
     private static final String ROLE_USER = "USER";
-    // Hằng số quy đổi bytes -> GB (1024^3) để sử dụng ở nhiều nơi
+    
+    /**
+     * Hằng số quy đổi bytes -> GB (1024^3 = 1,073,741,824 bytes).
+     * Sử dụng để chuyển đổi memory từ bytes sang GB để hiển thị.
+     */
     private static final double BYTES_PER_GB = 1024d * 1024 * 1024;
 
     // Repository thao tác bảng user
@@ -78,180 +94,272 @@ public class AdminServiceImpl implements AdminService {
 
     /**
      * Tổng hợp số lượng user, project và tài nguyên CPU/Memory đang sử dụng trên toàn hệ thống.
+     * 
+     * Quy trình xử lý:
+     * 1. Đếm tổng số user có role USER (loại trừ admin/devops)
+     * 2. Lấy toàn bộ project từ database và đếm tổng số
+     * 3. Gom các namespace đang được sử dụng (tránh trùng lặp)
+     * 4. Chạy kubectl top pods để lấy tổng CPU/Memory đang sử dụng
+     * 5. Chuyển đổi và làm tròn dữ liệu để trả về
+     * 
+     * @return AdminOverviewResponse chứa tổng số user, project, CPU cores và Memory GB đang dùng
      */
     @Override
     public AdminOverviewResponse getOverview() {
-        // 1. Đếm tổng user có role USER
+        // Bước 1: Đếm tổng user có role USER (không bao gồm admin/devops)
         long totalUsers = userRepository.countByRole(ROLE_USER);
 
-        // 2. Lấy toàn bộ project để đếm và gom namespace
+        // Bước 2: Lấy toàn bộ project từ database để đếm và gom namespace
         List<ProjectEntity> projects = projectRepository.findAll();
         long totalProjects = projects.size();
 
-        // 3. Gom các namespace đang được sử dụng
+        // Bước 3: Gom các namespace đang được sử dụng (loại bỏ trùng lặp)
         Set<String> namespaces = collectNamespaces(projects);
 
-        // 4. Chạy kubectl top pods để lấy tổng CPU/Memory
+        // Bước 4: Chạy kubectl top pods để lấy tổng CPU/Memory đang sử dụng
+        // Hàm này sẽ SSH đến MASTER server và thực thi lệnh kubectl top pods cho từng namespace
         ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
 
-        // 5. Mapping dữ liệu trả về
+        // Bước 5: Mapping dữ liệu vào response object
         AdminOverviewResponse response = new AdminOverviewResponse();
         response.setTotalUsers(totalUsers);
         response.setTotalProjects(totalProjects);
+        // Làm tròn CPU cores và chuyển Memory từ bytes sang GB, làm tròn 3 chữ số thập phân
         response.setTotalCpuCores(roundToThreeDecimals(usageMap.totalUsage().getCpuCores()));
         response.setTotalMemoryGb(roundToThreeDecimals(bytesToGb(usageMap.totalUsage().getMemoryBytes())));
+        
         return response;
     }
 
     /**
      * Lấy tổng quan usage (CPU/Memory) của các project thuộc một user cụ thể.
+     * 
+     * Quy trình xử lý:
+     * 1. Kiểm tra user có tồn tại và có role USER không
+     * 2. Lọc các project thuộc về user này
+     * 3. Gom các namespace của các project đó
+     * 4. Tính tổng CPU/Memory đang sử dụng từ các namespace
+     * 5. Trả về thông tin tổng hợp
+     * 
+     * @param userId ID của user cần lấy thống kê
+     * @return AdminUserProjectSummaryResponse chứa thông tin user và tổng CPU/Memory đang dùng
+     * @throws RuntimeException nếu user không tồn tại hoặc không có role USER
      */
     @Override
     public AdminUserProjectSummaryResponse getUserProjectSummary(Long userId) {
+        // Bước 1: Kiểm tra user có tồn tại không
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy user với id " + userId));
+        
+        // Bước 2: Kiểm tra user có role USER không (chỉ user role USER mới được tính)
         if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
             throw new RuntimeException("User không hợp lệ hoặc không có role USER");
         }
 
+        // Bước 3: Lọc các project thuộc về user này
         List<ProjectEntity> projects = projectRepository.findAll();
         List<ProjectEntity> userProjects = projects.stream()
                 .filter(project -> project.getUser() != null && userId.equals(project.getUser().getId()))
                 .toList();
 
+        // Bước 4: Gom các namespace của các project này (tránh trùng lặp)
         Set<String> namespaces = collectNamespaces(userProjects);
+
+        // Bước 5: Tính tổng CPU/Memory đang sử dụng từ các namespace
         ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
 
-        // 4. Build response
+        // Bước 6: Build response object
         AdminUserProjectSummaryResponse response = new AdminUserProjectSummaryResponse();
         response.setUserId(user.getId());
         response.setFullname(user.getFullname());
         response.setUsername(user.getUsername());
         response.setProjectCount(userProjects.size());
+        // Làm tròn CPU cores và chuyển Memory từ bytes sang GB
         response.setCpuCores(roundToThreeDecimals(usageMap.totalUsage().getCpuCores()));
         response.setMemoryGb(roundToThreeDecimals(bytesToGb(usageMap.totalUsage().getMemoryBytes())));
+        
         return response;
     }
 
     /**
      * Lấy danh sách project chi tiết cho một user (số resource theo từng project).
+     * 
+     * Quy trình xử lý:
+     * 1. Kiểm tra user có tồn tại và có role USER không
+     * 2. Lọc các project thuộc về user này
+     * 3. Gom các namespace và tính usage cho từng namespace
+     * 4. Với mỗi project, tạo một item thống kê bao gồm:
+     *    - Số lượng Database/Backend/Frontend
+     *    - CPU và Memory đang sử dụng (lấy từ namespace của project)
+     * 5. Trả về danh sách các project với thông tin chi tiết
+     * 
+     * @param userId ID của user cần lấy danh sách project
+     * @return AdminUserProjectListResponse chứa danh sách project với thông tin chi tiết
+     * @throws RuntimeException nếu user không tồn tại hoặc không có role USER
      */
     @Override
     public AdminUserProjectListResponse getUserProjectsDetail(Long userId) {
+        // Bước 1: Kiểm tra user có tồn tại không
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy user với id " + userId));
+        
+        // Bước 2: Kiểm tra user có role USER không
         if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
             throw new RuntimeException("User không hợp lệ hoặc không có role USER");
         }
 
+        // Bước 3: Lọc các project thuộc về user này
         List<ProjectEntity> projects = projectRepository.findAll().stream()
                 .filter(project -> project.getUser() != null && userId.equals(project.getUser().getId()))
                 .toList();
 
+        // Bước 4: Gom các namespace và tính usage cho từng namespace
         Set<String> namespaces = collectNamespaces(projects);
         ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
 
+        // Bước 5: Tạo item thống kê cho từng project
         List<AdminUserProjectListResponse.ProjectUsageItem> items = new ArrayList<>();
         for (ProjectEntity project : projects) {
-            // Tạo item thống kê cho từng project
+            // Tạo item thống kê cho project này
             AdminUserProjectListResponse.ProjectUsageItem item = new AdminUserProjectListResponse.ProjectUsageItem();
             item.setProjectId(project.getId());
             item.setProjectName(project.getProjectName());
+            
+            // Đếm số lượng Database/Backend/Frontend (xử lý null-safe)
             item.setDatabaseCount(project.getDatabases() != null ? project.getDatabases().size() : 0);
             item.setBackendCount(project.getBackends() != null ? project.getBackends().size() : 0);
             item.setFrontendCount(project.getFrontends() != null ? project.getFrontends().size() : 0);
 
+            // Lấy usage từ namespace của project (nếu có)
             ResourceUsage usage = null;
             if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
                 usage = usageMap.namespaceUsage().get(project.getNamespace().trim());
             }
+            
+            // Tính CPU và Memory (nếu không có usage thì mặc định là 0)
             double cpu = usage != null ? usage.getCpuCores() : 0.0;
             double memoryGb = usage != null ? bytesToGb(usage.getMemoryBytes()) : 0.0;
-
+            
+            // Làm tròn và set vào item
             item.setCpuCores(roundToThreeDecimals(cpu));
             item.setMemoryGb(roundToThreeDecimals(memoryGb));
+            
             items.add(item);
         }
 
-        // 4. Trả về dữ liệu
+        // Bước 6: Tạo response object và trả về
         AdminUserProjectListResponse response = new AdminUserProjectListResponse();
         response.setUserId(user.getId());
         response.setFullname(user.getFullname());
         response.setUsername(user.getUsername());
         response.setProjects(items);
+        
         return response;
     }
 
     /**
      * Lấy chi tiết tài nguyên (CPU/Memory) của một project, bao gồm từng Database/Backend/Frontend.
+     * 
+     * Quy trình xử lý:
+     * 1. Kiểm tra project có tồn tại và có namespace không
+     * 2. Kết nối SSH đến MASTER server
+     * 3. Với mỗi Database/Backend/Frontend trong project:
+     *    - Lấy uuid_k8s để tạo app label
+     *    - Chạy kubectl top pods với label selector để lấy CPU/Memory
+     *    - Cộng dồn vào tổng
+     * 4. Trả về chi tiết usage cho từng thành phần và tổng
+     * 
+     * @param projectId ID của project cần lấy chi tiết
+     * @return AdminProjectResourceDetailResponse chứa chi tiết CPU/Memory của từng Database/Backend/Frontend
+     * @throws RuntimeException nếu project không tồn tại hoặc không có namespace
      */
     @Override
     public AdminProjectResourceDetailResponse getProjectResourceDetail(Long projectId) {
-        System.out.println("[AdminService] Bắt đầu lấy metrics cho projectId=" + projectId);
+        
+        // Bước 1: Kiểm tra project có tồn tại không
         ProjectEntity project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy project với id " + projectId));
+        
+        // Bước 2: Kiểm tra project có namespace không (namespace là bắt buộc để truy vấn Kubernetes)
         String namespace = project.getNamespace();
         if (namespace == null || namespace.trim().isEmpty()) {
             throw new RuntimeException("Project chưa được cấu hình namespace, không thể lấy metrics");
         }
         namespace = namespace.trim();
 
+        // Bước 3: Lấy thông tin server MASTER để kết nối SSH
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
 
+        // Bước 4: Khởi tạo response object
         AdminProjectResourceDetailResponse response = new AdminProjectResourceDetailResponse();
         response.setProjectId(project.getId());               // Lưu lại id để FE biết project nào
         response.setProjectName(project.getProjectName());    // Lưu lại tên hiển thị
 
-        // Các list lưu usage chi tiết theo từng nhóm thành phần
+        // Các list lưu usage chi tiết theo từng nhóm thành phần (Database/Backend/Frontend)
         List<AdminProjectResourceDetailResponse.ComponentUsage> databaseUsages = new ArrayList<>();
         List<AdminProjectResourceDetailResponse.ComponentUsage> backendUsages = new ArrayList<>();
         List<AdminProjectResourceDetailResponse.ComponentUsage> frontendUsages = new ArrayList<>();
 
-        double totalCpu = 0.0;       // Tổng CPU cộng dồn
-        double totalMemoryGb = 0.0;  // Tổng Memory cộng dồn
+        // Biến để cộng dồn tổng CPU và Memory của toàn bộ project
+        double totalCpu = 0.0;       // Tổng CPU cộng dồn (đơn vị: cores)
+        double totalMemoryGb = 0.0;  // Tổng Memory cộng dồn (đơn vị: GB)
 
-        Session session = null;      // Session SSH tới MASTER để chạy kubectl
+        // Session SSH tới MASTER server để chạy các lệnh kubectl
+        Session session = null;
         try {
+            // Bước 5: Tạo SSH session và kết nối đến MASTER server
             session = createSession(masterServer);
-            System.out.println("[AdminService] Đã kết nối MASTER server để lấy metrics project=" + project.getProjectName());
 
+            // Bước 6: Xử lý các Database trong project
             if (project.getDatabases() != null) {
                 for (ProjectDatabaseEntity database : project.getDatabases()) {
+                    // Bỏ qua database không có uuid_k8s (chưa được deploy)
                     if (database.getUuid_k8s() == null || database.getUuid_k8s().trim().isEmpty()) {
                         continue;
                     }
-                    String appLabel = "db-" + database.getUuid_k8s().trim(); // Tên app label khi deploy database
-                    System.out.println("[AdminService] Đang lấy metrics database app=" + appLabel);
+                    
+                    // Tạo app label theo format: "db-{uuid_k8s}" (format chuẩn khi deploy database)
+                    String appLabel = "db-" + database.getUuid_k8s().trim();
+                    
+                    // Gọi kubectl top pods với label selector để lấy CPU/Memory của các pod có label này
                     ResourceUsage usage = fetchUsageForApp(session, namespace, appLabel);
                     double cpu = usage.getCpuCores();
                     double memoryGb = bytesToGb(usage.getMemoryBytes());
 
+                    // Tạo ComponentUsage object và thêm vào danh sách
                     databaseUsages.add(new AdminProjectResourceDetailResponse.ComponentUsage(
                             database.getId(),
                             database.getProjectName(),
                             database.getStatus(),
-                            roundToThreeDecimals(cpu),
-                            roundToThreeDecimals(memoryGb)
+                            roundToThreeDecimals(cpu),      // Làm tròn 3 chữ số thập phân
+                            roundToThreeDecimals(memoryGb)   // Làm tròn 3 chữ số thập phân
                     ));
 
+                    // Cộng dồn vào tổng
                     totalCpu += cpu;
                     totalMemoryGb += memoryGb;
                 }
             }
 
+            // Bước 7: Xử lý các Backend trong project
             if (project.getBackends() != null) {
                 for (ProjectBackendEntity backend : project.getBackends()) {
+                    // Bỏ qua backend không có uuid_k8s (chưa được deploy)
                     if (backend.getUuid_k8s() == null || backend.getUuid_k8s().trim().isEmpty()) {
                         continue;
                     }
-                    String appLabel = "app-" + backend.getUuid_k8s().trim(); // Các backend dùng prefix app-
-                    System.out.println("[AdminService] Đang lấy metrics backend app=" + appLabel);
+                    
+                    // Tạo app label theo format: "app-{uuid_k8s}" (format chuẩn khi deploy backend)
+                    String appLabel = "app-" + backend.getUuid_k8s().trim();
+                    
+                    // Gọi kubectl top pods với label selector để lấy CPU/Memory
                     ResourceUsage usage = fetchUsageForApp(session, namespace, appLabel);
                     double cpu = usage.getCpuCores();
                     double memoryGb = bytesToGb(usage.getMemoryBytes());
 
+                    // Tạo ComponentUsage object và thêm vào danh sách
                     backendUsages.add(new AdminProjectResourceDetailResponse.ComponentUsage(
                             backend.getId(),
                             backend.getProjectName(),
@@ -260,22 +368,29 @@ public class AdminServiceImpl implements AdminService {
                             roundToThreeDecimals(memoryGb)
                     ));
 
+                    // Cộng dồn vào tổng
                     totalCpu += cpu;
                     totalMemoryGb += memoryGb;
                 }
             }
 
+            // Bước 8: Xử lý các Frontend trong project
             if (project.getFrontends() != null) {
                 for (ProjectFrontendEntity frontend : project.getFrontends()) {
+                    // Bỏ qua frontend không có uuid_k8s (chưa được deploy)
                     if (frontend.getUuid_k8s() == null || frontend.getUuid_k8s().trim().isEmpty()) {
                         continue;
                     }
-                    String appLabel = "app-" + frontend.getUuid_k8s().trim(); // Frontend cũng dùng prefix app-
-                    System.out.println("[AdminService] Đang lấy metrics frontend app=" + appLabel);
+                    
+                    // Tạo app label theo format: "app-{uuid_k8s}" (format chuẩn khi deploy frontend, giống backend)
+                    String appLabel = "app-" + frontend.getUuid_k8s().trim();
+                    
+                    // Gọi kubectl top pods với label selector để lấy CPU/Memory
                     ResourceUsage usage = fetchUsageForApp(session, namespace, appLabel);
                     double cpu = usage.getCpuCores();
                     double memoryGb = bytesToGb(usage.getMemoryBytes());
 
+                    // Tạo ComponentUsage object và thêm vào danh sách
                     frontendUsages.add(new AdminProjectResourceDetailResponse.ComponentUsage(
                             frontend.getId(),
                             frontend.getProjectName(),
@@ -284,6 +399,7 @@ public class AdminServiceImpl implements AdminService {
                             roundToThreeDecimals(memoryGb)
                     ));
 
+                    // Cộng dồn vào tổng
                     totalCpu += cpu;
                     totalMemoryGb += memoryGb;
                 }
@@ -293,7 +409,6 @@ public class AdminServiceImpl implements AdminService {
         } finally {
             if (session != null && session.isConnected()) {
                 session.disconnect();
-                System.out.println("[AdminService] Đã đóng kết nối MASTER server sau khi lấy metrics project=" + project.getProjectName());
             }
         }
 
@@ -303,24 +418,34 @@ public class AdminServiceImpl implements AdminService {
         response.setFrontends(frontendUsages);
         response.setTotalCpuCores(roundToThreeDecimals(totalCpu));
         response.setTotalMemoryGb(roundToThreeDecimals(totalMemoryGb));
-        System.out.println("[AdminService] Hoàn tất metrics project=" + project.getProjectName()
-                + ", totalCpu=" + response.getTotalCpuCores()
-                + ", totalMemoryGb=" + response.getTotalMemoryGb());
         return response;
     }
 
     /**
      * Lấy usage tổng quan cho từng user (số project, CPU, Memory).
+     * 
+     * Quy trình xử lý:
+     * 1. Khởi tạo map chứa thống kê cho từng user có role USER
+     * 2. Duyệt tất cả project, đếm số project và ghi lại namespace thuộc user nào
+     * 3. Gom các namespace và tính usage cho từng namespace
+     * 4. Phân bổ usage của namespace về user sở hữu namespace đó
+     * 5. Làm tròn dữ liệu và trả về
+     * 
+     * @return AdminUserUsageResponse chứa danh sách user với thống kê usage
      */
     @Override
     public AdminUserUsageResponse getUserResourceOverview() {
-        // 1. Chuẩn bị map chứa thống kê cho từng user có role USER
+        // Bước 1: Chuẩn bị map chứa thống kê cho từng user có role USER
         List<UserEntity> users = userRepository.findAll();
         Map<Long, AdminUserUsageResponse.UserUsageItem> userStats = new HashMap<>(); // Map userId -> usage tổng hợp
+        
         for (UserEntity user : users) {
+            // Chỉ xử lý user có role USER (bỏ qua admin/devops)
             if (!ROLE_USER.equalsIgnoreCase(user.getRole())) {
                 continue;
             }
+            
+            // Khởi tạo UserUsageItem với giá trị mặc định (0 project, 0 CPU, 0 Memory)
             AdminUserUsageResponse.UserUsageItem item = new AdminUserUsageResponse.UserUsageItem();
             item.setId(user.getId());
             item.setFullname(user.getFullname());
@@ -332,21 +457,29 @@ public class AdminServiceImpl implements AdminService {
             userStats.put(user.getId(), item);
         }
 
-        // 2. Với mỗi project, tăng số dự án và ghi lại namespace thuộc user nào
+        // Bước 2: Với mỗi project, tăng số dự án và ghi lại namespace thuộc user nào
         List<ProjectEntity> projects = projectRepository.findAll();
-        Set<String> namespaces = new HashSet<>();          // Tập namespace cần truy vấn metrics
-        Map<String, Long> namespaceOwner = new HashMap<>(); // Map namespace -> userId sở hữu
+        Set<String> namespaces = new HashSet<>();          // Tập namespace cần truy vấn metrics (loại bỏ trùng)
+        Map<String, Long> namespaceOwner = new HashMap<>(); // Map namespace -> userId sở hữu (để phân bổ usage)
+        
         for (ProjectEntity project : projects) {
             UserEntity owner = project.getUser();
+            // Bỏ qua project không có owner
             if (owner == null) {
                 continue;
             }
+            
+            // Lấy UserUsageItem của owner
             AdminUserUsageResponse.UserUsageItem item = userStats.get(owner.getId());
+            // Nếu owner không có trong userStats (không phải role USER), bỏ qua
             if (item == null) {
                 continue;
             }
+            
+            // Tăng số project của user
             item.setProjectCount(item.getProjectCount() + 1);
 
+            // Nếu project có namespace, thêm vào danh sách và ghi lại owner
             if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
                 String namespace = project.getNamespace().trim();
                 namespaces.add(namespace);
@@ -354,104 +487,164 @@ public class AdminServiceImpl implements AdminService {
             }
         }
 
-        // 3. Lấy metrics từng namespace rồi cộng ngược vào user tương ứng
+        // Bước 3: Lấy metrics từng namespace rồi cộng ngược vào user tương ứng
         ResourceUsageMap usageMap = calculateUsagePerNamespace(namespaces);
+        
+        // Phân bổ usage của từng namespace về user sở hữu namespace đó
         usageMap.namespaceUsage().forEach((namespace, usage) -> {
             Long ownerId = namespaceOwner.get(namespace);
             if (ownerId == null) {
                 return;
             }
+            
             AdminUserUsageResponse.UserUsageItem item = userStats.get(ownerId);
             if (item != null) {
+                // Cộng dồn CPU và Memory vào user
                 item.setCpuCores(item.getCpuCores() + usage.getCpuCores());
                 item.setMemoryGb(item.getMemoryGb() + bytesToGb(usage.getMemoryBytes()));
             }
         });
 
+        // Bước 4: Làm tròn CPU và Memory cho từng user (3 chữ số thập phân)
         userStats.values().forEach(item -> {
             item.setCpuCores(roundToThreeDecimals(item.getCpuCores()));
             item.setMemoryGb(roundToThreeDecimals(item.getMemoryGb()));
         });
 
+        // Bước 5: Tạo response và trả về
         AdminUserUsageResponse response = new AdminUserUsageResponse();
         response.setUsers(new ArrayList<>(userStats.values()));
+        
         return response;
     }
 
     /**
      * Gom danh sách namespace từ list project để tránh gọi lặp lại.
+     * 
+     * Mục đích: Khi có nhiều project cùng sử dụng một namespace, ta chỉ cần truy vấn metrics một lần
+     * thay vì truy vấn nhiều lần cho cùng namespace. Điều này giúp tối ưu hiệu suất.
+     * 
+     * Logic xử lý:
+     * 1. Khởi tạo Set để tự động loại bỏ namespace trùng lặp
+     * 2. Duyệt từng project trong danh sách
+     * 3. Kiểm tra project có namespace hợp lệ (không null, không rỗng) không
+     * 4. Nếu có, thêm namespace vào Set (đã trim để loại bỏ khoảng trắng thừa)
+     * 5. Trả về Set các namespace duy nhất
+     * 
+     * @param projects Danh sách các project cần lấy namespace
+     * @return Set<String> chứa các namespace duy nhất (không trùng lặp)
      */
     private Set<String> collectNamespaces(List<ProjectEntity> projects) {
-        // 1. Khởi tạo set để loại bỏ trùng
+        // Bước 1: Khởi tạo Set để tự động loại bỏ namespace trùng lặp
         Set<String> namespaces = new HashSet<>();
-        // 2. Duyệt từng project và thêm namespace hợp lệ
+        
+        // Bước 2: Duyệt từng project và thêm namespace hợp lệ vào Set
         for (ProjectEntity project : projects) {
+            // Kiểm tra project có namespace hợp lệ không (không null và không rỗng)
             if (project.getNamespace() != null && !project.getNamespace().trim().isEmpty()) {
-                namespaces.add(project.getNamespace().trim());
+                String namespace = project.getNamespace().trim(); // Trim để loại bỏ khoảng trắng thừa
+                namespaces.add(namespace);
             }
         }
-        // 3. Trả về kết quả
+        
+        // Bước 3: Trả về Set các namespace duy nhất
         return namespaces;
     }
 
     /**
      * Chạy kubectl top pods cho danh sách namespace để thu thập CPU/Memory.
      * Kết quả trả về cả tổng usage và usage theo từng namespace.
+     * 
+     * Quy trình xử lý:
+     * 1. Kiểm tra danh sách namespace có rỗng không
+     * 2. Kết nối SSH đến MASTER server
+     * 3. Với mỗi namespace:
+     *    - Chạy lệnh: kubectl top pods -n {namespace} --no-headers
+     *    - Parse output để lấy CPU và Memory của từng pod
+     *    - Cộng dồn vào tổng và vào namespace tương ứng
+     * 4. Trả về ResourceUsageMap chứa tổng usage và usage theo namespace
+     * 
+     * @param namespaces Set các namespace cần truy vấn metrics
+     * @return ResourceUsageMap chứa tổng usage và usage theo từng namespace
      */
     private ResourceUsageMap calculateUsagePerNamespace(Set<String> namespaces) {
-        ResourceUsage totalUsage = new ResourceUsage();
-        Map<String, ResourceUsage> namespaceUsage = new HashMap<>();
+        // Khởi tạo các biến để lưu kết quả
+        ResourceUsage totalUsage = new ResourceUsage();  // Tổng usage của tất cả namespace
+        Map<String, ResourceUsage> namespaceUsage = new HashMap<>();  // Usage theo từng namespace
 
+        // Nếu không có namespace nào, trả về kết quả rỗng
         if (namespaces.isEmpty()) {
             return new ResourceUsageMap(totalUsage, namespaceUsage);
         }
 
+        // Lấy thông tin server MASTER để kết nối SSH
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
 
         Session clusterSession = null;
         try {
+            // Tạo SSH session và kết nối đến MASTER server
             clusterSession = createSession(masterServer);
-            // 1. Lặp qua từng namespace để gọi kubectl top
+            
+            // Bước 1: Lặp qua từng namespace để gọi kubectl top pods
             for (String namespace : namespaces) {
                 try {
+                    // Tạo lệnh kubectl top pods cho namespace này (--no-headers để bỏ dòng header)
                     String cmd = String.format("kubectl top pods -n %s --no-headers", namespace);
+                    
+                    // Thực thi lệnh (ignoreNonZeroExit=true để không throw exception nếu lệnh fail)
                     String output = executeCommand(clusterSession, cmd, true);
+                    
+                    // Nếu không có output (namespace không có pod hoặc lỗi), bỏ qua
                     if (output == null || output.trim().isEmpty()) {
                         continue;
                     }
+                    
+                    // Chia output thành các dòng (mỗi dòng là một pod)
                     String[] lines = output.split("\\r?\\n");
-                    // 2. Parse từng dòng output
+                    
+                    // Bước 2: Parse từng dòng output để lấy CPU và Memory
                     for (String line : lines) {
                         line = line.trim();
+                        // Bỏ qua dòng rỗng
                         if (line.isEmpty()) {
                             continue;
                         }
+                        
+                        // Chia dòng thành các phần: [pod-name] [CPU] [Memory]
                         String[] parts = line.split("\\s+");
                         if (parts.length < 3) {
                             continue;
                         }
+                        
                         try {
+                            // Parse CPU từ phần thứ 2 (có thể là "15m", "0.2", etc.)
                             double cpu = parseCpuCores(parts[1]);
+                            // Parse Memory từ phần thứ 3 (có thể là "100Mi", "2Gi", etc.)
                             long memory = parseMemoryBytes(parts[2]);
 
+                            // Cộng dồn vào tổng usage
                             totalUsage.addCpu(cpu).addMemory(memory);
+                            
+                            // Cộng dồn vào usage của namespace này
+                            // computeIfAbsent: nếu namespace chưa có trong map, tạo mới ResourceUsage
                             namespaceUsage
                                     .computeIfAbsent(namespace, key -> new ResourceUsage())
                                     .addCpu(cpu)
                                     .addMemory(memory);
                         } catch (NumberFormatException ex) {
-                            System.err.println("[AdminService] Không thể parse metrics từ dòng: " + line);
+                            // Nếu không parse được, log lỗi nhưng tiếp tục xử lý pod khác
                         }
                     }
                 } catch (Exception e) {
-                    System.err.println("[AdminService] Lỗi khi lấy metrics cho namespace " + namespace + ": " + e.getMessage());
+                    // Nếu lỗi khi xử lý một namespace, log nhưng tiếp tục xử lý namespace khác
                 }
             }
         } catch (Exception e) {
-            System.err.println("[AdminService] Lỗi kết nối MASTER server để lấy metrics: " + e.getMessage());
+            // Lỗi khi kết nối SSH hoặc lỗi chung
         } finally {
+            // Đảm bảo đóng SSH session
             if (clusterSession != null && clusterSession.isConnected()) {
                 clusterSession.disconnect();
             }
@@ -463,97 +656,188 @@ public class AdminServiceImpl implements AdminService {
     /**
      * Lấy metrics CPU/Memory cho một nhóm pod theo label "app".
      * Hàm này giúp tái sử dụng logic kubectl top pods -l app=<label>.
+     * 
+     * Mục đích: Lấy tổng CPU và Memory của tất cả pod có label app={appLabel} trong namespace.
+     * Được sử dụng để lấy metrics cho một Database/Backend/Frontend cụ thể.
+     * 
+     * Quy trình xử lý:
+     * 1. Kiểm tra tham số đầu vào hợp lệ
+     * 2. Chạy lệnh: kubectl top pods -n {namespace} -l app={appLabel} --no-headers
+     * 3. Parse output để lấy CPU và Memory của từng pod
+     * 4. Cộng dồn vào ResourceUsage và trả về
+     * 
+     * @param session SSH session đã kết nối đến MASTER server
+     * @param namespace Namespace chứa các pod cần truy vấn
+     * @param appLabel Label "app" để filter pod (ví dụ: "db-abc123", "app-xyz789")
+     * @return ResourceUsage chứa tổng CPU (cores) và Memory (bytes) của các pod thỏa label
      */
     private ResourceUsage fetchUsageForApp(Session session, String namespace, String appLabel) {
+        // Khởi tạo ResourceUsage rỗng (CPU=0, Memory=0)
         ResourceUsage usage = new ResourceUsage();
+        
+        // Kiểm tra tham số đầu vào hợp lệ
         if (session == null || namespace == null || namespace.isBlank() || appLabel == null || appLabel.isBlank()) {
             return usage;
         }
+        
         try {
+            // Tạo lệnh kubectl top pods với label selector
+            // -l app={appLabel}: chỉ lấy pod có label app={appLabel}
+            // --no-headers: bỏ dòng header để dễ parse
             String cmd = String.format("kubectl top pods -n %s -l app=%s --no-headers", namespace, appLabel);
+            
+            // Thực thi lệnh (ignoreNonZeroExit=true để không throw exception nếu không có pod)
             String output = executeCommand(session, cmd, true);
+            
+            // Nếu không có output (không có pod thỏa label), trả về usage rỗng
             if (output == null || output.trim().isEmpty()) {
                 return usage;
             }
+            
+            // Chia output thành các dòng (mỗi dòng là một pod)
             String[] lines = output.split("\\r?\\n");
-            // 1. Lặp qua từng pod thỏa label
+            
+            // Bước 1: Lặp qua từng pod thỏa label để parse CPU và Memory
             for (String line : lines) {
                 line = line.trim();
+                // Bỏ qua dòng rỗng
                 if (line.isEmpty()) {
                     continue;
                 }
+                
+                // Chia dòng thành các phần: [pod-name] [CPU] [Memory]
                 String[] parts = line.split("\\s+");
                 if (parts.length < 3) {
                     continue;
                 }
+                
+                // Parse CPU và Memory từ output
                 double cpu = parseCpuCores(parts[1]);
                 long memory = parseMemoryBytes(parts[2]);
+                
+                // Cộng dồn vào usage
                 usage.addCpu(cpu).addMemory(memory);
             }
         } catch (Exception e) {
-            System.err.println("[AdminService] Không thể lấy metrics cho app=" + appLabel + ": " + e.getMessage());
+            // Nếu có lỗi, log nhưng vẫn trả về usage (có thể là 0 nếu chưa parse được gì)
         }
         return usage;
     }
 
     /**
      * Mở SSH session tới server MASTER để chạy lệnh kubectl.
+     * 
+     * Quy trình xử lý:
+     * 1. Tạo JSch object để quản lý SSH connection
+     * 2. Tạo session với thông tin đăng nhập (username, IP, port)
+     * 3. Set password cho authentication
+     * 4. Cấu hình session (tắt StrictHostKeyChecking để không cần xác nhận host key)
+     * 5. Set timeout 7 giây
+     * 6. Kết nối thực tế đến server
+     * 
+     * @param server ServerEntity chứa thông tin server MASTER (IP, port, username, password)
+     * @return Session đã kết nối thành công, sẵn sàng để thực thi lệnh
+     * @throws Exception nếu không thể kết nối (sai thông tin đăng nhập, server không khả dụng, etc.)
      */
     private Session createSession(ServerEntity server) throws Exception {
-        // 1. Tạo session với thông tin đăng nhập server
+        // Bước 1: Tạo JSch object để quản lý SSH connection
         JSch jsch = new JSch();
+        
+        // Bước 2: Tạo session với thông tin đăng nhập server
         Session session = jsch.getSession(server.getUsername(), server.getIp(), server.getPort());
+        
+        // Bước 3: Set password cho authentication
         session.setPassword(server.getPassword());
+        
+        // Bước 4: Cấu hình session
         Properties config = new Properties();
-        config.put("StrictHostKeyChecking", "no");
+        config.put("StrictHostKeyChecking", "no");  // Tắt kiểm tra host key (cho phép kết nối mà không cần xác nhận)
         session.setConfig(config);
-        session.setTimeout(7000);
-        session.connect(); // 2. Kết nối thực tế
+        session.setTimeout(7000);  // Timeout 7 giây
+        
+        // Bước 5: Kết nối thực tế đến server
+        session.connect();
+        
         return session;
     }
 
+    /**
+     * Thực thi lệnh shell trên server MASTER thông qua SSH.
+     * 
+     * Quy trình xử lý:
+     * 1. Mở channel "exec" để thực thi lệnh
+     * 2. Set lệnh cần thực thi
+     * 3. Redirect stderr để log lỗi
+     * 4. Kết nối channel và bắt đầu thực thi
+     * 5. Đọc output từ inputStream liên tục cho đến khi lệnh kết thúc
+     * 6. Kiểm tra exit status và xử lý lỗi nếu cần
+     * 7. Đóng channel và trả về output
+     * 
+     * @param session SSH session đã kết nối
+     * @param command Lệnh shell cần thực thi (ví dụ: "kubectl get pods -n default")
+     * @param ignoreNonZeroExit Nếu true, không throw exception khi lệnh trả về exit code != 0 (chỉ log)
+     * @return String chứa output của lệnh (đã trim)
+     * @throws Exception nếu có lỗi khi thực thi hoặc exit code != 0 và ignoreNonZeroExit=false
+     */
     private String executeCommand(Session session, String command, boolean ignoreNonZeroExit) throws Exception {
         ChannelExec channelExec = null;
 
         try {
+            // Bước 1: Mở channel "exec" để thực thi lệnh shell
             channelExec = (ChannelExec) session.openChannel("exec");
+            
+            // Bước 2: Set lệnh cần thực thi
             channelExec.setCommand(command);
+            
+            // Bước 3: Redirect stderr để log lỗi ra console
             channelExec.setErrStream(System.err);
 
+            // Bước 4: Lấy inputStream để đọc output của lệnh
             InputStream inputStream = channelExec.getInputStream();
+            
+            // Bước 5: Kết nối channel và bắt đầu thực thi lệnh
             channelExec.connect();
 
+            // Bước 6: Đọc output từ inputStream
             StringBuilder output = new StringBuilder();
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[1024];  // Buffer 1KB để đọc dữ liệu
 
+            // Vòng lặp đọc output cho đến khi lệnh kết thúc hoàn toàn
             while (true) {
-                // 1. Đọc liên tục đến khi lệnh kết thúc
+                // Đọc liên tục tất cả dữ liệu có sẵn trong inputStream
                 while (inputStream.available() > 0) {
                     int bytesRead = inputStream.read(buffer, 0, 1024);
                     if (bytesRead < 0) {
-                        break;
+                        break;  // Không còn dữ liệu để đọc
                     }
+                    // Chuyển đổi bytes sang String (UTF-8) và append vào output
                     output.append(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
                 }
 
+                // Kiểm tra channel đã đóng chưa (lệnh đã kết thúc)
                 if (channelExec.isClosed()) {
+                    // Nếu vẫn còn dữ liệu trong inputStream, tiếp tục đọc
                     if (inputStream.available() > 0) {
                         continue;
                     }
+                    // Nếu không còn dữ liệu, thoát vòng lặp
                     break;
                 }
 
+                // Nghỉ 100ms trước khi kiểm tra lại (tránh busy waiting)
                 Thread.sleep(100);
             }
 
+            // Bước 7: Lấy exit status của lệnh (0 = thành công, != 0 = lỗi)
             int exitStatus = channelExec.getExitStatus();
             String result = output.toString().trim();
 
+            // Bước 8: Xử lý exit status
             if (exitStatus != 0) {
                 if (ignoreNonZeroExit) {
-                    System.err.println("[AdminService] Command exited with status: " + exitStatus
-                            + ". Output: " + result + ". Command: " + command);
+                    // Nếu cho phép ignore, bỏ qua lỗi (không throw exception)
                 } else {
+                    // Nếu không cho phép ignore, throw exception
                     throw new RuntimeException("Command exited with status: " + exitStatus + ". Output: " + result);
                 }
             }
@@ -561,6 +845,7 @@ public class AdminServiceImpl implements AdminService {
             return result;
 
         } finally {
+            // Bước 9: Đảm bảo đóng channel dù có lỗi hay không
             if (channelExec != null && channelExec.isConnected()) {
                 channelExec.disconnect();
             }
@@ -568,149 +853,323 @@ public class AdminServiceImpl implements AdminService {
     }
 
     /**
-     * Parse chuỗi CPU từ kubectl (ví dụ: 15m, 0.2) về đơn vị cores (double).
+     * Parse chuỗi CPU từ kubectl về đơn vị cores (double).
+     * 
+     * Kubernetes có thể trả về CPU theo 2 định dạng:
+     * - Millicores: "15m", "3950m" (m = millicores, 1000m = 1 core)
+     * - Cores: "0.2", "4", "1.5" (số cores trực tiếp)
+     * 
+     * Logic xử lý:
+     * 1. Kiểm tra chuỗi có rỗng không
+     * 2. Chuyển về lowercase để xử lý
+     * 3. Nếu kết thúc bằng "m" → millicores, chia cho 1000 để chuyển sang cores
+     * 4. Nếu không → cores trực tiếp, parse thành double
+     * 
+     * Ví dụ:
+     * - "15m" → 0.015 cores
+     * - "3950m" → 3.95 cores
+     * - "0.2" → 0.2 cores
+     * - "4" → 4.0 cores
+     * 
+     * @param cpuStr Chuỗi CPU từ kubectl (ví dụ: "15m", "0.2", "3950m")
+     * @return double số cores (ví dụ: 0.015, 0.2, 3.95)
      */
     private double parseCpuCores(String cpuStr) {
-        if (cpuStr == null || cpuStr.isEmpty()) return 0.0;
+        // Kiểm tra chuỗi rỗng
+        if (cpuStr == null || cpuStr.isEmpty()) {
+            return 0.0;
+        }
+        
+        // Chuyển về lowercase và trim để xử lý
         cpuStr = cpuStr.trim().toLowerCase();
+        
+        // Kiểm tra nếu là millicores (kết thúc bằng "m")
         if (cpuStr.endsWith("m")) {
+            // Lấy phần số (bỏ ký tự "m" cuối)
             String value = cpuStr.substring(0, cpuStr.length() - 1);
+            // Chuyển millicores sang cores: chia cho 1000
             return Double.parseDouble(value) / 1000.0;
         }
+        
+        // Nếu không có "m", đó là cores trực tiếp
         return Double.parseDouble(cpuStr);
     }
 
     /**
-     * Parse chuỗi Memory (Mi, Gi, Ki, ...) từ kubectl và trả về bytes.
+     * Parse chuỗi Memory từ kubectl và trả về bytes.
+     * 
+     * Kubernetes có thể trả về Memory theo nhiều định dạng:
+     * - Binary units (1024-based): Ki (Kibibytes), Mi (Mebibytes), Gi (Gibibytes), Ti (Tebibytes)
+     * - Decimal units (1000-based): K (Kilobytes), M (Megabytes), G (Gigabytes)
+     * - Không có đơn vị: được coi là bytes
+     * 
+     * Logic xử lý:
+     * 1. Kiểm tra chuỗi rỗng
+     * 2. Chuyển về uppercase để xử lý
+     * 3. Kiểm tra đơn vị (KI, MI, GI, TI, K, M, G)
+     * 4. Tính factor tương ứng (số bytes trong 1 đơn vị)
+     * 5. Lấy phần số (bỏ đơn vị)
+     * 6. Nhân số với factor để chuyển sang bytes
+     * 
+     * Ví dụ:
+     * - "100Ki" → 100 * 1024 = 102,400 bytes
+     * - "512Mi" → 512 * 1024^2 = 536,870,912 bytes
+     * - "2Gi" → 2 * 1024^3 = 2,147,483,648 bytes
+     * - "1G" → 1 * 1000^3 = 1,000,000,000 bytes
+     * 
+     * @param memStr Chuỗi Memory từ kubectl (ví dụ: "100Mi", "2Gi", "512Ki")
+     * @return long số bytes tương ứng
      */
     private long parseMemoryBytes(String memStr) {
-        if (memStr == null || memStr.isEmpty()) return 0L;
+        // Kiểm tra chuỗi rỗng
+        if (memStr == null || memStr.isEmpty()) {
+            return 0L;
+        }
+        
+        // Chuyển về uppercase và trim để xử lý
         memStr = memStr.trim().toUpperCase();
 
+        // Khởi tạo factor mặc định là 1 (nếu không có đơn vị, coi là bytes)
         long factor = 1L;
         String numericPart = memStr;
 
+        // Kiểm tra các đơn vị binary (1024-based) - thường dùng trong Kubernetes
         if (memStr.endsWith("KI")) {
+            // Kibibytes: 1 Ki = 1024 bytes
             factor = 1024L;
             numericPart = memStr.substring(0, memStr.length() - 2);
         } else if (memStr.endsWith("MI")) {
+            // Mebibytes: 1 Mi = 1024^2 = 1,048,576 bytes
             factor = 1024L * 1024L;
             numericPart = memStr.substring(0, memStr.length() - 2);
         } else if (memStr.endsWith("GI")) {
+            // Gibibytes: 1 Gi = 1024^3 = 1,073,741,824 bytes
             factor = 1024L * 1024L * 1024L;
             numericPart = memStr.substring(0, memStr.length() - 2);
         } else if (memStr.endsWith("TI")) {
+            // Tebibytes: 1 Ti = 1024^4 = 1,099,511,627,776 bytes
             factor = 1024L * 1024L * 1024L * 1024L;
             numericPart = memStr.substring(0, memStr.length() - 2);
-        } else if (memStr.endsWith("K")) {
+        } 
+        // Kiểm tra các đơn vị decimal (1000-based) - ít dùng hơn
+        else if (memStr.endsWith("K")) {
+            // Kilobytes: 1 K = 1000 bytes
             factor = 1000L;
             numericPart = memStr.substring(0, memStr.length() - 1);
         } else if (memStr.endsWith("M")) {
+            // Megabytes: 1 M = 1,000,000 bytes
             factor = 1000L * 1000L;
             numericPart = memStr.substring(0, memStr.length() - 1);
         } else if (memStr.endsWith("G")) {
+            // Gigabytes: 1 G = 1,000,000,000 bytes
             factor = 1000L * 1000L * 1000L;
             numericPart = memStr.substring(0, memStr.length() - 1);
         }
+        // Nếu không có đơn vị, factor = 1 (coi là bytes)
 
-        // 2. Chuyển về bytes theo đơn vị tương ứng
+        // Bước 2: Parse phần số và nhân với factor để chuyển về bytes
         double value = Double.parseDouble(numericPart);
         return (long) (value * factor);
     }
 
+    /**
+     * Chuyển đổi bytes sang GB (Gigabytes).
+     * 
+     * Sử dụng hệ số quy đổi binary: 1 GB = 1024^3 bytes = 1,073,741,824 bytes
+     * 
+     * @param bytes Số bytes cần chuyển đổi
+     * @return double số GB tương ứng (có thể có phần thập phân)
+     */
     private double bytesToGb(long bytes) {
-        // 1 GB = 1024^3 bytes
+        // 1 GB = 1024^3 bytes = BYTES_PER_GB
         return bytes / BYTES_PER_GB;
     }
 
+    /**
+     * Làm tròn số về 3 chữ số thập phân.
+     * 
+     * Mục đích: Giữ format hiển thị gọn gàng, dễ đọc (ví dụ: 1.234 thay vì 1.23456789)
+     * 
+     * Logic: Nhân với 1000, làm tròn, rồi chia lại cho 1000
+     * 
+     * Ví dụ:
+     * - 1.23456789 → 1.235
+     * - 0.123456 → 0.123
+     * - 5.0 → 5.0
+     * 
+     * @param value Số cần làm tròn
+     * @return double đã làm tròn đến 3 chữ số thập phân
+     */
     private double roundToThreeDecimals(double value) {
         // Giữ tối đa 3 chữ số thập phân để hiển thị gọn hơn
+        // Math.round(value * 1000d) làm tròn đến số nguyên gần nhất
+        // Chia cho 1000d để có lại số thập phân với 3 chữ số
         return Math.round(value * 1000d) / 1000d;
     }
 
     /**
      * DTO nội bộ lưu trữ CPU/Memory dạng số để dễ cộng dồn.
+     * 
+     * Class này được sử dụng để:
+     * - Lưu trữ CPU (cores) và Memory (bytes) dưới dạng số để dễ tính toán
+     * - Hỗ trợ method chaining để cộng dồn giá trị một cách tiện lợi
+     * - Tái sử dụng trong nhiều method để tính tổng usage
+     * 
+     * Các field:
+     * - cpuCores: Tổng CPU cores (double, có thể có phần thập phân)
+     * - memoryBytes: Tổng Memory bytes (long, số nguyên)
      */
     private static class ResourceUsage {
-        private double cpuCores = 0.0; // Tổng CPU (cores)
-        private long memoryBytes = 0L; // Tổng Memory (bytes)
+        /**
+         * Tổng CPU cores đang sử dụng.
+         * Đơn vị: cores (có thể có phần thập phân, ví dụ: 1.5 cores)
+         */
+        private double cpuCores = 0.0;
+        
+        /**
+         * Tổng Memory bytes đang sử dụng.
+         * Đơn vị: bytes (số nguyên, ví dụ: 1073741824 bytes = 1 GB)
+         */
+        private long memoryBytes = 0L;
 
+        /**
+         * Cộng thêm CPU cores vào tổng hiện tại.
+         * 
+         * @param cores Số cores cần cộng thêm
+         * @return ResourceUsage chính nó để hỗ trợ method chaining
+         */
         public ResourceUsage addCpu(double cores) {
             this.cpuCores += cores;
             return this;
         }
 
+        /**
+         * Cộng thêm Memory bytes vào tổng hiện tại.
+         * 
+         * @param bytes Số bytes cần cộng thêm
+         * @return ResourceUsage chính nó để hỗ trợ method chaining
+         */
         public ResourceUsage addMemory(long bytes) {
             this.memoryBytes += bytes;
             return this;
         }
 
+        /**
+         * Lấy tổng CPU cores.
+         * 
+         * @return double tổng CPU cores
+         */
         public double getCpuCores() {
             return cpuCores;
         }
 
+        /**
+         * Lấy tổng Memory bytes.
+         * 
+         * @return long tổng Memory bytes
+         */
         public long getMemoryBytes() {
             return memoryBytes;
         }
     }
 
-    // record gom tổng usage và usage theo từng namespace để tái sử dụng ở nhiều hàm
+    /**
+     * Record gom tổng usage và usage theo từng namespace để tái sử dụng ở nhiều hàm.
+     * 
+     * Record này chứa:
+     * - totalUsage: ResourceUsage chứa tổng CPU/Memory của tất cả namespace
+     * - namespaceUsage: Map<String, ResourceUsage> chứa CPU/Memory theo từng namespace
+     * 
+     * Mục đích: Tránh phải truy vấn Kubernetes nhiều lần cho cùng một tập namespace.
+     * Một lần tính toán có thể được sử dụng cho nhiều mục đích khác nhau.
+     * 
+     * @param totalUsage Tổng usage của tất cả namespace cộng lại
+     * @param namespaceUsage Map namespace -> ResourceUsage của namespace đó
+     */
     private record ResourceUsageMap(ResourceUsage totalUsage, Map<String, ResourceUsage> namespaceUsage) {
     }
 
     /**
-     * Lấy tổng CPU và RAM capacity của cluster từ kubectl get nodes.
-     * Sử dụng lệnh: kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,RAM:.status.capacity.memory
+     * Lấy tổng CPU và RAM capacity (tổng dung lượng) của cluster từ kubectl get nodes.
+     * 
+     * Capacity là tổng tài nguyên vật lý của cluster (tất cả node cộng lại).
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server
+     * 2. Chạy lệnh: kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,RAM:.status.capacity.memory
+     * 3. Parse output để lấy CPU và Memory của từng node
+     * 4. Cộng dồn tất cả node để có tổng capacity
+     * 5. Chuyển đổi và làm tròn dữ liệu
+     * 
+     * @return ClusterCapacityResponse chứa tổng CPU cores và Memory GB của cluster
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
      */
     @Override
     public ClusterCapacityResponse getClusterCapacity() {
+        // Lấy thông tin server MASTER
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
 
         Session session = null;
         try {
+            // Kết nối SSH đến MASTER server
             session = createSession(masterServer);
+            
+            // Tạo lệnh kubectl get nodes với custom columns để lấy CPU và Memory capacity
+            // Output format: NAME    CPU    RAM
+            //                node1   4      8Gi
+            //                node2   4      8Gi
             String command = "kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,RAM:.status.capacity.memory";
+            
+            // Thực thi lệnh (ignoreNonZeroExit=false vì lệnh này phải thành công)
             String output = executeCommand(session, command, false);
 
-            double totalCpu = 0.0;
-            long totalMemoryBytes = 0L;
+            // Khởi tạo biến để cộng dồn
+            double totalCpu = 0.0;        // Tổng CPU cores
+            long totalMemoryBytes = 0L;   // Tổng Memory bytes
 
+            // Parse output nếu có
             if (output != null && !output.trim().isEmpty()) {
                 String[] lines = output.split("\\r?\\n");
-                // Bỏ qua dòng header (dòng đầu tiên)
+                
+                // Bỏ qua dòng header (dòng đầu tiên: "NAME    CPU    RAM")
                 for (int i = 1; i < lines.length; i++) {
                     String line = lines[i].trim();
                     if (line.isEmpty()) {
                         continue;
                     }
+                    
                     // Parse dòng: node-name   4   8Gi
+                    // Format: [node-name] [CPU] [Memory]
                     String[] parts = line.split("\\s+");
                     if (parts.length >= 3) {
                         try {
                             // CPU có thể là số nguyên (cores) hoặc millicores (3950m)
                             double cpu = parseCpuCores(parts[1]);
-                            totalCpu += cpu;
                             // RAM có thể là 8Gi, 16Gi, etc.
                             long memoryBytes = parseMemoryBytes(parts[2]);
+                            
+                            // Cộng dồn vào tổng
+                            totalCpu += cpu;
                             totalMemoryBytes += memoryBytes;
                         } catch (NumberFormatException e) {
-                            System.err.println("[AdminService] Không thể parse capacity từ dòng: " + line);
                         }
                     }
                 }
             }
 
+            // Tạo response và set dữ liệu
             ClusterCapacityResponse response = new ClusterCapacityResponse();
             response.setTotalCpuCores(roundToThreeDecimals(totalCpu));
             response.setTotalMemoryGb(roundToThreeDecimals(bytesToGb(totalMemoryBytes)));
+            
             return response;
 
         } catch (Exception e) {
-            System.err.println("[AdminService] Lỗi khi lấy cluster capacity: " + e.getMessage());
             throw new RuntimeException("Không thể lấy cluster capacity: " + e.getMessage(), e);
         } finally {
+            // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {
                 session.disconnect();
             }
@@ -719,55 +1178,85 @@ public class AdminServiceImpl implements AdminService {
 
     /**
      * Lấy tổng CPU và RAM allocatable (khả dụng) của cluster từ kubectl get nodes.
-     * Sử dụng lệnh: kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU_ALLOC:.status.allocatable.cpu,RAM_ALLOC:.status.allocatable.memory
+     * 
+     * Allocatable là tài nguyên khả dụng sau khi trừ đi phần dành cho hệ thống (system reserved).
+     * Thường nhỏ hơn capacity vì một phần tài nguyên được dành cho OS và các thành phần hệ thống.
+     * 
+     * Quy trình xử lý:
+     * 1. Kết nối SSH đến MASTER server
+     * 2. Chạy lệnh: kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU_ALLOC:.status.allocatable.cpu,RAM_ALLOC:.status.allocatable.memory
+     * 3. Parse output để lấy CPU và Memory allocatable của từng node
+     * 4. Cộng dồn tất cả node để có tổng allocatable
+     * 5. Chuyển đổi và làm tròn dữ liệu
+     * 
+     * @return ClusterAllocatableResponse chứa tổng CPU cores và Memory GB allocatable của cluster
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
      */
     @Override
     public ClusterAllocatableResponse getClusterAllocatable() {
+        
+        // Lấy thông tin server MASTER
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
 
         Session session = null;
         try {
+            // Kết nối SSH đến MASTER server
             session = createSession(masterServer);
+            
+            // Tạo lệnh kubectl get nodes với custom columns để lấy CPU và Memory allocatable
+            // Output format: NAME    CPU_ALLOC    RAM_ALLOC
+            //                node1   3950m        16Gi
+            //                node2   3950m        16Gi
             String command = "kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU_ALLOC:.status.allocatable.cpu,RAM_ALLOC:.status.allocatable.memory";
+            
+            // Thực thi lệnh (ignoreNonZeroExit=false vì lệnh này phải thành công)
             String output = executeCommand(session, command, false);
 
-            double totalCpu = 0.0;
-            long totalMemoryBytes = 0L;
+            // Khởi tạo biến để cộng dồn
+            double totalCpu = 0.0;        // Tổng CPU cores allocatable
+            long totalMemoryBytes = 0L;   // Tổng Memory bytes allocatable
 
+            // Parse output nếu có
             if (output != null && !output.trim().isEmpty()) {
                 String[] lines = output.split("\\r?\\n");
-                // Bỏ qua dòng header (dòng đầu tiên)
+                
+                // Bỏ qua dòng header (dòng đầu tiên: "NAME    CPU_ALLOC    RAM_ALLOC")
                 for (int i = 1; i < lines.length; i++) {
                     String line = lines[i].trim();
                     if (line.isEmpty()) {
                         continue;
                     }
+                    
                     // Parse dòng: node-name   3950m   16Gi
+                    // Format: [node-name] [CPU_ALLOC] [Memory_ALLOC]
                     String[] parts = line.split("\\s+");
                     if (parts.length >= 3) {
                         try {
                             // CPU có thể là 4 hoặc 3950m (millicores)
                             double cpu = parseCpuCores(parts[1]);
-                            totalCpu += cpu;
                             // RAM có thể là 8Gi, 16Gi, etc.
                             long memoryBytes = parseMemoryBytes(parts[2]);
+                            
+                            // Cộng dồn vào tổng
+                            totalCpu += cpu;
                             totalMemoryBytes += memoryBytes;
                         } catch (NumberFormatException e) {
-                            System.err.println("[AdminService] Không thể parse allocatable từ dòng: " + line);
+                            // Bỏ qua dòng không parse được
                         }
                     }
                 }
             }
 
+            // Tạo response và set dữ liệu
             ClusterAllocatableResponse response = new ClusterAllocatableResponse();
             response.setTotalCpuCores(roundToThreeDecimals(totalCpu));
             response.setTotalMemoryGb(roundToThreeDecimals(bytesToGb(totalMemoryBytes)));
+            
             return response;
 
         } catch (Exception e) {
-            System.err.println("[AdminService] Lỗi khi lấy cluster allocatable: " + e.getMessage());
             throw new RuntimeException("Không thể lấy cluster allocatable: " + e.getMessage(), e);
         } finally {
             if (session != null && session.isConnected()) {
@@ -777,38 +1266,61 @@ public class AdminServiceImpl implements AdminService {
     }
 
     /**
-     * Lấy chi tiết database bao gồm thông tin Pod, Service, StatefulSet, PVC, PV
+     * Lấy chi tiết database bao gồm thông tin Pod, Service, StatefulSet, PVC, PV.
+     * 
+     * Quy trình xử lý:
+     * 1. Lấy database entity từ database và kiểm tra thông tin cơ bản (project, namespace, uuid_k8s)
+     * 2. Tạo tên các Kubernetes resource dựa trên uuid_k8s:
+     *    - Pod: db-{uuid}-0 (StatefulSet pattern)
+     *    - Service: db-{uuid}-svc
+     *    - StatefulSet: db-{uuid}
+     *    - PVC: mysql-data-db-{uuid}-0 hoặc mongodb-data-db-{uuid}-0
+     * 3. Kết nối SSH đến MASTER server
+     * 4. Set thông tin database từ entity (IP, Port, name, username, password, type)
+     * 5. Lấy thông tin Pod (name, node, status) - thử theo tên trước, fallback theo label
+     * 6. Lấy thông tin Service (name, external IP, port)
+     * 7. Lấy thông tin StatefulSet (name)
+     * 8. Lấy thông tin PVC (name, status, volume, capacity)
+     * 9. Lấy thông tin PV từ volume name (name, capacity, node)
+     * 
+     * @param databaseId ID của database cần lấy chi tiết
+     * @return AdminDatabaseDetailResponse chứa đầy đủ thông tin database và Kubernetes resources
+     * @throws RuntimeException nếu database không tồn tại hoặc thiếu thông tin cần thiết
      */
     @Override
     public AdminDatabaseDetailResponse getDatabaseDetail(Long databaseId) {
-        System.out.println("[AdminService] Bắt đầu lấy chi tiết database với id=" + databaseId);
         
-        // Lấy database entity
+        // Bước 1: Lấy database entity từ database
         ProjectDatabaseEntity database = projectDatabaseRepository.findById(databaseId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy database với id " + databaseId));
         
+        // Bước 2: Kiểm tra database có thuộc về project không
         ProjectEntity project = database.getProject();
         if (project == null) {
             throw new RuntimeException("Database không thuộc về project nào");
         }
         
+        // Bước 3: Kiểm tra project có namespace không (bắt buộc để truy vấn Kubernetes)
         String namespace = project.getNamespace();
         if (namespace == null || namespace.trim().isEmpty()) {
             throw new RuntimeException("Project không có namespace");
         }
         namespace = namespace.trim();
         
+        // Bước 4: Kiểm tra database có uuid_k8s không (bắt buộc để tạo tên resource)
         String uuid_k8s = database.getUuid_k8s();
         if (uuid_k8s == null || uuid_k8s.trim().isEmpty()) {
             throw new RuntimeException("Database không có uuid_k8s");
         }
         uuid_k8s = uuid_k8s.trim();
         
-        String resourceName = "db-" + uuid_k8s;
-        String serviceName = resourceName + "-svc";
-        String statefulSetName = resourceName;
-        String podName = resourceName + "-0"; // StatefulSet pod name pattern
+        // Bước 5: Tạo tên các Kubernetes resource dựa trên uuid_k8s
+        String resourceName = "db-" + uuid_k8s;           // Tên chung cho database resource
+        String serviceName = resourceName + "-svc";       // Service name: db-{uuid}-svc
+        String statefulSetName = resourceName;            // StatefulSet name: db-{uuid}
+        String podName = resourceName + "-0";             // Pod name: db-{uuid}-0 (StatefulSet pattern: {name}-{ordinal})
         
+        // Bước 6: Lấy thông tin server MASTER để kết nối SSH
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
@@ -817,9 +1329,10 @@ public class AdminServiceImpl implements AdminService {
         AdminDatabaseDetailResponse response = new AdminDatabaseDetailResponse();
         
         try {
+            // Bước 7: Kết nối SSH đến MASTER server
             session = createSession(masterServer);
             
-            // Set thông tin database từ entity
+            // Bước 8: Set thông tin database từ entity (không cần truy vấn Kubernetes)
             response.setDatabaseId(database.getId());
             response.setDatabaseType(database.getDatabaseType());
             response.setDatabaseIp(database.getDatabaseIp());
@@ -828,31 +1341,39 @@ public class AdminServiceImpl implements AdminService {
             response.setDatabaseUsername(database.getDatabaseUsername());
             response.setDatabasePassword(database.getDatabasePassword());
             
-            // Lấy thông tin Pod (thử lấy theo pod name trước, nếu không có thì lấy theo label)
+            // Bước 9: Lấy thông tin Pod (name, node, status)
+            // Strategy: Thử lấy theo pod name trước (StatefulSet pattern), nếu không có thì lấy theo label selector
             try {
-                // Thử lấy pod theo tên chính xác (StatefulSet pod name pattern)
+                
+                // Strategy 1: Thử lấy pod theo tên chính xác (StatefulSet pod name pattern: db-{uuid}-0)
                 String podNameCmd = String.format("kubectl get pod %s -n %s -o jsonpath='{.metadata.name}'", podName, namespace);
                 String podNameResult = executeCommand(session, podNameCmd, true);
+                
                 if (podNameResult != null && !podNameResult.trim().isEmpty()) {
+                    // Tìm thấy pod theo tên, lấy thêm thông tin node và status
                     response.setPodName(podNameResult.trim());
                     
+                    // Lấy node mà pod đang chạy
                     String podNodeCmd = String.format("kubectl get pod %s -n %s -o jsonpath='{.spec.nodeName}'", podName, namespace);
                     String podNodeResult = executeCommand(session, podNodeCmd, true);
                     if (podNodeResult != null && !podNodeResult.trim().isEmpty()) {
                         response.setPodNode(podNodeResult.trim());
                     }
                     
+                    // Lấy trạng thái pod (Running, Pending, Error, etc.)
                     String podStatusCmd = String.format("kubectl get pod %s -n %s -o jsonpath='{.status.phase}'", podName, namespace);
                     String podStatusResult = executeCommand(session, podStatusCmd, true);
                     if (podStatusResult != null && !podStatusResult.trim().isEmpty()) {
                         response.setPodStatus(podStatusResult.trim());
                     }
                 } else {
-                    // Fallback: lấy pod theo label selector
+                    // Strategy 2: Fallback - lấy pod theo label selector (app=db-{uuid})
                     String podJsonPath = "{.items[0].metadata.name},{.items[0].spec.nodeName},{.items[0].status.phase}";
                     String podCmd = String.format("kubectl get pod -l app=%s -n %s -o jsonpath='%s'", resourceName, namespace, podJsonPath);
                     String podOutput = executeCommand(session, podCmd, true);
+                    
                     if (podOutput != null && !podOutput.trim().isEmpty()) {
+                        // Parse output: name,node,status
                         String[] podParts = podOutput.split(",");
                         if (podParts.length >= 3) {
                             response.setPodName(podParts[0].trim());
@@ -862,21 +1383,28 @@ public class AdminServiceImpl implements AdminService {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Pod: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Pod
             }
             
-            // Lấy thông tin Service
+            // Bước 10: Lấy thông tin Service (name, external IP, port)
             try {
+                // Lấy name, external IP (nếu có LoadBalancer), và port trong một lệnh
                 String svcJsonPath = "{.metadata.name},{.status.loadBalancer.ingress[0].ip},{.spec.ports[0].port}";
                 String svcCmd = String.format("kubectl get svc %s -n %s -o jsonpath='%s'", serviceName, namespace, svcJsonPath);
                 String svcOutput = executeCommand(session, svcCmd, true);
+                
                 if (svcOutput != null && !svcOutput.trim().isEmpty()) {
+                    // Parse output: name,externalIp,port
                     String[] svcParts = svcOutput.split(",");
                     if (svcParts.length >= 1) {
                         response.setServiceName(svcParts[0].trim());
+                        
+                        // External IP chỉ có nếu Service type là LoadBalancer
                         if (svcParts.length >= 2 && !svcParts[1].trim().isEmpty()) {
                             response.setServiceExternalIp(svcParts[1].trim());
                         }
+                        
+                        // Port của service
                         if (svcParts.length >= 3 && !svcParts[2].trim().isEmpty()) {
                             try {
                                 response.setServicePort(Integer.parseInt(svcParts[2].trim()));
@@ -887,10 +1415,10 @@ public class AdminServiceImpl implements AdminService {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Service: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Service
             }
             
-            // Lấy thông tin StatefulSet
+            // Bước 11: Lấy thông tin StatefulSet (name)
             try {
                 String stsCmd = String.format("kubectl get statefulset %s -n %s -o jsonpath='{.metadata.name}'", statefulSetName, namespace);
                 String stsOutput = executeCommand(session, stsCmd, true);
@@ -898,53 +1426,67 @@ public class AdminServiceImpl implements AdminService {
                     response.setStatefulSetName(stsOutput.trim());
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin StatefulSet: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin StatefulSet
             }
             
-            // Lấy thông tin PVC (tìm PVC liên quan đến StatefulSet)
+            // Bước 12: Lấy thông tin PVC (PersistentVolumeClaim) - tìm PVC liên quan đến StatefulSet
+            // PVC name pattern: mysql-data-db-{uuid}-0 hoặc mongodb-data-db-{uuid}-0
             try {
+                
+                // Tạo tên PVC dựa trên database type
                 String pvcNamePattern = database.getDatabaseType().equalsIgnoreCase("MYSQL") 
-                    ? "mysql-data-" + statefulSetName + "-0" 
-                    : "mongodb-data-" + statefulSetName + "-0";
+                    ? "mysql-data-" + statefulSetName + "-0"   // MySQL: mysql-data-db-{uuid}-0
+                    : "mongodb-data-" + statefulSetName + "-0"; // MongoDB: mongodb-data-db-{uuid}-0
+                
+                // Lấy name, status, volume name, và capacity trong một lệnh
                 String pvcJsonPath = "{.metadata.name},{.status.phase},{.spec.volumeName},{.status.capacity.storage}";
                 String pvcCmd = String.format("kubectl get pvc %s -n %s -o jsonpath='%s'", pvcNamePattern, namespace, pvcJsonPath);
                 String pvcOutput = executeCommand(session, pvcCmd, true);
+                
                 if (pvcOutput != null && !pvcOutput.trim().isEmpty()) {
+                    // Parse output: name,status,volumeName,capacity
                     String[] pvcParts = pvcOutput.split(",");
                     if (pvcParts.length >= 1) {
                         response.setPvcName(pvcParts[0].trim());
+                        
                         if (pvcParts.length >= 2) {
                             response.setPvcStatus(pvcParts[1].trim());
                         }
+                        
                         if (pvcParts.length >= 3) {
                             response.setPvcVolume(pvcParts[2].trim());
                         }
+                        
                         if (pvcParts.length >= 4) {
                             response.setPvcCapacity(pvcParts[3].trim());
                         }
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin PVC: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin PVC
             }
             
-            // Lấy thông tin PV (nếu có PVC volume name)
+            // Bước 13: Lấy thông tin PV (PersistentVolume) - chỉ lấy nếu có PVC volume name
+            // PV là tài nguyên cluster-level, không thuộc namespace
             if (response.getPvcVolume() != null && !response.getPvcVolume().isEmpty()) {
                 try {
-                    // Lấy name và capacity
+                    
+                    // Lấy PV name (thường trùng với volume name)
                     String pvNameCmd = String.format("kubectl get pv %s -o jsonpath='{.metadata.name}'", response.getPvcVolume());
                     String pvName = executeCommand(session, pvNameCmd, true);
                     if (pvName != null && !pvName.trim().isEmpty()) {
                         response.setPvName(pvName.trim());
                     }
                     
+                    // Lấy PV capacity (dung lượng storage)
                     String pvCapacityCmd = String.format("kubectl get pv %s -o jsonpath='{.spec.capacity.storage}'", response.getPvcVolume());
                     String pvCapacity = executeCommand(session, pvCapacityCmd, true);
                     if (pvCapacity != null && !pvCapacity.trim().isEmpty()) {
                         response.setPvCapacity(pvCapacity.trim());
                     }
                     
-                    // Thử lấy node từ nodeAffinity (có thể không có)
+                    // Thử lấy node từ nodeAffinity (chỉ có với local storage, có thể không có)
+                    // nodeAffinity chỉ tồn tại khi PV được bind với một node cụ thể (local storage)
                     try {
                         String pvNodeCmd = String.format("kubectl get pv %s -o jsonpath='{.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]}'", response.getPvcVolume());
                         String pvNode = executeCommand(session, pvNodeCmd, true);
@@ -953,17 +1495,15 @@ public class AdminServiceImpl implements AdminService {
                         }
                     } catch (Exception e) {
                         // Node info có thể không có, bỏ qua
-                        System.out.println("[AdminService] Không thể lấy node từ PV (có thể không có nodeAffinity)");
                     }
                 } catch (Exception e) {
-                    System.err.println("[AdminService] Lỗi khi lấy thông tin PV: " + e.getMessage());
+                    // Bỏ qua lỗi khi lấy thông tin PV
                 }
             }
             
             return response;
             
         } catch (Exception e) {
-            System.err.println("[AdminService] Lỗi khi lấy chi tiết database: " + e.getMessage());
             throw new RuntimeException("Không thể lấy chi tiết database: " + e.getMessage(), e);
         } finally {
             if (session != null && session.isConnected()) {
@@ -973,38 +1513,58 @@ public class AdminServiceImpl implements AdminService {
     }
 
     /**
-     * Lấy chi tiết backend bao gồm thông tin Deployment, Pod, Service, Ingress
+     * Lấy chi tiết backend bao gồm thông tin Deployment, Pod, Service, Ingress.
+     * 
+     * Quy trình xử lý:
+     * 1. Lấy backend entity và kiểm tra thông tin cơ bản (project, namespace, uuid_k8s)
+     * 2. Tạo tên các Kubernetes resource:
+     *    - Deployment: app-{uuid}
+     *    - Service: app-{uuid}-svc
+     *    - Ingress: app-{uuid}-ing
+     * 3. Kết nối SSH đến MASTER server
+     * 4. Set thông tin backend từ entity (deployment type, framework, domain, docker image, database connection)
+     * 5. Lấy thông tin Deployment (name, replicas)
+     * 6. Lấy thông tin Pod (name, node, status) - lấy pod đầu tiên từ deployment
+     * 7. Lấy thông tin Service (name, type, port)
+     * 8. Lấy thông tin Ingress (name, hosts, address, port, class) - có fallback nếu không tìm thấy theo tên
+     * 
+     * @param backendId ID của backend cần lấy chi tiết
+     * @return AdminBackendDetailResponse chứa đầy đủ thông tin backend và Kubernetes resources
+     * @throws RuntimeException nếu backend không tồn tại hoặc thiếu thông tin cần thiết
      */
     @Override
     public AdminBackendDetailResponse getBackendDetail(Long backendId) {
-        System.out.println("[AdminService] Bắt đầu lấy chi tiết backend với id=" + backendId);
-        
-        // Lấy backend entity
+        // Bước 1: Lấy backend entity từ database
         ProjectBackendEntity backend = projectBackendRepository.findById(backendId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy backend với id " + backendId));
         
+        // Bước 2: Kiểm tra backend có thuộc về project không
         ProjectEntity project = backend.getProject();
         if (project == null) {
             throw new RuntimeException("Backend không thuộc về project nào");
         }
         
+        // Bước 3: Kiểm tra project có namespace không
         String namespace = project.getNamespace();
         if (namespace == null || namespace.trim().isEmpty()) {
             throw new RuntimeException("Project không có namespace");
         }
         namespace = namespace.trim();
         
+        // Bước 4: Kiểm tra backend có uuid_k8s không
         String uuid_k8s = backend.getUuid_k8s();
         if (uuid_k8s == null || uuid_k8s.trim().isEmpty()) {
             throw new RuntimeException("Backend không có uuid_k8s");
         }
         uuid_k8s = uuid_k8s.trim();
         
-        String resourceName = "app-" + uuid_k8s;
-        String deploymentName = resourceName;
-        String serviceName = resourceName + "-svc";
-        String ingressName = resourceName + "-ing";
+        // Bước 5: Tạo tên các Kubernetes resource dựa trên uuid_k8s
+        String resourceName = "app-" + uuid_k8s;           // Tên chung cho backend resource
+        String deploymentName = resourceName;               // Deployment name: app-{uuid}
+        String serviceName = resourceName + "-svc";          // Service name: app-{uuid}-svc
+        String ingressName = resourceName + "-ing";         // Ingress name: app-{uuid}-ing
         
+        // Bước 6: Lấy thông tin server MASTER
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
@@ -1013,9 +1573,10 @@ public class AdminServiceImpl implements AdminService {
         AdminBackendDetailResponse response = new AdminBackendDetailResponse();
         
         try {
+            // Bước 7: Kết nối SSH đến MASTER server
             session = createSession(masterServer);
             
-            // Set thông tin backend từ entity
+            // Bước 8: Set thông tin backend từ entity (không cần truy vấn Kubernetes)
             response.setBackendId(backend.getId());
             response.setProjectName(backend.getProjectName());
             response.setDeploymentType(backend.getDeploymentType());
@@ -1023,14 +1584,14 @@ public class AdminServiceImpl implements AdminService {
             response.setDomainNameSystem(backend.getDomainNameSystem());
             response.setDockerImage(backend.getDockerImage());
             
-            // Set thông tin kết nối database
+            // Bước 9: Set thông tin kết nối database (backend sử dụng để kết nối database)
             response.setDatabaseIp(backend.getDatabaseIp());
             response.setDatabasePort(backend.getDatabasePort());
             response.setDatabaseName(backend.getDatabaseName());
             response.setDatabaseUsername(backend.getDatabaseUsername());
             response.setDatabasePassword(backend.getDatabasePassword());
             
-            // Lấy thông tin Deployment
+            // Bước 10: Lấy thông tin Deployment (name, replicas)
             try {
                 String deployNameCmd = String.format("kubectl get deployment %s -n %s -o jsonpath='{.metadata.name}'", deploymentName, namespace);
                 String deployName = executeCommand(session, deployNameCmd, true);
@@ -1051,7 +1612,7 @@ public class AdminServiceImpl implements AdminService {
                     response.setReplicas(backend.getReplicas());
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Deployment: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Deployment, sử dụng giá trị mặc định
                 response.setDeploymentName(deploymentName);
                 response.setReplicas(backend.getReplicas());
             }
@@ -1070,7 +1631,6 @@ public class AdminServiceImpl implements AdminService {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Pod: " + e.getMessage());
             }
             
             // Lấy thông tin Service
@@ -1093,55 +1653,60 @@ public class AdminServiceImpl implements AdminService {
                     response.setServicePort(svcPort.trim());
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Service: " + e.getMessage());
             }
             
-            // Lấy thông tin Ingress
+            // Bước 13: Lấy thông tin Ingress (name, hosts, address, port, class)
+            // Strategy: Thử tìm theo tên trước, nếu không có thì tìm tất cả ingress và filter theo service name
             try {
-                // Kiểm tra xem ingress có tồn tại không
+                
+                // Strategy 1: Kiểm tra xem ingress có tồn tại không (theo tên chuẩn)
                 String checkIngressCmd = String.format("kubectl get ingress %s -n %s --ignore-not-found -o name", ingressName, namespace);
                 String ingressExists = executeCommand(session, checkIngressCmd, true);
                 
                 if (ingressExists != null && !ingressExists.trim().isEmpty() && ingressExists.contains("ingress")) {
+                    // Tìm thấy ingress theo tên chuẩn
                     response.setIngressName(ingressName);
                     
-                    // Lấy hosts
+                    // Lấy hosts (danh sách domain names được cấu hình)
                     String ingressHostsCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].host}'", ingressName, namespace);
                     String ingressHosts = executeCommand(session, ingressHostsCmd, true);
                     if (ingressHosts != null && !ingressHosts.trim().isEmpty()) {
                         response.setIngressHosts(ingressHosts.trim());
                     }
                     
-                    // Lấy address (có thể là IP hoặc hostname)
+                    // Lấy address (có thể là IP hoặc hostname từ LoadBalancer)
                     String ingressAddressCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}'", ingressName, namespace);
                     String ingressAddress = executeCommand(session, ingressAddressCmd, true);
                     if (ingressAddress != null && !ingressAddress.trim().isEmpty() && !ingressAddress.trim().equals("<none>")) {
                         response.setIngressAddress(ingressAddress.trim());
                     }
                     
-                    // Lấy port (từ backend service port)
+                    // Lấy port (từ backend service port được cấu hình trong ingress)
                     String ingressPortCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.port.number}'", ingressName, namespace);
                     String ingressPort = executeCommand(session, ingressPortCmd, true);
                     if (ingressPort != null && !ingressPort.trim().isEmpty()) {
-                        // Lấy port đầu tiên nếu có nhiều port
+                        // Lấy port đầu tiên nếu có nhiều port (split bằng khoảng trắng)
                         String[] ports = ingressPort.trim().split("\\s+");
                         if (ports.length > 0) {
                             response.setIngressPort(ports[0]);
                         }
                     }
                     
-                    // Lấy ingress class
+                    // Lấy ingress class (ví dụ: nginx, traefik, etc.)
                     String ingressClassCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.ingressClassName}'", ingressName, namespace);
                     String ingressClass = executeCommand(session, ingressClassCmd, true);
                     if (ingressClass != null && !ingressClass.trim().isEmpty()) {
                         response.setIngressClass(ingressClass.trim());
                     }
                 } else {
-                    // Thử tìm ingress bằng cách tìm tất cả ingress trong namespace và filter theo service name
+                    // Strategy 2: Fallback - tìm tất cả ingress trong namespace và filter theo service name
                     String findIngressCmd = String.format("kubectl get ingress -n %s -o jsonpath='{range .items[*]}{.metadata.name}{\\\"\\t\\\"}{.spec.rules[*].http.paths[*].backend.service.name}{\\\"\\n\\\"}{end}'", namespace);
                     String allIngresses = executeCommand(session, findIngressCmd, true);
+                    
                     if (allIngresses != null && !allIngresses.trim().isEmpty()) {
                         String[] lines = allIngresses.split("\n");
+                        
+                        // Tìm ingress có backend service trùng với serviceName
                         for (String line : lines) {
                             if (line.contains(serviceName)) {
                                 String[] parts = line.split("\t");
@@ -1149,51 +1714,46 @@ public class AdminServiceImpl implements AdminService {
                                     String foundIngressName = parts[0].trim();
                                     response.setIngressName(foundIngressName);
                                     
-                                    // Lấy hosts
+                                    // Lấy các thông tin tương tự như Strategy 1
                                     String ingressHostsCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].host}'", foundIngressName, namespace);
                                     String ingressHosts = executeCommand(session, ingressHostsCmd, true);
                                     if (ingressHosts != null && !ingressHosts.trim().isEmpty()) {
                                         response.setIngressHosts(ingressHosts.trim());
                                     }
                                     
-                                    // Lấy address
                                     String ingressAddressCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}'", foundIngressName, namespace);
                                     String ingressAddress = executeCommand(session, ingressAddressCmd, true);
                                     if (ingressAddress != null && !ingressAddress.trim().isEmpty() && !ingressAddress.trim().equals("<none>")) {
                                         response.setIngressAddress(ingressAddress.trim());
                                     }
                                     
-                                    // Lấy port (từ backend service port)
                                     String ingressPortCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.port.number}'", foundIngressName, namespace);
                                     String ingressPort = executeCommand(session, ingressPortCmd, true);
                                     if (ingressPort != null && !ingressPort.trim().isEmpty()) {
-                                        // Lấy port đầu tiên nếu có nhiều port
                                         String[] ports = ingressPort.trim().split("\\s+");
                                         if (ports.length > 0) {
                                             response.setIngressPort(ports[0]);
                                         }
                                     }
                                     
-                                    // Lấy ingress class
                                     String ingressClassCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.ingressClassName}'", foundIngressName, namespace);
                                     String ingressClass = executeCommand(session, ingressClassCmd, true);
                                     if (ingressClass != null && !ingressClass.trim().isEmpty()) {
                                         response.setIngressClass(ingressClass.trim());
                                     }
-                                    break;
+                                    break;  // Tìm thấy rồi, không cần tìm tiếp
                                 }
                             }
                         }
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Ingress: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Ingress
             }
             
             return response;
             
         } catch (Exception e) {
-            System.err.println("[AdminService] Lỗi khi lấy chi tiết backend: " + e.getMessage());
             throw new RuntimeException("Không thể lấy chi tiết backend: " + e.getMessage(), e);
         } finally {
             if (session != null && session.isConnected()) {
@@ -1203,38 +1763,54 @@ public class AdminServiceImpl implements AdminService {
     }
 
     /**
-     * Lấy chi tiết frontend bao gồm thông tin Deployment, Pod, Service, Ingress
+     * Lấy chi tiết frontend bao gồm thông tin Deployment, Pod, Service, Ingress.
+     * 
+     * Quy trình xử lý tương tự getBackendDetail, nhưng frontend không có thông tin kết nối database.
+     * 
+     * Quy trình xử lý:
+     * 1. Lấy frontend entity và kiểm tra thông tin cơ bản (project, namespace, uuid_k8s)
+     * 2. Tạo tên các Kubernetes resource (giống backend: app-{uuid})
+     * 3. Kết nối SSH đến MASTER server
+     * 4. Set thông tin frontend từ entity (deployment type, framework, domain, docker image)
+     * 5. Lấy thông tin Deployment, Pod, Service, Ingress (tương tự backend)
+     * 
+     * @param frontendId ID của frontend cần lấy chi tiết
+     * @return AdminFrontendDetailResponse chứa đầy đủ thông tin frontend và Kubernetes resources
+     * @throws RuntimeException nếu frontend không tồn tại hoặc thiếu thông tin cần thiết
      */
     @Override
     public AdminFrontendDetailResponse getFrontendDetail(Long frontendId) {
-        System.out.println("[AdminService] Bắt đầu lấy chi tiết frontend với id=" + frontendId);
-        
-        // Lấy frontend entity
+        // Bước 1: Lấy frontend entity từ database
         ProjectFrontendEntity frontend = projectFrontendRepository.findById(frontendId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy frontend với id " + frontendId));
         
+        // Bước 2: Kiểm tra frontend có thuộc về project không
         ProjectEntity project = frontend.getProject();
         if (project == null) {
             throw new RuntimeException("Frontend không thuộc về project nào");
         }
         
+        // Bước 3: Kiểm tra project có namespace không
         String namespace = project.getNamespace();
         if (namespace == null || namespace.trim().isEmpty()) {
             throw new RuntimeException("Project không có namespace");
         }
         namespace = namespace.trim();
         
+        // Bước 4: Kiểm tra frontend có uuid_k8s không
         String uuid_k8s = frontend.getUuid_k8s();
         if (uuid_k8s == null || uuid_k8s.trim().isEmpty()) {
             throw new RuntimeException("Frontend không có uuid_k8s");
         }
         uuid_k8s = uuid_k8s.trim();
         
-        String resourceName = "app-" + uuid_k8s;
-        String deploymentName = resourceName;
-        String serviceName = resourceName + "-svc";
-        String ingressName = resourceName + "-ing";
+        // Bước 5: Tạo tên các Kubernetes resource (giống backend)
+        String resourceName = "app-" + uuid_k8s;           // Tên chung cho frontend resource
+        String deploymentName = resourceName;               // Deployment name: app-{uuid}
+        String serviceName = resourceName + "-svc";          // Service name: app-{uuid}-svc
+        String ingressName = resourceName + "-ing";         // Ingress name: app-{uuid}-ing
         
+        // Bước 6: Lấy thông tin server MASTER
         ServerEntity masterServer = serverRepository.findByRole("MASTER")
                 .orElseThrow(() -> new RuntimeException(
                         "Không tìm thấy server MASTER. Vui lòng cấu hình server MASTER trong hệ thống."));
@@ -1243,10 +1819,10 @@ public class AdminServiceImpl implements AdminService {
         AdminFrontendDetailResponse response = new AdminFrontendDetailResponse();
         
         try {
+            // Bước 7: Kết nối SSH đến MASTER server
             session = createSession(masterServer);
-            System.out.println("[AdminService] Đã kết nối MASTER server để lấy chi tiết frontend id=" + frontendId);
             
-            // Set thông tin frontend từ entity
+            // Bước 8: Set thông tin frontend từ entity (không cần truy vấn Kubernetes)
             response.setFrontendId(frontend.getId());
             response.setProjectName(frontend.getProjectName());
             response.setDeploymentType(frontend.getDeploymentType());
@@ -1254,7 +1830,7 @@ public class AdminServiceImpl implements AdminService {
             response.setDomainNameSystem(frontend.getDomainNameSystem());
             response.setDockerImage(frontend.getDockerImage());
             
-            // Lấy thông tin Deployment
+            // Bước 9: Lấy thông tin Deployment (name, replicas) - tương tự backend
             try {
                 String deployNameCmd = String.format("kubectl get deployment %s -n %s -o jsonpath='{.metadata.name}'", deploymentName, namespace);
                 String deployName = executeCommand(session, deployNameCmd, true);
@@ -1275,12 +1851,12 @@ public class AdminServiceImpl implements AdminService {
                     response.setReplicas(frontend.getReplicas());
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Deployment: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Deployment, sử dụng giá trị mặc định
                 response.setDeploymentName(deploymentName);
                 response.setReplicas(frontend.getReplicas());
             }
             
-            // Lấy thông tin Pod (lấy pod đầu tiên từ deployment)
+            // Bước 10: Lấy thông tin Pod (name, node, status) - tương tự backend
             try {
                 String podJsonPath = "{.items[0].metadata.name},{.items[0].spec.nodeName},{.items[0].status.phase}";
                 String podCmd = String.format("kubectl get pod -l app=%s -n %s -o jsonpath='%s'", resourceName, namespace, podJsonPath);
@@ -1294,10 +1870,10 @@ public class AdminServiceImpl implements AdminService {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Pod: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Pod
             }
             
-            // Lấy thông tin Service
+            // Bước 11: Lấy thông tin Service (name, type, port) - tương tự backend
             try {
                 String svcNameCmd = String.format("kubectl get svc %s -n %s -o jsonpath='{.metadata.name}'", serviceName, namespace);
                 String svcName = executeCommand(session, svcNameCmd, true);
@@ -1317,16 +1893,18 @@ public class AdminServiceImpl implements AdminService {
                     response.setServicePort(svcPort.trim());
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Service: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Service
             }
             
-            // Lấy thông tin Ingress
+            // Bước 12: Lấy thông tin Ingress (name, hosts, address, port, class) - tương tự backend
+            // Strategy: Thử tìm theo tên trước, nếu không có thì tìm tất cả ingress và filter theo service name
             try {
-                // Kiểm tra xem ingress có tồn tại không
+                // Strategy 1: Kiểm tra ingress có tồn tại không (theo tên chuẩn)
                 String checkIngressCmd = String.format("kubectl get ingress %s -n %s --ignore-not-found -o name", ingressName, namespace);
                 String ingressExists = executeCommand(session, checkIngressCmd, true);
                 
                 if (ingressExists != null && !ingressExists.trim().isEmpty() && ingressExists.contains("ingress")) {
+                    // Tìm thấy ingress theo tên chuẩn
                     response.setIngressName(ingressName);
                     
                     // Lấy hosts
@@ -1336,18 +1914,17 @@ public class AdminServiceImpl implements AdminService {
                         response.setIngressHosts(ingressHosts.trim());
                     }
                     
-                    // Lấy address (có thể là IP hoặc hostname)
+                    // Lấy address
                     String ingressAddressCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}'", ingressName, namespace);
                     String ingressAddress = executeCommand(session, ingressAddressCmd, true);
                     if (ingressAddress != null && !ingressAddress.trim().isEmpty() && !ingressAddress.trim().equals("<none>")) {
                         response.setIngressAddress(ingressAddress.trim());
                     }
                     
-                    // Lấy port (từ backend service port)
+                    // Lấy port
                     String ingressPortCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.port.number}'", ingressName, namespace);
                     String ingressPort = executeCommand(session, ingressPortCmd, true);
                     if (ingressPort != null && !ingressPort.trim().isEmpty()) {
-                        // Lấy port đầu tiên nếu có nhiều port
                         String[] ports = ingressPort.trim().split("\\s+");
                         if (ports.length > 0) {
                             response.setIngressPort(ports[0]);
@@ -1361,7 +1938,7 @@ public class AdminServiceImpl implements AdminService {
                         response.setIngressClass(ingressClass.trim());
                     }
                 } else {
-                    // Thử tìm ingress bằng cách tìm tất cả ingress trong namespace và filter theo service name
+                    // Strategy 2: Fallback - tìm tất cả ingress và filter theo service name
                     String findIngressCmd = String.format("kubectl get ingress -n %s -o jsonpath='{range .items[*]}{.metadata.name}{\\\"\\t\\\"}{.spec.rules[*].http.paths[*].backend.service.name}{\\\"\\n\\\"}{end}'", namespace);
                     String allIngresses = executeCommand(session, findIngressCmd, true);
                     if (allIngresses != null && !allIngresses.trim().isEmpty()) {
@@ -1373,32 +1950,28 @@ public class AdminServiceImpl implements AdminService {
                                     String foundIngressName = parts[0].trim();
                                     response.setIngressName(foundIngressName);
                                     
-                                    // Lấy hosts
+                                    // Lấy các thông tin tương tự như Strategy 1
                                     String ingressHostsCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].host}'", foundIngressName, namespace);
                                     String ingressHosts = executeCommand(session, ingressHostsCmd, true);
                                     if (ingressHosts != null && !ingressHosts.trim().isEmpty()) {
                                         response.setIngressHosts(ingressHosts.trim());
                                     }
                                     
-                                    // Lấy address
                                     String ingressAddressCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}'", foundIngressName, namespace);
                                     String ingressAddress = executeCommand(session, ingressAddressCmd, true);
                                     if (ingressAddress != null && !ingressAddress.trim().isEmpty() && !ingressAddress.trim().equals("<none>")) {
                                         response.setIngressAddress(ingressAddress.trim());
                                     }
                                     
-                                    // Lấy port (từ backend service port)
                                     String ingressPortCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.port.number}'", foundIngressName, namespace);
                                     String ingressPort = executeCommand(session, ingressPortCmd, true);
                                     if (ingressPort != null && !ingressPort.trim().isEmpty()) {
-                                        // Lấy port đầu tiên nếu có nhiều port
                                         String[] ports = ingressPort.trim().split("\\s+");
                                         if (ports.length > 0) {
                                             response.setIngressPort(ports[0]);
                                         }
                                     }
                                     
-                                    // Lấy ingress class
                                     String ingressClassCmd = String.format("kubectl get ingress %s -n %s -o jsonpath='{.spec.ingressClassName}'", foundIngressName, namespace);
                                     String ingressClass = executeCommand(session, ingressClassCmd, true);
                                     if (ingressClass != null && !ingressClass.trim().isEmpty()) {
@@ -1411,16 +1984,15 @@ public class AdminServiceImpl implements AdminService {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("[AdminService] Lỗi khi lấy thông tin Ingress: " + e.getMessage());
+                // Bỏ qua lỗi khi lấy thông tin Ingress
             }
             
-            System.out.println("[AdminService] Hoàn tất lấy chi tiết frontend id=" + frontendId);
             return response;
             
         } catch (Exception e) {
-            System.err.println("[AdminService] Lỗi khi lấy chi tiết frontend: " + e.getMessage());
             throw new RuntimeException("Không thể lấy chi tiết frontend: " + e.getMessage(), e);
         } finally {
+            // Đảm bảo đóng SSH session
             if (session != null && session.isConnected()) {
                 session.disconnect();
             }
