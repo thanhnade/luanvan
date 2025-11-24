@@ -26,6 +26,7 @@ interface ResourceTableProps<T> {
   searchPlaceholder?: string;
   emptyMessage?: string;
   extraActions?: ReactNode;
+  customActions?: (item: T) => ReactNode; // Custom actions cho mỗi row
   pagination?: {
     page: number;
     pageSize: number;
@@ -41,11 +42,13 @@ function TableDropdownMenu<T extends { id: string }>({
   onView,
   onEdit,
   onDelete,
+  customActions,
 }: {
   item: T;
   onView?: (item: T) => void;
   onEdit?: (item: T) => void;
   onDelete?: (item: T) => void;
+  customActions?: (item: T) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -138,6 +141,7 @@ function TableDropdownMenu<T extends { id: string }>({
                 Xóa
               </DropdownMenuItem>
             )}
+            {customActions && customActions(item)}
           </div>,
           document.body
         )}
@@ -160,6 +164,7 @@ export function ResourceTable<T extends { id: string }>({
   searchPlaceholder = "Tìm kiếm...",
   emptyMessage = "Không có dữ liệu",
   extraActions,
+  customActions,
   pagination,
 }: ResourceTableProps<T>) {
   const [search, setSearch] = useState("");
@@ -301,6 +306,7 @@ export function ResourceTable<T extends { id: string }>({
                             onView={onView}
                             onEdit={onEdit}
                             onDelete={onDelete}
+                            customActions={customActions}
                           />
                         </div>
                       </td>

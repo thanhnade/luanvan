@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   Users as UsersIcon,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { label: "Server", path: "/admin/infrastructure/servers", icon: Server },
       { label: "Cluster", path: "/admin/infrastructure/clusters", icon: Network },
+      { label: "Cluster Setup", path: "/admin/infrastructure/cluster-setup", icon: Settings },
     ],
   },
   {

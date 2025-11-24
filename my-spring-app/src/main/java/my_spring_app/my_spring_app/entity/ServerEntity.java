@@ -53,24 +53,16 @@ public class ServerEntity {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    // Metrics fields (optional - có thể null)
+    // Metrics fields (optional - có thể null) - chỉ lưu total, không lưu used
+    // Các giá trị used sẽ lấy trực tiếp từ SSH output khi cần
     @Column(name = "cpu_cores", length = 20)
     private String cpuCores; // Số CPU cores, ví dụ: "4"
-
-    @Column(name = "cpu_used", length = 20)
-    private String cpuUsed; // CPU đang dùng (load average hoặc cores), ví dụ: "1.2", "1"
 
     @Column(name = "ram_total", length = 20)
     private String ramTotal; // Tổng RAM, ví dụ: "8.0Gi", "16G"
 
-    @Column(name = "ram_used", length = 20)
-    private String ramUsed; // RAM đang dùng, ví dụ: "2.0Gi", "4G"
-
     @Column(name = "disk_total", length = 20)
     private String diskTotal; // Tổng Disk, ví dụ: "50G", "100Gi"
-
-    @Column(name = "disk_used", length = 20)
-    private String diskUsed; // Disk đang dùng, ví dụ: "20G", "40Gi"
 
     // SSH Key relationship (optional)
     @ManyToOne(fetch = FetchType.LAZY)

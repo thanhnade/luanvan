@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -57,9 +58,9 @@ public class ServerServiceImpl implements ServerService {
      */
     @Override
     public List<ServerResponse> findAll() {
-        System.out.println("[findAll] Lấy tất cả server từ database");
+        System.out.println("[findAll] Lay tat ca server tu database");
         List<ServerEntity> servers = serverRepository.findAll();
-        System.out.println("[findAll] Đã lấy được " + servers.size() + " server");
+        System.out.println("[findAll] Da lay duoc " + servers.size() + " server");
         return servers.stream()
                 .map(this::convertToResponse)
                 .collect(Collectors.toList());
@@ -73,9 +74,9 @@ public class ServerServiceImpl implements ServerService {
      */
     @Override
     public ServerResponse findById(Long id) {
-        System.out.println("[findById] Tìm server với ID: " + id);
+        System.out.println("[findById] Tim server voi ID: " + id);
         ServerEntity server = serverRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy server với ID: " + id));
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
         return convertToResponse(server);
     }
 
@@ -94,58 +95,58 @@ public class ServerServiceImpl implements ServerService {
      */
     @Override
     public CreateServerResponse createServer(CreateServerRequest request) {
-        System.out.println("[createServer] Bắt đầu tạo server mới với name: " + request.getName());
+        System.out.println("[createServer] Bat dau tao server moi voi name: " + request.getName());
         
         // Bước 1: Test SSH connection trước
-        System.out.println("[createServer] Bước 1: Test SSH connection...");
+        System.out.println("[createServer] Buoc 1: Test SSH connection...");
         boolean canSsh = testSshConnection(request.getIp(), request.getPort(), 
                                            request.getUsername(), request.getPassword());
         if (!canSsh) {
-            throw new RuntimeException("Không thể kết nối SSH tới server. Vui lòng kiểm tra IP/Port/Username/Password");
+            throw new RuntimeException("Khong the ket noi SSH toi server. Vui long kiem tra IP/Port/Username/Password");
         }
-        System.out.println("[createServer] SSH connection thành công");
+        System.out.println("[createServer] SSH connection thanh cong");
         
         // Set status = ONLINE nếu SSH connection thành công
         ServerEntity.ServerStatus status = ServerEntity.ServerStatus.ONLINE;
         
         // Bước 2: Kiểm tra duplicate
-        System.out.println("[createServer] Bước 2: Kiểm tra duplicate server...");
+        System.out.println("[createServer] Buoc 2: Kiem tra duplicate server...");
         if (serverRepository.existsByIpAndPortAndUsername(request.getIp(), request.getPort(), request.getUsername())) {
-            throw new RuntimeException("Server đã tồn tại với IP/Port/Username này. Vui lòng sử dụng thông tin khác.");
+            throw new RuntimeException("Server da ton tai voi IP/Port/Username nay. Vui long su dung thong tin khac.");
         }
-        System.out.println("[createServer] Không có duplicate");
+        System.out.println("[createServer] Khong co duplicate");
         
         // Validate role (MASTER, WORKER, DOCKER, ANSIBLE)
-        System.out.println("[createServer] Kiểm tra role: " + request.getRole());
+        System.out.println("[createServer] Kiem tra role: " + request.getRole());
         String role = request.getRole().toUpperCase();
         if (!"MASTER".equals(role) && !"WORKER".equals(role) && 
             !"DOCKER".equals(role) && !"ANSIBLE".equals(role)) {
-            System.err.println("[createServer] Lỗi: Role không hợp lệ: " + role);
-            throw new RuntimeException("Role không hợp lệ. Chỉ hỗ trợ MASTER, WORKER, DOCKER, ANSIBLE");
+            System.err.println("[createServer] Loi: Role khong hop le: " + role);
+            throw new RuntimeException("Role khong hop le. Chi ho tro MASTER, WORKER, DOCKER, ANSIBLE");
         }
-        System.out.println("[createServer] Role hợp lệ: " + role);
+        System.out.println("[createServer] Role hop le: " + role);
 
         // Validate server status (RUNNING, STOPPED, BUILDING, ERROR)
-        System.out.println("[createServer] Kiểm tra server status: " + request.getServerStatus());
+        System.out.println("[createServer] Kiem tra server status: " + request.getServerStatus());
         String serverStatus = request.getServerStatus().toUpperCase();
         if (!"RUNNING".equals(serverStatus) && !"STOPPED".equals(serverStatus) && 
             !"BUILDING".equals(serverStatus) && !"ERROR".equals(serverStatus)) {
-            System.err.println("[createServer] Lỗi: Server status không hợp lệ: " + serverStatus);
-            throw new RuntimeException("Server status không hợp lệ. Chỉ hỗ trợ RUNNING, STOPPED, BUILDING, ERROR");
+            System.err.println("[createServer] Loi: Server status khong hop le: " + serverStatus);
+            throw new RuntimeException("Server status khong hop le. Chi ho tro RUNNING, STOPPED, BUILDING, ERROR");
         }
-        System.out.println("[createServer] Server status hợp lệ: " + serverStatus);
+        System.out.println("[createServer] Server status hop le: " + serverStatus);
 
         // Validate cluster status (AVAILABLE, UNAVAILABLE)
-        System.out.println("[createServer] Kiểm tra cluster status: " + request.getClusterStatus());
+        System.out.println("[createServer] Kiem tra cluster status: " + request.getClusterStatus());
         String clusterStatus = request.getClusterStatus().toUpperCase();
         if (!"AVAILABLE".equals(clusterStatus) && !"UNAVAILABLE".equals(clusterStatus)) {
-            System.err.println("[createServer] Lỗi: Cluster status không hợp lệ: " + clusterStatus);
-            throw new RuntimeException("Cluster status không hợp lệ. Chỉ hỗ trợ AVAILABLE, UNAVAILABLE");
+            System.err.println("[createServer] Loi: Cluster status khong hop le: " + clusterStatus);
+            throw new RuntimeException("Cluster status khong hop le. Chi ho tro AVAILABLE, UNAVAILABLE");
         }
-        System.out.println("[createServer] Cluster status hợp lệ: " + clusterStatus);
+        System.out.println("[createServer] Cluster status hop le: " + clusterStatus);
 
         // Bước 3: Tạo ServerEntity mới và lưu vào database
-        System.out.println("[createServer] Bước 3: Tạo ServerEntity mới...");
+        System.out.println("[createServer] Buoc 3: Tao ServerEntity moi...");
         ServerEntity serverEntity = new ServerEntity();
         serverEntity.setName(request.getName());
         serverEntity.setIp(request.getIp());
@@ -156,17 +157,17 @@ public class ServerServiceImpl implements ServerService {
         serverEntity.setStatus(status); // ONLINE vì đã test SSH thành công
         serverEntity.setServerStatus(serverStatus);
         serverEntity.setClusterStatus(clusterStatus);
-        System.out.println("[createServer] Đã thiết lập thông tin server: name=" + request.getName() + 
+        System.out.println("[createServer] Da thiet lap thong tin server: name=" + request.getName() + 
                           ", ip=" + request.getIp() + ", port=" + request.getPort() + 
                           ", role=" + role + ", serverStatus=" + serverStatus + ", clusterStatus=" + clusterStatus);
 
         // Lưu vào database để có ID
-        System.out.println("[createServer] Lưu server vào database...");
+        System.out.println("[createServer] Luu server vao database...");
         ServerEntity savedServer = serverRepository.saveAndFlush(serverEntity);
-        System.out.println("[createServer] Đã lưu server thành công với ID: " + savedServer.getId());
+        System.out.println("[createServer] Da luu server thanh cong voi ID: " + savedServer.getId());
 
         // Bước 4: Tự động generate SSH key và install vào server
-        System.out.println("[createServer] Bước 4: Generate và install SSH key...");
+        System.out.println("[createServer] Buoc 4: Generate va install SSH key...");
         SshKeyEntity sshKey = null;
         try {
             sshKey = generateAndInstallSshKey(
@@ -180,15 +181,15 @@ public class ServerServiceImpl implements ServerService {
                 sshKey = sshKeyRepository.saveAndFlush(sshKey);
                 savedServer.setSshKey(sshKey);
                 savedServer = serverRepository.saveAndFlush(savedServer);
-                System.out.println("[createServer] Đã generate và install SSH key thành công");
+                System.out.println("[createServer] Da generate va install SSH key thanh cong");
             }
         } catch (Exception e) {
-            System.err.println("[createServer] Lỗi khi generate SSH key: " + e.getMessage());
+            System.err.println("[createServer] Loi khi generate SSH key: " + e.getMessage());
             // Không throw exception, vì server đã được lưu, chỉ log lỗi
         }
 
         // Bước 5: Lấy metrics từ server (CPU, RAM, Disk)
-        System.out.println("[createServer] Bước 5: Lấy metrics từ server...");
+        System.out.println("[createServer] Buoc 5: Lay metrics tu server...");
         try {
             Map<String, String> metrics = getServerMetrics(
                 request.getIp(), 
@@ -199,24 +200,20 @@ public class ServerServiceImpl implements ServerService {
             );
             if (metrics != null) {
                 savedServer.setCpuCores(metrics.get("cpuCores"));
-                savedServer.setCpuUsed(metrics.get("cpuUsed"));
                 savedServer.setRamTotal(metrics.get("ramTotal"));
-                savedServer.setRamUsed(metrics.get("ramUsed"));
                 savedServer.setDiskTotal(metrics.get("diskTotal"));
-                savedServer.setDiskUsed(metrics.get("diskUsed"));
                 savedServer = serverRepository.saveAndFlush(savedServer);
-                System.out.println("[createServer] Đã lấy metrics thành công: CPU=" + metrics.get("cpuCores") + 
-                                  " (load: " + metrics.get("cpuUsed") + "), RAM=" + metrics.get("ramTotal") + 
-                                  " (used: " + metrics.get("ramUsed") + "), Disk=" + metrics.get("diskTotal") + 
-                                  " (used: " + metrics.get("diskUsed") + ")");
+                System.out.println("[createServer] Da lay metrics thanh cong: CPU=" + metrics.get("cpuCores") + 
+                                  " cores, RAM=" + metrics.get("ramTotal") + 
+                                  ", Disk=" + metrics.get("diskTotal"));
             }
         } catch (Exception e) {
-            System.err.println("[createServer] Lỗi khi lấy metrics: " + e.getMessage());
+            System.err.println("[createServer] Loi khi lay metrics: " + e.getMessage());
             // Không throw exception, chỉ log lỗi
         }
 
         // Tạo response
-        System.out.println("[createServer] Tạo CreateServerResponse");
+        System.out.println("[createServer] Tao CreateServerResponse");
         CreateServerResponse response = new CreateServerResponse();
         response.setId(savedServer.getId());
         response.setName(savedServer.getName());
@@ -228,15 +225,13 @@ public class ServerServiceImpl implements ServerService {
         response.setServerStatus(savedServer.getServerStatus());
         response.setClusterStatus(savedServer.getClusterStatus());
         response.setCreatedAt(savedServer.getCreatedAt());
-        // Thêm metrics vào response nếu có
+        // Thêm metrics vào response nếu có (chỉ total, không trả về used)
         response.setCpuCores(savedServer.getCpuCores());
-        response.setCpuUsed(savedServer.getCpuUsed());
         response.setRamTotal(savedServer.getRamTotal());
-        response.setRamUsed(savedServer.getRamUsed());
         response.setDiskTotal(savedServer.getDiskTotal());
-        response.setDiskUsed(savedServer.getDiskUsed());
+        // Không set used - các giá trị này sẽ lấy trực tiếp từ SSH khi cần
 
-        System.out.println("[createServer] Hoàn tất tạo server thành công: name=" + savedServer.getName() + 
+        System.out.println("[createServer] Hoan tat tao server thanh cong: name=" + savedServer.getName() + 
                           ", id=" + savedServer.getId() + ", role=" + savedServer.getRole());
         return response;
     }
@@ -257,7 +252,7 @@ public class ServerServiceImpl implements ServerService {
             session.connect(5000);
             return session.isConnected();
         } catch (Exception e) {
-            System.err.println("[testSshConnection] Lỗi: " + e.getMessage());
+            System.err.println("[testSshConnection] Loi: " + e.getMessage());
             return false;
         } finally {
             if (session != null && session.isConnected()) {
@@ -275,15 +270,24 @@ public class ServerServiceImpl implements ServerService {
      */
     @Override
     public ServerResponse updateServer(Long id, UpdateServerRequest request) {
-        System.out.println("[updateServer] Bắt đầu cập nhật server với ID: " + id);
+        System.out.println("[updateServer] Bat dau cap nhat server voi ID: " + id);
         
         // Tìm server trong database
         ServerEntity server = serverRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy server với ID: " + id));
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
         
-        // Kiểm tra duplicate nếu có thay đổi ip/port/username
+        // Kiểm tra xem có thay đổi thông tin kết nối không
         boolean connectionFieldChanged = request.getIp() != null || request.getPort() != null || request.getUsername() != null;
         boolean suppliedNewPassword = request.getPassword() != null && !request.getPassword().isBlank();
+        
+        // Kiểm tra xem chỉ cập nhật cấu hình (role, serverStatus, clusterStatus) hay không
+        boolean onlyConfigUpdate = !connectionFieldChanged && !suppliedNewPassword && 
+                                  (request.getRole() != null || request.getServerStatus() != null || 
+                                   request.getClusterStatus() != null || request.getName() != null);
+        
+        if (onlyConfigUpdate) {
+            System.out.println("[updateServer] Chi cap nhat cau hinh (role/serverStatus/clusterStatus/name) - KHONG can test SSH");
+        }
         
         if (connectionFieldChanged) {
             String newIp = request.getIp() != null ? request.getIp() : server.getIp();
@@ -294,13 +298,13 @@ public class ServerServiceImpl implements ServerService {
             if (serverRepository.existsByIpAndPortAndUsername(newIp, newPort, newUsername)) {
                 Optional<ServerEntity> existingServer = serverRepository.findByIpAndPortAndUsername(newIp, newPort, newUsername);
                 if (existingServer.isPresent() && !existingServer.get().getId().equals(id)) {
-                    throw new RuntimeException("Server đã tồn tại với IP/Port/Username này. Vui lòng sử dụng thông tin khác.");
+                    throw new RuntimeException("Server da ton tai voi IP/Port/Username nay. Vui long su dung thong tin khac.");
                 }
             }
         }
         
-        // Nếu có thay đổi connection hoặc password, BẮT BUỘC phải test SSH
-        // Nếu không kết nối được thì KHÔNG cho phép update
+        // CHỈ test SSH nếu có thay đổi thông tin kết nối (IP/Port/Username) hoặc password
+        // Nếu chỉ cập nhật cấu hình (role, serverStatus, clusterStatus) thì KHÔNG test SSH
         boolean sshTested = false;
         if (connectionFieldChanged || suppliedNewPassword) {
             String testIp = request.getIp() != null ? request.getIp() : server.getIp();
@@ -308,20 +312,22 @@ public class ServerServiceImpl implements ServerService {
             String testUsername = request.getUsername() != null ? request.getUsername() : server.getUsername();
             String testPassword = request.getPassword() != null ? request.getPassword() : server.getPassword();
             
-            System.out.println("[updateServer] Có thay đổi connection info, bắt buộc test SSH trước khi update");
-            System.out.println("[updateServer] Test SSH với: " + testIp + ":" + testPort + " user: " + testUsername);
+            System.out.println("[updateServer] Co thay doi connection info hoac password, bat buoc test SSH truoc khi update");
+            System.out.println("[updateServer] Test SSH voi: " + testIp + ":" + testPort + " user: " + testUsername);
             
             boolean canSsh = testSshConnection(testIp, testPort, testUsername, testPassword);
             if (!canSsh) {
-                System.err.println("[updateServer] SSH test THẤT BẠI - KHÔNG cho phép update");
-                throw new RuntimeException("Không thể kết nối SSH tới server với thông tin mới. " +
-                        "Vui lòng kiểm tra lại IP/Port/Username/Password. Update bị hủy bỏ.");
+                System.err.println("[updateServer] SSH test THAT BAI - KHONG cho phep update");
+                throw new RuntimeException("Khong the ket noi SSH toi server voi thong tin moi. " +
+                        "Vui long kiem tra lai IP/Port/Username/Password. Update bi huy bo.");
             }
             
             // SSH thành công → cho phép update và set status = ONLINE
             server.setStatus(ServerEntity.ServerStatus.ONLINE);
             sshTested = true;
-            System.out.println("[updateServer] SSH test thành công, cho phép update và set status = ONLINE");
+            System.out.println("[updateServer] SSH test thanh cong, cho phep update va set status = ONLINE");
+        } else {
+            System.out.println("[updateServer] Khong co thay doi connection info, KHONG can test SSH");
         }
         
         // Cập nhật các trường nếu có trong request
@@ -344,7 +350,7 @@ public class ServerServiceImpl implements ServerService {
             String role = request.getRole().toUpperCase();
             if (!"MASTER".equals(role) && !"WORKER".equals(role) && 
                 !"DOCKER".equals(role) && !"ANSIBLE".equals(role)) {
-                throw new RuntimeException("Role không hợp lệ. Chỉ hỗ trợ MASTER, WORKER, DOCKER, ANSIBLE");
+                throw new RuntimeException("Role khong hop le. Chi ho tro MASTER, WORKER, DOCKER, ANSIBLE");
             }
             server.setRole(role);
         }
@@ -353,7 +359,7 @@ public class ServerServiceImpl implements ServerService {
             String statusStr = request.getStatus().toUpperCase();
             if (!"ONLINE".equals(statusStr) && !"OFFLINE".equals(statusStr) && 
                 !"DISABLED".equals(statusStr)) {
-                throw new RuntimeException("Status không hợp lệ. Chỉ hỗ trợ ONLINE, OFFLINE, DISABLED");
+                throw new RuntimeException("Status khong hop le. Chi ho tro ONLINE, OFFLINE, DISABLED");
             }
             server.setStatus(ServerEntity.ServerStatus.valueOf(statusStr));
         }
@@ -361,14 +367,14 @@ public class ServerServiceImpl implements ServerService {
             String serverStatus = request.getServerStatus().toUpperCase();
             if (!"RUNNING".equals(serverStatus) && !"STOPPED".equals(serverStatus) && 
                 !"BUILDING".equals(serverStatus) && !"ERROR".equals(serverStatus)) {
-                throw new RuntimeException("Server status không hợp lệ. Chỉ hỗ trợ RUNNING, STOPPED, BUILDING, ERROR");
+                throw new RuntimeException("Server status khong hop le. Chi ho tro RUNNING, STOPPED, BUILDING, ERROR");
             }
             server.setServerStatus(serverStatus);
         }
         if (request.getClusterStatus() != null && !request.getClusterStatus().isBlank()) {
             String clusterStatus = request.getClusterStatus().toUpperCase();
             if (!"AVAILABLE".equals(clusterStatus) && !"UNAVAILABLE".equals(clusterStatus)) {
-                throw new RuntimeException("Cluster status không hợp lệ. Chỉ hỗ trợ AVAILABLE, UNAVAILABLE");
+                throw new RuntimeException("Cluster status khong hop le. Chi ho tro AVAILABLE, UNAVAILABLE");
             }
             server.setClusterStatus(clusterStatus);
         }
@@ -385,9 +391,9 @@ public class ServerServiceImpl implements ServerService {
         }
         
         // Lưu vào database
-        System.out.println("[updateServer] Lưu thay đổi vào database");
+        System.out.println("[updateServer] Luu thay doi vao database");
         ServerEntity updatedServer = serverRepository.save(server);
-        System.out.println("[updateServer] Đã cập nhật server thành công với ID: " + updatedServer.getId());
+        System.out.println("[updateServer] Da cap nhat server thanh cong voi ID: " + updatedServer.getId());
         
         return convertToResponse(updatedServer);
     }
@@ -405,20 +411,20 @@ public class ServerServiceImpl implements ServerService {
     @Override
     @Transactional
     public void deleteServer(Long id) {
-        System.out.println("[deleteServer] Bắt đầu xóa server với ID: " + id);
+        System.out.println("[deleteServer] Bat dau xoa server voi ID: " + id);
         
         ServerEntity server = serverRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy server với ID: " + id));
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
         
         // 1) Xóa tất cả SSH keys gắn với server qua ssh_keys.server_id
         try {
             List<SshKeyEntity> keys = sshKeyRepository.findByServer_Id(id);
             if (keys != null && !keys.isEmpty()) {
-                System.out.println("[deleteServer] Xóa " + keys.size() + " SSH keys liên quan");
+                System.out.println("[deleteServer] Xoa " + keys.size() + " SSH keys lien quan");
                 sshKeyRepository.deleteAll(keys);
             }
         } catch (Exception e) {
-            System.err.println("[deleteServer] Lỗi khi xóa SSH keys: " + e.getMessage());
+            System.err.println("[deleteServer] Loi khi xoa SSH keys: " + e.getMessage());
             // Tiếp tục xóa server dù có lỗi
         }
         
@@ -429,17 +435,17 @@ public class ServerServiceImpl implements ServerService {
                 server.setSshKey(null);
                 server.setClusterStatus("UNAVAILABLE");
                 serverRepository.saveAndFlush(server);
-                System.out.println("[deleteServer] Xóa SSH key với ID: " + keyId);
+                System.out.println("[deleteServer] Xoa SSH key voi ID: " + keyId);
                 sshKeyRepository.deleteById(keyId);
             } catch (Exception e) {
-                System.err.println("[deleteServer] Lỗi khi xóa SSH key: " + e.getMessage());
+                System.err.println("[deleteServer] Loi khi xoa SSH key: " + e.getMessage());
                 // Tiếp tục xóa server dù có lỗi
             }
         }
         
         // 3) Xóa server
         serverRepository.delete(server);
-        System.out.println("[deleteServer] Đã xóa server thành công với ID: " + id);
+        System.out.println("[deleteServer] Da xoa server thanh cong voi ID: " + id);
     }
 
     /**
@@ -449,7 +455,7 @@ public class ServerServiceImpl implements ServerService {
      */
     @Override
     public TestSshResponse testSsh(TestSshRequest request) {
-        System.out.println("[testSsh] Bắt đầu test SSH connection đến: " + request.getIp() + ":" + request.getPort());
+        System.out.println("[testSsh] Bat dau test SSH connection den: " + request.getIp() + ":" + request.getPort());
         
         TestSshResponse response = new TestSshResponse();
         Session session = null;
@@ -471,14 +477,14 @@ public class ServerServiceImpl implements ServerService {
             // Kết nối
             session.connect(5000);
             
-            System.out.println("[testSsh] Kết nối SSH thành công");
+            System.out.println("[testSsh] Ket noi SSH thanh cong");
             response.setSuccess(true);
-            response.setMessage("Kết nối SSH thành công");
+            response.setMessage("Ket noi SSH thanh cong");
             
         } catch (Exception e) {
-            System.err.println("[testSsh] Lỗi khi kết nối SSH: " + e.getMessage());
+            System.err.println("[testSsh] Loi khi ket noi SSH: " + e.getMessage());
             response.setSuccess(false);
-            response.setMessage("Kết nối SSH thất bại: " + e.getMessage());
+            response.setMessage("Ket noi SSH that bai: " + e.getMessage());
         } finally {
             // Đóng session
             if (session != null && session.isConnected()) {
@@ -491,6 +497,7 @@ public class ServerServiceImpl implements ServerService {
 
     /**
      * Helper method: Convert ServerEntity sang ServerResponse
+     * Chỉ trả về total metrics, không trả về used (used sẽ lấy trực tiếp từ SSH khi cần)
      */
     private ServerResponse convertToResponse(ServerEntity server) {
         ServerResponse response = new ServerResponse();
@@ -505,11 +512,9 @@ public class ServerServiceImpl implements ServerService {
         response.setClusterStatus(server.getClusterStatus());
         response.setCreatedAt(server.getCreatedAt());
         response.setCpuCores(server.getCpuCores());
-        response.setCpuUsed(server.getCpuUsed());
         response.setRamTotal(server.getRamTotal());
-        response.setRamUsed(server.getRamUsed());
         response.setDiskTotal(server.getDiskTotal());
-        response.setDiskUsed(server.getDiskUsed());
+        // Không set used - các giá trị này sẽ lấy trực tiếp từ SSH khi cần
         return response;
     }
     
@@ -523,12 +528,12 @@ public class ServerServiceImpl implements ServerService {
      */
     private SshKeyEntity generateAndInstallSshKey(String ip, Integer port, String username, String password) 
             throws Exception {
-        System.out.println("[generateAndInstallSshKey] Bắt đầu generate SSH key cho " + username + "@" + ip);
+        System.out.println("[generateAndInstallSshKey] Bat dau generate SSH key cho " + username + "@" + ip);
         
         JSch jsch = new JSch();
         
-        // 1) Sinh cặp khóa RSA 2048
-        System.out.println("[generateAndInstallSshKey] Sinh cặp khóa RSA 2048...");
+        // 1) Sinh cap khoa RSA 2048
+        System.out.println("[generateAndInstallSshKey] Sinh cap khoa RSA 2048...");
         KeyPair kpair = KeyPair.genKeyPair(jsch, KeyPair.RSA, 2048);
         String comment = username + "@" + ip;
         ByteArrayOutputStream pubOut = new ByteArrayOutputStream();
@@ -538,10 +543,10 @@ public class ServerServiceImpl implements ServerService {
         kpair.writePrivateKey(prvOut);
         String privateKeyPem = prvOut.toString(StandardCharsets.UTF_8);
         kpair.dispose();
-        System.out.println("[generateAndInstallSshKey] Đã sinh cặp khóa thành công");
+        System.out.println("[generateAndInstallSshKey] Da sinh cap khoa thanh cong");
 
-        // 2) Cài public key vào ~/.ssh/authorized_keys
-        System.out.println("[generateAndInstallSshKey] Cài public key vào server...");
+        // 2) Cai public key vao ~/.ssh/authorized_keys
+        System.out.println("[generateAndInstallSshKey] Cai public key vao server...");
         Session session = jsch.getSession(username, ip, port);
         session.setConfig("StrictHostKeyChecking", "no");
         session.setPassword(password);
@@ -551,22 +556,29 @@ public class ServerServiceImpl implements ServerService {
             String escaped = publicKey.replace("'", "'\"'\"'");
             String cmd = "sh -lc \"mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && printf '%s\\n' '"
                     + escaped + "' >> ~/.ssh/authorized_keys\"";
-            ChannelExec ch = (ChannelExec) session.openChannel("exec");
-            ch.setCommand(cmd);
-            ch.connect(5000);
-            while (!ch.isClosed()) {
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException ignored) {
+            ChannelExec ch = null;
+            try {
+                ch = (ChannelExec) session.openChannel("exec");
+                ch.setCommand(cmd);
+                ch.connect(5000);
+                while (!ch.isClosed()) {
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
+                System.out.println("[generateAndInstallSshKey] Da cai public key thanh cong");
+            } finally {
+                // Dam bao channel luon duoc dong
+                if (ch != null && ch.isConnected()) {
+                    ch.disconnect();
                 }
             }
-            ch.disconnect();
-            System.out.println("[generateAndInstallSshKey] Đã cài public key thành công");
 
-            // 3) Cấu hình sudo NOPASSWD cho user
-            System.out.println("[generateAndInstallSshKey] Cấu hình sudo NOPASSWD...");
+            // 3) Cau hinh sudo NOPASSWD cho user
+            System.out.println("[generateAndInstallSshKey] Cau hinh sudo NOPASSWD...");
             configureSudoNopasswd(session, username, password);
-            System.out.println("[generateAndInstallSshKey] Đã cấu hình sudo NOPASSWD");
+            System.out.println("[generateAndInstallSshKey] Da cau hinh sudo NOPASSWD");
 
         } finally {
             session.disconnect();
@@ -580,7 +592,7 @@ public class ServerServiceImpl implements ServerService {
         sshKey.setEncryptedPrivateKey(privateKeyPem);
         sshKey.setStatus(SshKeyEntity.KeyStatus.ACTIVE);
         
-        System.out.println("[generateAndInstallSshKey] Hoàn tất generate và install SSH key");
+        System.out.println("[generateAndInstallSshKey] Hoan tat generate va install SSH key");
         return sshKey;
     }
     
@@ -590,7 +602,7 @@ public class ServerServiceImpl implements ServerService {
      */
     private void configureSudoNopasswd(Session session, String username, String sudoPassword) {
         try {
-            System.out.println("[configureSudoNopasswd] Cấu hình sudo NOPASSWD cho user: " + username);
+            System.out.println("[configureSudoNopasswd] Cau hinh sudo NOPASSWD cho user: " + username);
 
             // 1. Ghi file sudoers
             String sudoersEntry = username + " ALL=(ALL) NOPASSWD:ALL";
@@ -600,9 +612,9 @@ public class ServerServiceImpl implements ServerService {
                     "echo '" + sudoPassword + "' | sudo -S chmod 440 /etc/sudoers.d/" + username,
                     "echo '" + sudoPassword + "' | sudo -S chown root:root /etc/sudoers.d/" + username);
             execSimple(session, writeCmd, 5000);
-            System.out.println("[configureSudoNopasswd] Đã ghi file sudoers");
+            System.out.println("[configureSudoNopasswd] Da ghi file sudoers");
 
-            // 2. Đảm bảo #includedir tồn tại
+            // 2. Dam bao #includedir ton tai
             String ensureIncludeDir = String.join(" && ",
                     "grep -q '^#includedir /etc/sudoers.d' /etc/sudoers || " +
                             "echo '" + sudoPassword
@@ -610,49 +622,57 @@ public class ServerServiceImpl implements ServerService {
                             "echo '" + sudoPassword
                             + "' | sudo -S sh -c 'echo \"#includedir /etc/sudoers.d\" >> /etc/sudoers'");
             execSimple(session, ensureIncludeDir, 3000);
-            System.out.println("[configureSudoNopasswd] Đã đảm bảo #includedir tồn tại");
+            System.out.println("[configureSudoNopasswd] Da dam bao #includedir ton tai");
 
-            // 3. Kiểm tra cú pháp
+            // 3. Kiem tra cu phap
             String syntaxCmd = "echo '" + sudoPassword + "' | sudo -S visudo -cf /etc/sudoers.d/" + username
                     + " >/dev/null 2>&1 && echo SYNTAX_OK || echo SYNTAX_ERROR";
             String syntaxResult = execSimple(session, syntaxCmd, 3000).trim();
-            System.out.println("[configureSudoNopasswd] Kết quả kiểm tra cú pháp: " + syntaxResult);
+            System.out.println("[configureSudoNopasswd] Ket qua kiem tra cu phap: " + syntaxResult);
 
-            // 4. Kiểm tra thực tế
+            // 4. Kiem tra thuc te
             String verifyCmd = "sudo -n true && echo 'NOPASSWD_ACTIVE' || echo 'FAIL'";
             String verifyResult = execSimple(session, verifyCmd, 3000).trim();
-            System.out.println("[configureSudoNopasswd] Kết quả verify: " + verifyResult);
+            System.out.println("[configureSudoNopasswd] Ket qua verify: " + verifyResult);
 
             if (verifyResult.contains("NOPASSWD_ACTIVE")) {
-                System.out.println("[configureSudoNopasswd] Cấu hình sudo NOPASSWD thành công cho " + username);
+                System.out.println("[configureSudoNopasswd] Cau hinh sudo NOPASSWD thanh cong cho " + username);
             } else {
-                System.err.println("[configureSudoNopasswd] Cấu hình sudo NOPASSWD thất bại cho " + username);
+                System.err.println("[configureSudoNopasswd] Cau hinh sudo NOPASSWD that bai cho " + username);
             }
         } catch (Exception e) {
-            System.err.println("[configureSudoNopasswd] Lỗi khi cấu hình sudo NOPASSWD: " + e.getMessage());
+            System.err.println("[configureSudoNopasswd] Loi khi cau hinh sudo NOPASSWD: " + e.getMessage());
             // Không throw exception, chỉ log lỗi
         }
     }
     
     /**
      * Helper method: Thực thi lệnh đơn giản qua SSH và trả về output
+     * Đảm bảo channel luôn được đóng sau khi thực thi xong
      */
     private String execSimple(Session session, String cmd, int timeoutMs) throws Exception {
-        ChannelExec ch = (ChannelExec) session.openChannel("exec");
-        ch.setCommand(cmd);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ch.setOutputStream(out);
-        ch.connect(timeoutMs);
-        while (!ch.isClosed()) {
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+        ChannelExec ch = null;
+        try {
+            ch = (ChannelExec) session.openChannel("exec");
+            ch.setCommand(cmd);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ch.setOutputStream(out);
+            ch.connect(timeoutMs);
+            while (!ch.isClosed()) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            return out.toString(StandardCharsets.UTF_8);
+        } finally {
+            // Đảm bảo channel luôn được đóng
+            if (ch != null && ch.isConnected()) {
+                ch.disconnect();
             }
         }
-        ch.disconnect();
-        return out.toString(StandardCharsets.UTF_8);
     }
     
     /**
@@ -662,18 +682,19 @@ public class ServerServiceImpl implements ServerService {
      */
     private Map<String, String> getServerMetrics(String ip, Integer port, String username, 
                                                    String privateKeyPem, String password) {
-        System.out.println("[getServerMetrics] Bắt đầu lấy metrics từ server: " + ip);
+        System.out.println("[getServerMetrics] Bat dau lay metrics tu server: " + ip);
         
-        // Command để lấy metrics với giá trị chính xác (không dùng -h flag)
-        // CPU: nproc trả về số nguyên chính xác, uptime để lấy load average (1-minute)
-        // RAM: free -b trả về bytes (total và used), sau đó convert trong Java
-        // DISK: df trả về KB (total và used), sau đó convert trong Java
-        String metricsCommand = "echo \"CPU_CORES:$(nproc)\"; " +
-                "echo \"CPU_LOAD:$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')\"; " +
-                "echo \"RAM_TOTAL_BYTES:$(free -b | awk '/^Mem:/{print $2}')\"; " +
-                "echo \"RAM_USED_BYTES:$(free -b | awk '/^Mem:/{print $3}')\"; " +
-                "echo \"DISK_TOTAL_KB:$(df / | awk 'NR==2{print $2}')\"; " +
-                "echo \"DISK_USED_KB:$(df / | awk 'NR==2{print $3}')\"";
+        // Command de lay metrics voi gia tri chinh xac (khong dung -h flag)
+        // CPU: nproc tra ve so nguyen chinh xac, uptime de lay load average (1-minute)
+        // RAM: free -b tra ve bytes (total va used), sau do convert trong Java
+        // DISK: df tra ve KB (total va used), sau do convert trong Java
+        // Sử dụng || true để không fail nếu một lệnh lỗi
+        String metricsCommand = "echo \"CPU_CORES:$(nproc || echo '0')\"; " +
+                "echo \"CPU_LOAD:$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',' || echo '0')\"; " +
+                "echo \"RAM_TOTAL_BYTES:$(free -b 2>/dev/null | awk '/^Mem:/{print $2}' || echo '0')\"; " +
+                "echo \"RAM_USED_BYTES:$(free -b 2>/dev/null | awk '/^Mem:/{print $3}' || echo '0')\"; " +
+                "echo \"DISK_TOTAL_KB:$(df / 2>/dev/null | awk 'NR==2{print $2}' || echo '0')\"; " +
+                "echo \"DISK_USED_KB:$(df / 2>/dev/null | awk 'NR==2{print $3}' || echo '0')\"";
         
         Session session = null;
         ChannelExec channel = null;
@@ -681,14 +702,14 @@ public class ServerServiceImpl implements ServerService {
         try {
             JSch jsch = new JSch();
             
-            // Ưu tiên dùng SSH key nếu có
+            // Uu tien dung SSH key neu co
             if (privateKeyPem != null && !privateKeyPem.isBlank()) {
-                System.out.println("[getServerMetrics] Sử dụng SSH key để kết nối");
+                System.out.println("[getServerMetrics] Su dung SSH key de ket noi");
                 byte[] prv = privateKeyPem.getBytes(StandardCharsets.UTF_8);
                 jsch.addIdentity("inmem-key", prv, null, null);
                 session = jsch.getSession(username, ip, port);
             } else {
-                System.out.println("[getServerMetrics] Sử dụng password để kết nối");
+                System.out.println("[getServerMetrics] Su dung password de ket noi");
                 session = jsch.getSession(username, ip, port);
                 session.setPassword(password);
             }
@@ -696,31 +717,97 @@ public class ServerServiceImpl implements ServerService {
             Properties config = new Properties();
             config.put("StrictHostKeyChecking", "no");
             session.setConfig(config);
-            session.setTimeout(5000);
-            session.connect(5000);
+            session.setTimeout(10000); // Tang timeout len 10s
+            session.connect(10000);
             
-            // Thực thi lệnh
+            // Kiem tra session da ket noi thanh cong chua
+            if (!session.isConnected()) {
+                throw new RuntimeException("Session khong the ket noi");
+            }
+            
+            // Thuc thi lenh
             channel = (ChannelExec) session.openChannel("exec");
+            if (channel == null) {
+                throw new RuntimeException("Khong the mo channel exec");
+            }
             channel.setCommand(metricsCommand);
             
+            // Đọc cả stdout và stderr
             InputStream in = channel.getInputStream();
-            channel.connect(5000);
+            InputStream err = channel.getErrStream();
+            channel.connect(10000); // Tang timeout len 10s
             
-            // Đọc output
+            // Kiem tra channel da ket noi chua
+            int retryCount = 0;
+            while (!channel.isConnected() && retryCount < 20) {
+                try {
+                    Thread.sleep(100);
+                    retryCount++;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Channel connect bi interrupt");
+                }
+            }
+            
+            if (!channel.isConnected()) {
+                throw new RuntimeException("Channel khong the ket noi sau " + (retryCount * 100) + "ms");
+            }
+            
+            // Doc output (cả stdout và stderr)
             ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+            ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
-            long deadline = System.currentTimeMillis() + 5000;
+            long deadline = System.currentTimeMillis() + 15000; // Tang timeout len 15s
             
+            // Đợi channel đóng hoàn toàn và đọc hết output
             while (true) {
+                boolean hasData = false;
+                
+                // Đọc stdout
                 while (in.available() > 0) {
                     int read = in.read(buffer, 0, buffer.length);
                     if (read < 0) break;
                     outBuf.write(buffer, 0, read);
+                    hasData = true;
                 }
-                if (channel.isClosed()) break;
-                if (System.currentTimeMillis() > deadline) break;
+                
+                // Đọc stderr để debug
+                while (err.available() > 0) {
+                    int read = err.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    errBuf.write(buffer, 0, read);
+                    hasData = true;
+                }
+                
+                // Nếu channel đã đóng và không còn data, thoát
+                if (channel.isClosed() && !hasData) {
+                    // Đợi thêm một chút để đảm bảo đọc hết output
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    // Đọc lần cuối
+                    while (in.available() > 0) {
+                        int read = in.read(buffer, 0, buffer.length);
+                        if (read < 0) break;
+                        outBuf.write(buffer, 0, read);
+                    }
+                    while (err.available() > 0) {
+                        int read = err.read(buffer, 0, buffer.length);
+                        if (read < 0) break;
+                        errBuf.write(buffer, 0, read);
+                    }
+                    break;
+                }
+                
+                if (System.currentTimeMillis() > deadline) {
+                    System.err.println("[getServerMetrics] Timeout khi doc output tu server: " + ip);
+                    break;
+                }
+                
                 try {
-                    Thread.sleep(50);
+                    Thread.sleep(100); // Tăng sleep time để đợi output
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
@@ -728,20 +815,48 @@ public class ServerServiceImpl implements ServerService {
             }
             
             String output = outBuf.toString(StandardCharsets.UTF_8).trim();
-            System.out.println("[getServerMetrics] Output: " + output);
+            String errorOutput = errBuf.toString(StandardCharsets.UTF_8).trim();
+            
+            System.out.println("[getServerMetrics] Output (stdout): " + output);
+            if (!errorOutput.isEmpty()) {
+                System.err.println("[getServerMetrics] Output (stderr): " + errorOutput);
+            }
+            
+            // Kiểm tra exit status
+            int exitStatus = channel.getExitStatus();
+            if (exitStatus != 0 && exitStatus != -1) { // -1 có nghĩa là chưa có exit status
+                System.err.println("[getServerMetrics] Command exit status: " + exitStatus + " cho server: " + ip);
+            }
             
             // Parse output
             return parseMetricsOutput(output);
             
         } catch (Exception e) {
-            System.err.println("[getServerMetrics] Lỗi khi lấy metrics: " + e.getMessage());
+            System.err.println("[getServerMetrics] Loi khi lay metrics tu server " + ip + ": " + e.getMessage());
+            if (e.getCause() != null) {
+                System.err.println("[getServerMetrics] Nguyen nhan: " + e.getCause().getMessage());
+            }
             return null;
         } finally {
-            if (channel != null && channel.isConnected()) {
-                channel.disconnect();
+            // Dong channel truoc
+            if (channel != null) {
+                try {
+                    if (channel.isConnected()) {
+                        channel.disconnect();
+                    }
+                } catch (Exception e) {
+                    System.err.println("[getServerMetrics] Loi khi dong channel: " + e.getMessage());
+                }
             }
-            if (session != null && session.isConnected()) {
-                session.disconnect();
+            // Dong session sau
+            if (session != null) {
+                try {
+                    if (session.isConnected()) {
+                        session.disconnect();
+                    }
+                } catch (Exception e) {
+                    System.err.println("[getServerMetrics] Loi khi dong session: " + e.getMessage());
+                }
             }
         }
     }
@@ -762,6 +877,11 @@ public class ServerServiceImpl implements ServerService {
         
         try {
             String[] lines = output.split("\n");
+            System.out.println("[parseMetricsOutput] Total lines in output: " + lines.length);
+            for (int i = 0; i < lines.length; i++) {
+                System.out.println("[parseMetricsOutput] Line " + i + ": " + lines[i]);
+            }
+            
             long ramTotalBytes = 0;
             long ramUsedBytes = 0;
             long diskTotalKB = 0;
@@ -769,6 +889,7 @@ public class ServerServiceImpl implements ServerService {
             
             for (String line : lines) {
                 line = line.trim();
+                if (line.isEmpty()) continue; // Bỏ qua dòng trống
                 if (line.startsWith("CPU_CORES:")) {
                     cpuCores = line.substring(10).trim();
                 } else if (line.startsWith("CPU_LOAD:")) {
@@ -779,36 +900,54 @@ public class ServerServiceImpl implements ServerService {
                     }
                 } else if (line.startsWith("RAM_TOTAL_BYTES:")) {
                     try {
-                        ramTotalBytes = Long.parseLong(line.substring(16).trim());
-                        ramTotal = formatBytes(ramTotalBytes);
+                        String value = line.substring(16).trim();
+                        if (!value.isEmpty() && !value.equals("0")) {
+                            ramTotalBytes = Long.parseLong(value);
+                            ramTotal = formatBytes(ramTotalBytes);
+                            System.out.println("[parseMetricsOutput] Parsed RAM_TOTAL_BYTES: " + ramTotalBytes + " -> " + ramTotal);
+                        } else {
+                            System.err.println("[parseMetricsOutput] RAM_TOTAL_BYTES is empty or 0");
+                        }
                     } catch (NumberFormatException e) {
-                        System.err.println("[parseMetricsOutput] Lỗi parse RAM total bytes: " + e.getMessage());
+                        System.err.println("[parseMetricsOutput] Loi parse RAM total bytes: " + line + " - " + e.getMessage());
                     }
                 } else if (line.startsWith("RAM_USED_BYTES:")) {
                     try {
-                        ramUsedBytes = Long.parseLong(line.substring(15).trim());
-                        ramUsed = formatBytes(ramUsedBytes);
+                        String value = line.substring(15).trim();
+                        if (!value.isEmpty() && !value.equals("0")) {
+                            ramUsedBytes = Long.parseLong(value);
+                            ramUsed = formatBytes(ramUsedBytes);
+                        }
                     } catch (NumberFormatException e) {
-                        System.err.println("[parseMetricsOutput] Lỗi parse RAM used bytes: " + e.getMessage());
+                        System.err.println("[parseMetricsOutput] Loi parse RAM used bytes: " + e.getMessage());
                     }
                 } else if (line.startsWith("DISK_TOTAL_KB:")) {
                     try {
-                        diskTotalKB = Long.parseLong(line.substring(14).trim());
-                        diskTotal = formatKB(diskTotalKB);
+                        String value = line.substring(14).trim();
+                        if (!value.isEmpty() && !value.equals("0")) {
+                            diskTotalKB = Long.parseLong(value);
+                            diskTotal = formatKB(diskTotalKB);
+                            System.out.println("[parseMetricsOutput] Parsed DISK_TOTAL_KB: " + diskTotalKB + " -> " + diskTotal);
+                        } else {
+                            System.err.println("[parseMetricsOutput] DISK_TOTAL_KB is empty or 0");
+                        }
                     } catch (NumberFormatException e) {
-                        System.err.println("[parseMetricsOutput] Lỗi parse Disk total KB: " + e.getMessage());
+                        System.err.println("[parseMetricsOutput] Loi parse Disk total KB: " + line + " - " + e.getMessage());
                     }
                 } else if (line.startsWith("DISK_USED_KB:")) {
                     try {
-                        diskUsedKB = Long.parseLong(line.substring(13).trim());
-                        diskUsed = formatKB(diskUsedKB);
+                        String value = line.substring(13).trim();
+                        if (!value.isEmpty() && !value.equals("0")) {
+                            diskUsedKB = Long.parseLong(value);
+                            diskUsed = formatKB(diskUsedKB);
+                        }
                     } catch (NumberFormatException e) {
-                        System.err.println("[parseMetricsOutput] Lỗi parse Disk used KB: " + e.getMessage());
+                        System.err.println("[parseMetricsOutput] Loi parse Disk used KB: " + e.getMessage());
                     }
                 }
             }
         } catch (Exception e) {
-            System.err.println("[parseMetricsOutput] Lỗi khi parse: " + e.getMessage());
+            System.err.println("[parseMetricsOutput] Loi khi parse: " + e.getMessage());
         }
         
         metrics.put("cpuCores", cpuCores != null ? cpuCores : null);
@@ -864,23 +1003,34 @@ public class ServerServiceImpl implements ServerService {
     @Override
     @Transactional
     public List<ServerResponse> checkAllStatuses(int timeoutMs) {
-        return checkAllStatuses(timeoutMs, false);
+        return checkAllStatusesInternal(timeoutMs);
     }
     
     /**
-     * Kiểm tra và cập nhật trạng thái tất cả servers
-     * Ping tất cả servers và cập nhật status ONLINE/OFFLINE
-     * Nếu includeMetrics = true, sẽ lấy metrics cho servers ONLINE
-     * DISABLED servers sẽ giữ nguyên status
+     * Kiểm tra và cập nhật trạng thái (status) và metrics cho tất cả servers
+     * - Ping tất cả servers và cập nhật status ONLINE/OFFLINE
+     * - Lấy và cập nhật metrics (CPU, RAM, Disk) cho servers ONLINE
+     * - DISABLED servers sẽ giữ nguyên status và không cập nhật metrics
      * 
-     * @param timeoutMs Timeout cho mỗi ping (milliseconds)
-     * @param includeMetrics Có lấy metrics không (chỉ cho servers ONLINE)
-     * @return Danh sách servers đã được cập nhật
+     * @return Danh sách servers đã được cập nhật status và metrics
      */
     @Override
     @Transactional
-    public List<ServerResponse> checkAllStatuses(int timeoutMs, boolean includeMetrics) {
-        System.out.println("[checkAllStatuses] Bắt đầu kiểm tra trạng thái tất cả servers (includeMetrics: " + includeMetrics + ")");
+    public List<ServerResponse> checkAllServers() {
+        return checkAllServersInternal(2000);
+    }
+    
+    /**
+     * Kiểm tra và cập nhật trạng thái (status) cho tất cả servers
+     * - Ping tất cả servers và cập nhật status ONLINE/OFFLINE
+     * - DISABLED servers sẽ giữ nguyên status
+     * 
+     * @param timeoutMs Timeout cho mỗi ping (milliseconds)
+     * @return Danh sách servers đã được cập nhật status
+     */
+    @Transactional
+    private List<ServerResponse> checkAllStatusesInternal(int timeoutMs) {
+        System.out.println("[checkAllStatuses] Bat dau kiem tra status cho tat ca servers (timeout: " + timeoutMs + "ms)");
         List<ServerEntity> servers = serverRepository.findAll();
         final int POOL_SIZE = Math.min(servers.size(), 16);
         
@@ -913,51 +1063,6 @@ public class ServerServiceImpl implements ServerService {
                 } finally {
                     s.setStatus(online ? ServerEntity.ServerStatus.ONLINE : ServerEntity.ServerStatus.OFFLINE);
                 }
-                
-                // Nếu online và cần lấy metrics
-                if (online && includeMetrics) {
-                    try {
-                        // Lấy SSH key nếu có
-                        SshKeyEntity sshKey = s.getSshKey();
-                        String privateKeyPem = null;
-                        if (sshKey != null && sshKey.getEncryptedPrivateKey() != null) {
-                            privateKeyPem = sshKey.getEncryptedPrivateKey();
-                        }
-                        
-                        // Lấy metrics từ server
-                        Map<String, String> metrics = getServerMetrics(
-                            s.getIp(),
-                            s.getPort(),
-                            s.getUsername(),
-                            privateKeyPem,
-                            s.getPassword()
-                        );
-                        
-                        // Cập nhật metrics vào server
-                        if (metrics != null) {
-                            if (metrics.get("cpuCores") != null) {
-                                s.setCpuCores(metrics.get("cpuCores"));
-                            }
-                            if (metrics.get("cpuUsed") != null) {
-                                s.setCpuUsed(metrics.get("cpuUsed"));
-                            }
-                            if (metrics.get("ramTotal") != null) {
-                                s.setRamTotal(metrics.get("ramTotal"));
-                            }
-                            if (metrics.get("ramUsed") != null) {
-                                s.setRamUsed(metrics.get("ramUsed"));
-                            }
-                            if (metrics.get("diskTotal") != null) {
-                                s.setDiskTotal(metrics.get("diskTotal"));
-                            }
-                            if (metrics.get("diskUsed") != null) {
-                                s.setDiskUsed(metrics.get("diskUsed"));
-                            }
-                        }
-                    } catch (Exception e) {
-                        System.err.println("[checkAllStatuses] Lỗi khi lấy metrics cho server " + s.getName() + ": " + e.getMessage());
-                    }
-                }
             }, executor));
         }
         
@@ -971,11 +1076,231 @@ public class ServerServiceImpl implements ServerService {
         serverRepository.saveAll(servers);
         
         long elapsed = System.currentTimeMillis() - start;
-        System.out.println("[checkAllStatuses] Đã kiểm tra " + servers.size() + " servers trong " + elapsed + " ms");
+        System.out.println("[checkAllStatuses] Da kiem tra va cap nhat status cho " + servers.size() + " servers trong " + elapsed + " ms");
         
         return servers.stream()
                 .map(this::convertToResponse)
                 .collect(Collectors.toList());
+    }
+    
+    /**
+     * Kiểm tra và cập nhật trạng thái (status) và metrics cho tất cả servers
+     * - Ping tất cả servers và cập nhật status ONLINE/OFFLINE
+     * - Lấy và cập nhật metrics (CPU, RAM, Disk) cho servers ONLINE
+     * - DISABLED servers sẽ giữ nguyên status và không cập nhật metrics
+     * 
+     * @param timeoutMs Timeout cho mỗi ping (milliseconds)
+     * @return Danh sách servers đã được cập nhật status và metrics
+     */
+    private List<ServerResponse> checkAllServersInternal(int timeoutMs) {
+        System.out.println("[checkAllServers] Bat dau lam moi status va metrics cho tat ca servers (timeout: " + timeoutMs + "ms)");
+        // Su dung findAllWithSshKeys de eager load SSH keys
+        List<ServerEntity> servers = serverRepository.findAllWithSshKeys();
+        final int POOL_SIZE = Math.min(servers.size(), 16);
+        
+        // Load SSH keys trước khi các thread chạy (trong transaction)
+        Map<Long, String> sshKeyMap = loadSshKeysForServers(servers);
+        
+        // Map để lưu kết quả update từ các thread
+        Map<Long, ServerUpdateInfo> updateMap = new ConcurrentHashMap<>();
+        
+        ExecutorService executor = Executors.newFixedThreadPool(POOL_SIZE);
+        long start = System.currentTimeMillis();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        
+        for (ServerEntity s : servers) {
+            final Long serverId = s.getId();
+            final String ip = s.getIp();
+            final Integer port = s.getPort();
+            final String username = s.getUsername();
+            final String password = s.getPassword();
+            final ServerEntity.ServerStatus currentStatus = s.getStatus();
+            final String privateKeyPem = sshKeyMap.get(serverId); // Lấy SSH key đã load sẵn
+            
+            futures.add(CompletableFuture.runAsync(() -> {
+                // DISABLED servers: chỉ check status (ping) nhưng giữ nguyên DISABLED
+                if (currentStatus == ServerEntity.ServerStatus.DISABLED) {
+                    // Vẫn ping để check nhưng không thay đổi status
+                    try (Socket socket = new Socket()) {
+                        InetSocketAddress addr = new InetSocketAddress(ip, port != null ? port : 22);
+                        socket.connect(addr, timeoutMs);
+                        // Giữ nguyên DISABLED, không đổi thành ONLINE
+                    } catch (Exception ignored) {
+                        // Giữ nguyên DISABLED, không đổi thành OFFLINE
+                    }
+                    // Không cần update gì
+                    return;
+                }
+                
+                // ONLINE/OFFLINE servers: ping và cập nhật status
+                boolean online = false;
+                try (Socket socket = new Socket()) {
+                    InetSocketAddress addr = new InetSocketAddress(ip, port != null ? port : 22);
+                    socket.connect(addr, timeoutMs);
+                    online = true;
+                } catch (Exception ignored) {
+                }
+                
+                ServerUpdateInfo updateInfo = new ServerUpdateInfo();
+                updateInfo.status = online ? ServerEntity.ServerStatus.ONLINE : ServerEntity.ServerStatus.OFFLINE;
+                
+                // Nếu online, lấy và cập nhật metrics
+                if (online) {
+                    try {
+                        // Lấy metrics từ server (sử dụng SSH key đã load sẵn)
+                        Map<String, String> metrics = getServerMetrics(
+                            ip,
+                            port,
+                            username,
+                            privateKeyPem,
+                            password
+                        );
+                        
+                        // Lưu metrics vào updateInfo (chỉ total, không lưu used)
+                        if (metrics != null) {
+                            updateInfo.cpuCores = metrics.get("cpuCores");
+                            updateInfo.ramTotal = metrics.get("ramTotal");
+                            updateInfo.diskTotal = metrics.get("diskTotal");
+                            System.out.println("[checkAllServers] Da lay metrics thanh cong cho server ID " + serverId + " (" + ip + ")");
+                        } else {
+                            // Bao loi khi khong lay duoc metrics
+                            System.err.println("[checkAllServers] KHONG THE LAY METRICS cho server ID " + serverId + " (" + ip + ":" + port + ") - Server online nhung khong the ket noi SSH hoac timeout");
+                        }
+                    } catch (Exception e) {
+                        System.err.println("[checkAllServers] LOI KHI LAY METRICS cho server ID " + serverId + " (" + ip + ":" + port + "): " + e.getMessage());
+                        if (e.getCause() != null) {
+                            System.err.println("[checkAllServers] Nguyen nhan: " + e.getCause().getMessage());
+                        }
+                    }
+                }
+                
+                updateMap.put(serverId, updateInfo);
+            }, executor));
+        }
+        
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        executor.shutdown();
+        try {
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+        }
+        
+        // Dem so server co metrics va khong co metrics
+        int serversWithMetrics = 0;
+        int serversWithoutMetrics = 0;
+        int serversOnline = 0;
+        int serversOffline = 0;
+        for (ServerUpdateInfo info : updateMap.values()) {
+            if (info.status == ServerEntity.ServerStatus.ONLINE) {
+                serversOnline++;
+                if (info.cpuCores != null || info.ramTotal != null || info.diskTotal != null) {
+                    serversWithMetrics++;
+                } else {
+                    serversWithoutMetrics++;
+                }
+            } else {
+                serversOffline++;
+            }
+        }
+        
+        // Cập nhật tất cả servers trong transaction
+        updateServersInTransaction(updateMap);
+        
+        // Reload để trả về dữ liệu mới nhất
+        List<ServerEntity> updatedServers = serverRepository.findAll();
+        
+        long elapsed = System.currentTimeMillis() - start;
+        System.out.println("[checkAllServers] Da lam moi status va metrics cho " + updatedServers.size() + " servers trong " + elapsed + " ms");
+        System.out.println("[checkAllServers] Ket qua: " + serversOnline + " server ONLINE, " + serversOffline + " server OFFLINE");
+        System.out.println("[checkAllServers] Metrics: " + serversWithMetrics + " server co metrics, " + serversWithoutMetrics + " server ONLINE nhung khong lay duoc metrics");
+        if (serversWithoutMetrics > 0) {
+            System.err.println("[checkAllServers] CANH BAO: Co " + serversWithoutMetrics + " server(s) ONLINE nhung KHONG THE LAY METRICS (kiem tra SSH key hoac ket noi)");
+        }
+        
+        return updatedServers.stream()
+                .map(this::convertToResponse)
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * Load SSH keys cho tất cả servers trong transaction
+     * Tránh LazyInitializationException khi các thread truy cập SSH keys
+     */
+    @Transactional(readOnly = true)
+    private Map<Long, String> loadSshKeysForServers(List<ServerEntity> servers) {
+        Map<Long, String> sshKeyMap = new HashMap<>();
+        for (ServerEntity server : servers) {
+            try {
+                // Reload server với SSH key trong transaction
+                ServerEntity serverWithKey = serverRepository.findById(server.getId()).orElse(null);
+                if (serverWithKey != null && serverWithKey.getSshKey() != null) {
+                    // Force load SSH key bằng cách truy cập vào nó
+                    SshKeyEntity sshKey = serverWithKey.getSshKey();
+                    if (sshKey.getEncryptedPrivateKey() != null) {
+                        sshKeyMap.put(server.getId(), sshKey.getEncryptedPrivateKey());
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[loadSshKeysForServers] Loi khi load SSH key cho server ID " + server.getId() + ": " + e.getMessage());
+            }
+        }
+        return sshKeyMap;
+    }
+    
+    /**
+     * Helper class để lưu thông tin update từ các thread
+     * Chỉ lưu total metrics, không lưu used (used sẽ lấy trực tiếp từ SSH khi cần)
+     */
+    private static class ServerUpdateInfo {
+        ServerEntity.ServerStatus status;
+        String cpuCores;
+        String ramTotal;
+        String diskTotal;
+    }
+    
+    /**
+     * Cập nhật servers trong transaction
+     */
+    @Transactional
+    private void updateServersInTransaction(Map<Long, ServerUpdateInfo> updateMap) {
+        for (Map.Entry<Long, ServerUpdateInfo> entry : updateMap.entrySet()) {
+            Long serverId = entry.getKey();
+            ServerUpdateInfo updateInfo = entry.getValue();
+            
+            ServerEntity server = serverRepository.findById(serverId).orElse(null);
+            if (server == null) {
+                continue;
+            }
+            
+            // Chỉ update status nếu không phải DISABLED
+            if (server.getStatus() != ServerEntity.ServerStatus.DISABLED) {
+                server.setStatus(updateInfo.status);
+            }
+            
+            // Cập nhật metrics nếu có (chỉ total, không lưu used)
+            boolean metricsUpdated = false;
+            if (updateInfo.cpuCores != null) {
+                server.setCpuCores(updateInfo.cpuCores);
+                metricsUpdated = true;
+            }
+            if (updateInfo.ramTotal != null) {
+                server.setRamTotal(updateInfo.ramTotal);
+                metricsUpdated = true;
+            }
+            if (updateInfo.diskTotal != null) {
+                server.setDiskTotal(updateInfo.diskTotal);
+                metricsUpdated = true;
+            }
+            
+            // Lưu vào database
+            serverRepository.save(server);
+            if (metricsUpdated) {
+                System.out.println("[updateServersInTransaction] Da luu metrics vao database cho server ID " + serverId + 
+                                  " (CPU: " + updateInfo.cpuCores + 
+                                  ", RAM: " + updateInfo.ramTotal + 
+                                  ", Disk: " + updateInfo.diskTotal + ")");
+            }
+        }
     }
     
     /**
@@ -988,16 +1313,364 @@ public class ServerServiceImpl implements ServerService {
     @Override
     @Transactional
     public ServerResponse updateServerStatus(Long id, ServerEntity.ServerStatus status) {
-        System.out.println("[updateServerStatus] Cập nhật status server ID: " + id + " thành: " + status);
+        System.out.println("[updateServerStatus] Cap nhat status server ID: " + id + " thanh: " + status);
         
         ServerEntity server = serverRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy server với ID: " + id));
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
         
         server.setStatus(status);
         ServerEntity updatedServer = serverRepository.save(server);
         
-        System.out.println("[updateServerStatus] Đã cập nhật status thành công");
+        System.out.println("[updateServerStatus] Da cap nhat status thanh cong");
         return convertToResponse(updatedServer);
+    }
+    
+    /**
+     * Lấy private key PEM của server (dùng cho WebSocket và các operations khác)
+     */
+    @Override
+    public String resolveServerPrivateKeyPem(Long serverId) {
+        ServerEntity server = serverRepository.findById(serverId).orElse(null);
+        if (server != null && server.getSshKey() != null) {
+            return server.getSshKey().getEncryptedPrivateKey();
+        }
+        return null;
+    }
+    
+    /**
+     * Helper: Test SSH connection với SSH key
+     */
+    private boolean testSshWithKey(String ip, Integer port, String username, String privateKeyPem, int timeoutMs) {
+        Session session = null;
+        try {
+            JSch jsch = new JSch();
+            byte[] prv = privateKeyPem.getBytes(StandardCharsets.UTF_8);
+            jsch.addIdentity("inmem-key", prv, null, null);
+            session = jsch.getSession(username, ip, port);
+            session.setConfig("StrictHostKeyChecking", "no");
+            session.setTimeout(timeoutMs);
+            session.connect(timeoutMs);
+            return session.isConnected();
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+    
+    /**
+     * Helper: Thực thi command qua SSH key
+     */
+    private String execCommandWithKey(String ip, Integer port, String username, String privateKeyPem, String command, int timeoutMs) {
+        Session session = null;
+        ChannelExec channel = null;
+        try {
+            JSch jsch = new JSch();
+            byte[] prv = privateKeyPem.getBytes(StandardCharsets.UTF_8);
+            jsch.addIdentity("inmem-key", prv, null, null);
+            session = jsch.getSession(username, ip, port);
+            session.setConfig("StrictHostKeyChecking", "no");
+            session.setTimeout(timeoutMs);
+            session.connect(timeoutMs);
+            
+            channel = (ChannelExec) session.openChannel("exec");
+            channel.setCommand(command);
+            
+            InputStream in = channel.getInputStream();
+            channel.connect(timeoutMs);
+            
+            ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            
+            while (true) {
+                while (in.available() > 0) {
+                    int read = in.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    outBuf.write(buffer, 0, read);
+                }
+                if (channel.isClosed()) break;
+                if (System.currentTimeMillis() > deadline) break;
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            
+            return outBuf.toString(StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            System.err.println("[execCommandWithKey] Loi: " + e.getMessage());
+            return null;
+        } finally {
+            if (channel != null && channel.isConnected()) {
+                channel.disconnect();
+            }
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+    
+    /**
+     * Helper: Thực thi command qua password
+     */
+    private String execCommandWithPassword(String ip, Integer port, String username, String password, String command, int timeoutMs) {
+        Session session = null;
+        ChannelExec channel = null;
+        try {
+            JSch jsch = new JSch();
+            session = jsch.getSession(username, ip, port);
+            session.setPassword(password);
+            session.setConfig("StrictHostKeyChecking", "no");
+            session.setTimeout(timeoutMs);
+            session.connect(timeoutMs);
+            
+            channel = (ChannelExec) session.openChannel("exec");
+            channel.setCommand(command);
+            
+            InputStream in = channel.getInputStream();
+            channel.connect(timeoutMs);
+            
+            ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            
+            while (true) {
+                while (in.available() > 0) {
+                    int read = in.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    outBuf.write(buffer, 0, read);
+                }
+                if (channel.isClosed()) break;
+                if (System.currentTimeMillis() > deadline) break;
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            
+            return outBuf.toString(StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            System.err.println("[execCommandWithPassword] Loi: " + e.getMessage());
+            return null;
+        } finally {
+            if (channel != null && channel.isConnected()) {
+                channel.disconnect();
+            }
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+    
+    @Override
+    @Transactional
+    public ServerResponse reconnectServer(Long id, String password) {
+        System.out.println("[reconnectServer] Bat dau reconnect server ID: " + id);
+        
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        boolean hadSshKeyBefore = server.getSshKey() != null;
+        
+        // Uu tien thu SSH key truoc neu co
+        if (hadSshKeyBefore) {
+            String pem = resolveServerPrivateKeyPem(id);
+            if (pem != null && !pem.isBlank()) {
+                boolean canConnect = testSshWithKey(server.getIp(), server.getPort() != null ? server.getPort() : 22,
+                        server.getUsername(), pem, 5000);
+                if (canConnect) {
+                    // Ket noi thanh cong bang SSH key
+                    server.setStatus(ServerEntity.ServerStatus.ONLINE);
+                    server = serverRepository.saveAndFlush(server);
+                    System.out.println("[reconnectServer] Reconnect thanh cong bang SSH key");
+                    return convertToResponse(server);
+                }
+            }
+        }
+        
+        // Neu khong co SSH key hoac SSH key khong hoat dong, yeu cau password
+        if (password == null || password.isBlank()) {
+            throw new RuntimeException(hadSshKeyBefore 
+                ? "SSH key khong hoat dong. Vui long nhap password de reconnect."
+                : "Password khong duoc de trong (server chua co SSH key)");
+        }
+        
+        // Test SSH connection voi password
+        boolean canSsh = testSshConnection(server.getIp(), server.getPort() != null ? server.getPort() : 22,
+                server.getUsername(), password);
+        if (!canSsh) {
+            throw new RuntimeException("Khong the ket noi SSH toi server, vui long kiem tra mat khau");
+        }
+        
+        // Cap nhat password va status
+        server.setPassword(password); // Luu password plaintext (co the encode sau neu can)
+        server.setStatus(ServerEntity.ServerStatus.ONLINE);
+        server = serverRepository.saveAndFlush(server);
+        
+        // Generate SSH key neu chua co
+        if (server.getSshKey() == null) {
+            try {
+                SshKeyEntity created = generateAndInstallSshKey(server.getIp(), 
+                        server.getPort() != null ? server.getPort() : 22,
+                        server.getUsername(), password);
+                if (created != null) {
+                    created.setServer(server);
+                    created = sshKeyRepository.saveAndFlush(created);
+                    server.setSshKey(created);
+                    server = serverRepository.saveAndFlush(server);
+                    System.out.println("[reconnectServer] Da tu dong generate SSH key");
+                }
+            } catch (Exception e) {
+                System.err.println("[reconnectServer] Loi khi generate SSH key: " + e.getMessage());
+                // Khong throw exception, chi log loi
+            }
+        }
+        
+        System.out.println("[reconnectServer] Reconnect thanh cong");
+        return convertToResponse(server);
+    }
+    
+    @Override
+    @Transactional
+    public ServerResponse disconnectServer(Long id) {
+        System.out.println("[disconnectServer] Bat dau disconnect server ID: " + id);
+        
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        // Set status = DISABLED
+        server.setStatus(ServerEntity.ServerStatus.DISABLED);
+        server = serverRepository.saveAndFlush(server);
+        
+        System.out.println("[disconnectServer] Da disconnect server thanh cong");
+        return convertToResponse(server);
+    }
+    
+    @Override
+    public String execCommand(Long id, String command, int timeoutMs) {
+        System.out.println("[execCommand] Thuc thi command tren server ID: " + id);
+        System.out.println("[execCommand] Command: " + command);
+        
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        // Kiem tra server status
+        if (server.getStatus() == ServerEntity.ServerStatus.DISABLED) {
+            throw new RuntimeException("Server da bi ngat ket noi (DISABLED). Vui long ket noi lai truoc khi thuc thi command.");
+        }
+        if (server.getStatus() != ServerEntity.ServerStatus.ONLINE) {
+            throw new RuntimeException("Server khong online. Khong the thuc thi command.");
+        }
+        
+        String ip = server.getIp();
+        Integer port = server.getPort() != null ? server.getPort() : 22;
+        String username = server.getUsername();
+        
+        // Uu tien dung SSH key
+        String privateKeyPem = resolveServerPrivateKeyPem(id);
+        if (privateKeyPem != null && !privateKeyPem.isBlank()) {
+            String output = execCommandWithKey(ip, port, username, privateKeyPem, command, timeoutMs);
+            if (output != null) {
+                System.out.println("[execCommand] Thuc thi thanh cong bang SSH key");
+                return output;
+            }
+        }
+        
+        // Fallback: dung password neu co
+        String password = server.getPassword();
+        if (password != null && !password.isBlank()) {
+            String output = execCommandWithPassword(ip, port, username, password, command, timeoutMs);
+            if (output != null) {
+                System.out.println("[execCommand] Thuc thi thanh cong bang password");
+                return output;
+            }
+        }
+        
+        throw new RuntimeException("Khong the thuc thi command. Server khong co SSH key hoac password hop le.");
+    }
+    
+    @Override
+    @Transactional
+    public String shutdownServer(Long id) {
+        System.out.println("[shutdownServer] Bat dau shutdown server ID: " + id);
+        
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        // Kiem tra server status
+        if (server.getStatus() == ServerEntity.ServerStatus.DISABLED) {
+            throw new RuntimeException("Server da bi ngat ket noi (DISABLED). Vui long ket noi lai truoc khi shutdown.");
+        }
+        if (server.getStatus() != ServerEntity.ServerStatus.ONLINE) {
+            throw new RuntimeException("Server khong online. Khong the shutdown.");
+        }
+        
+        // Shutdown command (thu nhieu cach)
+        String shutdownCommand = "sudo shutdown -h now || sudo poweroff || sudo systemctl poweroff || sudo halt";
+        
+        String output = execCommand(id, shutdownCommand, 10000);
+        
+        // Sau khi shutdown thanh cong, set status = OFFLINE
+        server.setStatus(ServerEntity.ServerStatus.OFFLINE);
+        serverRepository.saveAndFlush(server);
+        
+        System.out.println("[shutdownServer] Da gui lenh shutdown thanh cong");
+        return output != null ? output : "Da gui lenh shutdown den server";
+    }
+    
+    @Override
+    @Transactional
+    public String restartServer(Long id) {
+        System.out.println("[restartServer] Bat dau restart server ID: " + id);
+        
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        // Kiem tra server status
+        if (server.getStatus() == ServerEntity.ServerStatus.DISABLED) {
+            throw new RuntimeException("Server da bi ngat ket noi (DISABLED). Vui long ket noi lai truoc khi restart.");
+        }
+        if (server.getStatus() != ServerEntity.ServerStatus.ONLINE) {
+            throw new RuntimeException("Server khong online. Khong the restart.");
+        }
+        
+        // Restart command (thu nhieu cach)
+        String restartCommand = "sudo reboot || sudo shutdown -r now || sudo systemctl reboot";
+        
+        String output = execCommand(id, restartCommand, 10000);
+        
+        // Sau khi restart, set status = OFFLINE (se tu dong chuyen thanh ONLINE sau khi server khoi dong lai)
+        server.setStatus(ServerEntity.ServerStatus.OFFLINE);
+        serverRepository.saveAndFlush(server);
+        
+        System.out.println("[restartServer] Da gui lenh restart thanh cong");
+        return output != null ? output : "Da gui lenh restart den server";
+    }
+    
+    @Override
+    public boolean pingServer(Long id, int timeoutMs) {
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        String ip = server.getIp();
+        Integer port = server.getPort() != null ? server.getPort() : 22;
+        
+        try (java.net.Socket socket = new java.net.Socket()) {
+            java.net.InetSocketAddress addr = new java.net.InetSocketAddress(ip, port);
+            socket.connect(addr, timeoutMs);
+            System.out.println("[pingServer] Ping thanh cong den server " + ip + ":" + port);
+            return true;
+        } catch (Exception e) {
+            System.out.println("[pingServer] Ping that bai den server " + ip + ":" + port + " - " + e.getMessage());
+            return false;
+        }
     }
     
 }

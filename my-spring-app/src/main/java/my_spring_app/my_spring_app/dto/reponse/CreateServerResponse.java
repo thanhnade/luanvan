@@ -22,12 +22,9 @@ public class CreateServerResponse {
     private String clusterStatus; // AVAILABLE, UNAVAILABLE
     private LocalDateTime createdAt;
     
-    // Metrics (optional - có thể null nếu chưa lấy được)
+    // Metrics (optional - có thể null nếu chưa lấy được) - chỉ trả về total, không trả về used
     private String cpuCores;
-    private String cpuUsed;
     private String ramTotal;
-    private String ramUsed;
     private String diskTotal;
-    private String diskUsed;
 }
 

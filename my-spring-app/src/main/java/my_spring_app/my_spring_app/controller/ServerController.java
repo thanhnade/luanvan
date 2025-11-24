@@ -106,18 +106,17 @@ public class ServerController {
     }
 
     /**
-     * Kiểm tra và cập nhật trạng thái tất cả servers
+     * Kiểm tra và cập nhật trạng thái (status) cho tất cả servers
      * Ping tất cả servers và tự động cập nhật ONLINE/OFFLINE
+     * Không cập nhật metrics
      * 
-     * @param includeMetrics Query param: có lấy metrics không (default: false)
+     * @return Danh sách servers đã được cập nhật status
      */
     @PostMapping("/check-status")
-    public ResponseEntity<?> checkAllStatuses(@RequestParam(required = false, defaultValue = "false") boolean includeMetrics) {
+    public ResponseEntity<?> checkAllStatuses() {
         try {
-            List<ServerResponse> servers = serverService.checkAllStatuses(2000, includeMetrics);
-            String message = includeMetrics 
-                ? "Đã kiểm tra trạng thái và cập nhật metrics cho " + servers.size() + " servers"
-                : "Đã kiểm tra và cập nhật trạng thái " + servers.size() + " servers";
+            List<ServerResponse> servers = serverService.checkAllStatuses(2000);
+            String message = "Đã kiểm tra và cập nhật trạng thái " + servers.size() + " servers";
             return ResponseEntity.ok(Map.of(
                     "servers", servers,
                     "message", message
@@ -125,6 +124,39 @@ public class ServerController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi kiểm tra status: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Kiểm tra và cập nhật trạng thái (status) và metrics cho tất cả servers
+     * - Ping tất cả servers và cập nhật status ONLINE/OFFLINE
+     * - Lấy và cập nhật metrics (CPU cores, RAM total, Disk total) từ SSH output cho servers ONLINE
+     * - Metrics được lấy trực tiếp từ SSH commands qua JSCH
+     * 
+     * @return Danh sách servers đã được cập nhật status và metrics
+     */
+    @PostMapping("/check-all")
+    public ResponseEntity<?> checkAllServers() {
+        try {
+            List<ServerResponse> servers = serverService.checkAllServers();
+            long onlineCount = servers.stream()
+                    .filter(s -> "ONLINE".equals(s.getStatus()))
+                    .count();
+            long withMetricsCount = servers.stream()
+                    .filter(s -> "ONLINE".equals(s.getStatus()) && 
+                               (s.getCpuCores() != null || s.getRamTotal() != null || s.getDiskTotal() != null))
+                    .count();
+            String message = String.format(
+                "Đã cập nhật trạng thái và metrics cho %d servers (%d ONLINE, %d có metrics)",
+                servers.size(), onlineCount, withMetricsCount
+            );
+            return ResponseEntity.ok(Map.of(
+                    "servers", servers,
+                    "message", message
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi kiểm tra servers: " + e.getMessage()));
         }
     }
 
@@ -156,6 +188,136 @@ public class ServerController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi cập nhật status: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Ping một server cụ thể để kiểm tra kết nối
+     */
+    @PostMapping("/{id}/ping")
+    public ResponseEntity<?> pingServer(@PathVariable Long id, @RequestBody(required = false) Map<String, Integer> body) {
+        try {
+            int timeoutMs = body != null && body.get("timeoutMs") != null ? body.get("timeoutMs") : 2000;
+            boolean isReachable = serverService.pingServer(id, timeoutMs);
+            return ResponseEntity.ok(Map.of(
+                    "success", isReachable,
+                    "message", isReachable ? "Server có thể ping được" : "Không thể ping đến server"
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "PING_ERROR", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi ping server: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Reconnect đến server
+     * Ưu tiên dùng SSH key nếu có, nếu không thì yêu cầu password
+     */
+    @PostMapping("/{id}/reconnect")
+    public ResponseEntity<?> reconnectServer(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        try {
+            String password = body.get("password"); // Optional nếu đã có SSH key
+            ServerResponse response = serverService.reconnectServer(id, password);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "CONNECTION_ERROR", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi reconnect server: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Disconnect server (set status = DISABLED)
+     */
+    @PostMapping("/{id}/disconnect")
+    public ResponseEntity<?> disconnectServer(@PathVariable Long id) {
+        try {
+            ServerResponse response = serverService.disconnectServer(id);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "DISCONNECT_ERROR", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi disconnect server: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Thực thi command trên server qua SSH (CLI)
+     */
+    @PostMapping("/{id}/exec")
+    public ResponseEntity<?> execCommand(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        try {
+            String command = (String) body.get("command");
+            if (command == null || command.isBlank()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "VALIDATION_ERROR", "message", "Command không được để trống"));
+            }
+            
+            Integer timeoutMs = body.get("timeoutMs") != null 
+                ? ((Number) body.get("timeoutMs")).intValue() 
+                : 10000; // Default 10 seconds
+            
+            String output = serverService.execCommand(id, command, timeoutMs);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "output", output != null ? output : "",
+                    "message", "Command đã được thực thi thành công"
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "EXEC_ERROR", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi thực thi command: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Shutdown server qua SSH
+     */
+    @PostMapping("/{id}/shutdown")
+    public ResponseEntity<?> shutdownServer(@PathVariable Long id) {
+        try {
+            String output = serverService.shutdownServer(id);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Đã gửi lệnh shutdown đến server. Server sẽ tắt sau vài giây.",
+                    "output", output != null ? output : ""
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "SHUTDOWN_ERROR", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi shutdown server: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Restart server qua SSH
+     */
+    @PostMapping("/{id}/restart")
+    public ResponseEntity<?> restartServer(@PathVariable Long id) {
+        try {
+            String output = serverService.restartServer(id);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Đã gửi lệnh restart đến server. Server sẽ khởi động lại sau vài giây.",
+                    "output", output != null ? output : ""
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "RESTART_ERROR", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "INTERNAL_ERROR", "message", "Lỗi khi restart server: " + e.getMessage()));
         }
     }
 }

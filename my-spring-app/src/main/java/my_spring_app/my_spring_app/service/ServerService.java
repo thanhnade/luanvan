@@ -25,9 +25,62 @@ public interface ServerService {
     
     List<ServerResponse> checkAllStatuses(int timeoutMs);
     
-    List<ServerResponse> checkAllStatuses(int timeoutMs, boolean includeMetrics);
+    List<ServerResponse> checkAllServers();
     
     ServerResponse updateServerStatus(Long id, ServerEntity.ServerStatus status);
+    
+    /**
+     * Reconnect đến server và tự động generate SSH key nếu chưa có
+     * @param id Server ID
+     * @param password Password để kết nối (optional nếu đã có SSH key)
+     * @return ServerResponse với status đã được cập nhật
+     */
+    ServerResponse reconnectServer(Long id, String password);
+    
+    /**
+     * Disconnect server (set status = DISABLED)
+     * @param id Server ID
+     * @return ServerResponse với status = DISABLED
+     */
+    ServerResponse disconnectServer(Long id);
+    
+    /**
+     * Thực thi command trên server qua SSH
+     * @param id Server ID
+     * @param command Command cần thực thi
+     * @param timeoutMs Timeout (milliseconds)
+     * @return Output của command
+     */
+    String execCommand(Long id, String command, int timeoutMs);
+    
+    /**
+     * Shutdown server qua SSH
+     * @param id Server ID
+     * @return Output của shutdown command
+     */
+    String shutdownServer(Long id);
+    
+    /**
+     * Restart server qua SSH
+     * @param id Server ID
+     * @return Output của restart command
+     */
+    String restartServer(Long id);
+    
+    /**
+     * Lấy private key PEM của server
+     * @param serverId Server ID
+     * @return Private key PEM hoặc null nếu không có
+     */
+    String resolveServerPrivateKeyPem(Long serverId);
+    
+    /**
+     * Ping một server cụ thể để kiểm tra kết nối
+     * @param id Server ID
+     * @param timeoutMs Timeout (milliseconds)
+     * @return true nếu ping thành công, false nếu không
+     */
+    boolean pingServer(Long id, int timeoutMs);
 }
 
 

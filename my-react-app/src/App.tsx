@@ -15,6 +15,7 @@ import { AdminLayout } from "@/apps/admin/components/AdminLayout"
 import { Overview } from "@/apps/admin/pages/Overview"
 import { Servers } from "@/apps/admin/pages/infrastructure/Servers"
 import { Clusters } from "@/apps/admin/pages/infrastructure/Clusters"
+import { ClusterSetup } from "@/apps/admin/pages/infrastructure/ClusterSetup"
 import { ClusterOverview } from "@/apps/admin/pages/cluster/ClusterOverview"
 import { Nodes } from "@/apps/admin/pages/cluster/Nodes"
 import { Namespaces } from "@/apps/admin/pages/cluster/Namespaces"
@@ -101,6 +102,16 @@ function App() {
                 <ProtectedRoute>
                   <AdminLayout>
                     <Clusters />
+                  </AdminLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/infrastructure/cluster-setup"
+              element={
+                <ProtectedRoute>
+                  <AdminLayout>
+                    <ClusterSetup />
                   </AdminLayout>
                 </ProtectedRoute>
               }

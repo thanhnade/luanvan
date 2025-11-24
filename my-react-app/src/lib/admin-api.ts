@@ -62,63 +62,7 @@ import type {
   AdminFrontendDetailResponse,
 } from "@/types/admin";
 
-// Mock data - Tạo nhiều server để test
-const mockServers: Server[] = Array.from({ length: 25 }, (_, i) => {
-  const index = i + 1;
-  return {
-    id: String(index),
-    name: `server-${String(index).padStart(2, "0")}`,
-    ipAddress: `192.168.1.${10 + i}`,
-    port: 22,
-    status: i % 5 === 0 ? "offline" : "online",
-    cpu: { 
-      used: Math.floor(Math.random() * 50) + 10, 
-      total: 100 
-    },
-    memory: { 
-      used: Math.floor(Math.random() * 60) + 20, 
-      total: 128 
-    },
-    disk: { 
-      used: Math.floor(Math.random() * 300) + 100, 
-      total: 500 
-    },
-    os: i % 3 === 0 ? "Ubuntu 22.04" : i % 3 === 1 ? "Ubuntu 20.04" : "CentOS 8",
-    updatedAt: new Date().toISOString(),
-  };
-});
 
-// Chỉ quản lý 1 cluster duy nhất
-let currentCluster: Cluster | null = null;
-
-const mockNodes: Node[] = [
-  {
-    id: "1",
-    name: "node-01",
-    status: "ready",
-    role: "master",
-    cpu: { requested: 20, limit: 50, capacity: 100 },
-    memory: { requested: 32, limit: 64, capacity: 128 },
-    disk: { requested: 100, limit: 200, capacity: 500 },
-    podCount: 12,
-    os: "linux",
-    kernel: "5.15.0",
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: "2",
-    name: "node-02",
-    status: "ready",
-    role: "worker",
-    cpu: { requested: 15, limit: 40, capacity: 100 },
-    memory: { requested: 24, limit: 48, capacity: 128 },
-    disk: { requested: 80, limit: 150, capacity: 500 },
-    podCount: 8,
-    os: "linux",
-    kernel: "5.15.0",
-    updatedAt: new Date().toISOString(),
-  },
-];
 
 const mockNamespaces: Namespace[] = [
   {
@@ -1346,18 +1290,21 @@ export const adminAPI = {
       return servers.map((server: any) => {
         // Parse CPU cores, RAM, Disk từ string sang number
         const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
-        const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0; // Load average hoặc cores đang dùng
         // Parse RAM và Disk từ backend (backend trả về GiB)
         const ramTotal = parseSizeToGiB(server.ramTotal);
-        const ramUsed = parseSizeToGiB(server.ramUsed);
         const diskTotal = parseSizeToGiB(server.diskTotal);
-        const diskUsed = parseSizeToGiB(server.diskUsed);
         
-        // Map status từ backend (ONLINE/OFFLINE/DISABLED) sang frontend ("online" | "offline")
+        // Map status từ backend (ONLINE/OFFLINE/DISABLED) sang frontend ("online" | "offline" | "disabled")
         // Nếu có status thì dùng, nếu không thì map từ serverStatus
-        let status: "online" | "offline" = "offline";
+        let status: "online" | "offline" | "disabled" = "offline";
         if (server.status) {
-            status = server.status === "ONLINE" ? "online" : "offline";
+            if (server.status === "ONLINE") {
+                status = "online";
+            } else if (server.status === "DISABLED") {
+                status = "disabled";
+            } else {
+                status = "offline";
+            }
         } else {
             status = server.serverStatus === "RUNNING" ? "online" : "offline";
         }
@@ -1373,16 +1320,13 @@ export const adminAPI = {
           serverStatus: server.serverStatus,
           clusterStatus: server.clusterStatus,
           cpu: {
-            used: cpuUsed > 0 ? cpuUsed : "-", // Dùng giá trị thực hoặc "-"
-            total: cpuCores > 0 ? cpuCores : "-", // Dùng giá trị thực hoặc "-"
+            total: cpuCores > 0 ? cpuCores : "-",
           },
           memory: {
-            used: ramUsed > 0 ? ramUsed : "-", // Dùng giá trị thực hoặc "-"
-            total: ramTotal > 0 ? ramTotal : "-", // Dùng giá trị thực hoặc "-"
+            total: ramTotal > 0 ? ramTotal : "-",
           },
           disk: {
-            used: diskUsed > 0 ? diskUsed : "-", // Dùng giá trị thực hoặc "-"
-            total: diskTotal > 0 ? diskTotal : "-", // Dùng giá trị thực hoặc "-"
+            total: diskTotal > 0 ? diskTotal : "-",
           },
           os: "Ubuntu 22.04", // Default, có thể lấy từ server sau
           updatedAt: server.createdAt || new Date().toISOString(),
@@ -1406,12 +1350,9 @@ export const adminAPI = {
       
       // Map từ backend response sang frontend Server type
       const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
-      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
-      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      // Parse RAM và Disk từ backend (backend trả về GiB)
       const ramTotal = parseSizeToGiB(server.ramTotal);
-      const ramUsed = parseSizeToGiB(server.ramUsed);
       const diskTotal = parseSizeToGiB(server.diskTotal);
-      const diskUsed = parseSizeToGiB(server.diskUsed);
       const status = server.serverStatus === "RUNNING" ? "online" : "offline";
       
       return {
@@ -1425,16 +1366,13 @@ export const adminAPI = {
         serverStatus: server.serverStatus,
         clusterStatus: server.clusterStatus,
         cpu: {
-          used: cpuUsed > 0 ? cpuUsed : "-",
-          total: cpuCores || 100,
+          total: cpuCores > 0 ? cpuCores : "-",
         },
         memory: {
-          used: ramUsed > 0 ? ramUsed : "-",
-          total: ramTotal || 128,
+          total: ramTotal > 0 ? ramTotal : "-",
         },
         disk: {
-          used: diskUsed > 0 ? diskUsed : "-",
-          total: diskTotal || 500,
+          total: diskTotal > 0 ? diskTotal : "-",
         },
         os: "Ubuntu 22.04",
         updatedAt: server.createdAt || new Date().toISOString(),
@@ -1472,14 +1410,18 @@ export const adminAPI = {
       const server = response.data;
       
       // Map response về frontend Server type
-      const status = server.status === "ONLINE" ? "online" : "offline";
+      let status: "online" | "offline" | "disabled" = "offline";
+      if (server.status === "ONLINE") {
+        status = "online";
+      } else if (server.status === "DISABLED") {
+        status = "disabled";
+      } else {
+        status = "offline";
+      }
       const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
-      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
-      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      // Parse RAM và Disk từ backend (backend trả về GiB)
       const ramTotal = parseSizeToGiB(server.ramTotal);
-      const ramUsed = parseSizeToGiB(server.ramUsed);
       const diskTotal = parseSizeToGiB(server.diskTotal);
-      const diskUsed = parseSizeToGiB(server.diskUsed);
       
       return {
         id: String(server.id),
@@ -1492,20 +1434,17 @@ export const adminAPI = {
         serverStatus: server.serverStatus,
         clusterStatus: server.clusterStatus,
         cpu: {
-          used: cpuUsed > 0 ? cpuUsed : "-",
           total: cpuCores > 0 ? cpuCores : "-",
         },
         memory: {
-          used: ramUsed > 0 ? ramUsed : "-",
           total: ramTotal > 0 ? ramTotal : "-",
         },
         disk: {
-          used: diskUsed > 0 ? diskUsed : "-",
           total: diskTotal > 0 ? diskTotal : "-",
         },
         os: data.os || "Ubuntu 22.04",
         updatedAt: server.createdAt || new Date().toISOString(),
-      };
+    };
     } catch (error: any) {
       console.error("Error creating server:", error);
       // Extract error message từ backend response
@@ -1544,17 +1483,20 @@ export const adminAPI = {
       
       // Map response về frontend Server type
       const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
-      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
-      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      // Parse RAM và Disk từ backend (backend trả về GiB)
       const ramTotal = parseSizeToGiB(server.ramTotal);
-      const ramUsed = parseSizeToGiB(server.ramUsed);
       const diskTotal = parseSizeToGiB(server.diskTotal);
-      const diskUsed = parseSizeToGiB(server.diskUsed);
       
-      // Map status từ backend (ONLINE/OFFLINE/DISABLED) sang frontend ("online" | "offline")
-      let status: "online" | "offline" = "offline";
+      // Map status từ backend (ONLINE/OFFLINE/DISABLED) sang frontend ("online" | "offline" | "disabled")
+      let status: "online" | "offline" | "disabled" = "offline";
       if (server.status) {
-          status = server.status === "ONLINE" ? "online" : "offline";
+          if (server.status === "ONLINE") {
+              status = "online";
+          } else if (server.status === "DISABLED") {
+              status = "disabled";
+          } else {
+              status = "offline";
+          }
       } else {
           status = server.serverStatus === "RUNNING" ? "online" : "offline";
       }
@@ -1570,15 +1512,12 @@ export const adminAPI = {
         serverStatus: server.serverStatus,
         clusterStatus: server.clusterStatus,
         cpu: {
-          used: cpuUsed > 0 ? cpuUsed : "-",
           total: cpuCores > 0 ? cpuCores : "-",
         },
         memory: {
-          used: ramUsed > 0 ? ramUsed : "-",
           total: ramTotal > 0 ? ramTotal : "-",
         },
         disk: {
-          used: diskUsed > 0 ? diskUsed : "-",
           total: diskTotal > 0 ? diskTotal : "-",
         },
         os: data.os || "Ubuntu 22.04",
@@ -1628,23 +1567,25 @@ export const adminAPI = {
     }
   },
   
-  // Kiểm tra và cập nhật trạng thái tất cả servers
-  checkAllStatuses: async (includeMetrics: boolean = false): Promise<{ servers: Server[]; message: string }> => {
+  // Kiểm tra và cập nhật trạng thái (status) cho tất cả servers (không có metrics)
+  checkAllStatuses: async (): Promise<{ servers: Server[]; message: string }> => {
     try {
-      const response = await api.post("/servers/check-status", null, {
-        params: { includeMetrics }
-      });
+      const response = await api.post("/servers/check-status");
       // Backend trả về { servers: [...], message: "..." }
       const serversData = response.data.servers || [];
       return {
         servers: serversData.map((server: any) => {
           const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
-          const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
-          const ramTotal = server.ramTotal ? parseFloat(server.ramTotal.replace(/[^0-9.]/g, "")) || 0 : 0;
-          const ramUsed = server.ramUsed ? parseFloat(server.ramUsed.replace(/[^0-9.]/g, "")) || 0 : 0;
-          const diskTotal = server.diskTotal ? parseFloat(server.diskTotal.replace(/[^0-9.]/g, "")) || 0 : 0;
-          const diskUsed = server.diskUsed ? parseFloat(server.diskUsed.replace(/[^0-9.]/g, "")) || 0 : 0;
-          const status = server.status === "ONLINE" ? "online" : "offline";
+          const ramTotal = parseSizeToGiB(server.ramTotal);
+          const diskTotal = parseSizeToGiB(server.diskTotal);
+          let status: "online" | "offline" | "disabled" = "offline";
+          if (server.status === "ONLINE") {
+            status = "online";
+          } else if (server.status === "DISABLED") {
+            status = "disabled";
+          } else {
+            status = "offline";
+          }
           
           return {
             id: String(server.id),
@@ -1657,25 +1598,19 @@ export const adminAPI = {
             serverStatus: server.serverStatus,
             clusterStatus: server.clusterStatus,
             cpu: {
-              used: cpuUsed || Math.floor(cpuCores * 0.3),
-              total: cpuCores || 100,
+              total: cpuCores > 0 ? cpuCores : "-",
             },
             memory: {
-              used: ramUsed || Math.floor(ramTotal * 0.4),
-              total: ramTotal || 128,
+              total: ramTotal > 0 ? ramTotal : "-",
             },
             disk: {
-              used: diskUsed || Math.floor(diskTotal * 0.5),
-              total: diskTotal || 500,
+              total: diskTotal > 0 ? diskTotal : "-",
             },
             os: "Ubuntu 22.04",
             updatedAt: server.createdAt || new Date().toISOString(),
           };
         }),
-        message: response.data.message || 
-                (includeMetrics 
-                  ? `Đã kiểm tra trạng thái và cập nhật metrics cho ${serversData.length} servers`
-                  : `Đã kiểm tra và cập nhật trạng thái ${serversData.length} servers`),
+        message: response.data.message || `Đã kiểm tra và cập nhật trạng thái ${serversData.length} servers`,
       };
     } catch (error: any) {
       console.error("Error checking statuses:", error);
@@ -1687,6 +1622,62 @@ export const adminAPI = {
       throw new Error(errorMessage);
     }
   },
+
+  // Kiểm tra và cập nhật trạng thái (status) và metrics cho tất cả servers
+  checkAllServers: async (): Promise<{ servers: Server[]; message: string }> => {
+    try {
+      const response = await api.post("/servers/check-all");
+      // Backend trả về { servers: [...], message: "..." }
+      const serversData = response.data.servers || [];
+      return {
+        servers: serversData.map((server: any) => {
+          const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+          const ramTotal = parseSizeToGiB(server.ramTotal);
+          const diskTotal = parseSizeToGiB(server.diskTotal);
+          let status: "online" | "offline" | "disabled" = "offline";
+          if (server.status === "ONLINE") {
+            status = "online";
+          } else if (server.status === "DISABLED") {
+            status = "disabled";
+          } else {
+            status = "offline";
+          }
+          
+          return {
+            id: String(server.id),
+            name: server.name,
+            ipAddress: server.ip,
+            port: server.port || 22,
+            username: server.username,
+            status: status,
+            role: server.role,
+            serverStatus: server.serverStatus,
+            clusterStatus: server.clusterStatus,
+            cpu: {
+              total: cpuCores > 0 ? cpuCores : "-",
+            },
+            memory: {
+              total: ramTotal > 0 ? ramTotal : "-",
+            },
+            disk: {
+              total: diskTotal > 0 ? diskTotal : "-",
+            },
+            os: "Ubuntu 22.04",
+            updatedAt: server.createdAt || new Date().toISOString(),
+          };
+        }),
+        message: response.data.message || `Đã kiểm tra trạng thái và cập nhật metrics cho ${serversData.length} servers`,
+      };
+    } catch (error: any) {
+      console.error("Error checking all servers:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể kiểm tra servers";
+      throw new Error(errorMessage);
+    }
+  },
   
   // Cập nhật trạng thái server (ONLINE/OFFLINE/DISABLED)
   updateServerStatus: async (id: string, status: "ONLINE" | "OFFLINE" | "DISABLED"): Promise<Server> => {
@@ -1695,13 +1686,17 @@ export const adminAPI = {
       const server = response.data;
       
       const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
-      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
-      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      // Parse RAM và Disk từ backend (backend trả về GiB)
       const ramTotal = parseSizeToGiB(server.ramTotal);
-      const ramUsed = parseSizeToGiB(server.ramUsed);
       const diskTotal = parseSizeToGiB(server.diskTotal);
-      const diskUsed = parseSizeToGiB(server.diskUsed);
-      const statusMapped = server.status === "ONLINE" ? "online" : "offline";
+      let statusMapped: "online" | "offline" | "disabled" = "offline";
+      if (server.status === "ONLINE") {
+        statusMapped = "online";
+      } else if (server.status === "DISABLED") {
+        statusMapped = "disabled";
+      } else {
+        statusMapped = "offline";
+      }
       
       return {
         id: String(server.id),
@@ -1714,15 +1709,12 @@ export const adminAPI = {
         serverStatus: server.serverStatus,
         clusterStatus: server.clusterStatus,
         cpu: {
-          used: cpuUsed > 0 ? cpuUsed : "-",
           total: cpuCores > 0 ? cpuCores : "-",
         },
         memory: {
-          used: ramUsed > 0 ? ramUsed : "-",
           total: ramTotal > 0 ? ramTotal : "-",
         },
         disk: {
-          used: diskUsed > 0 ? diskUsed : "-",
           total: diskTotal > 0 ? diskTotal : "-",
         },
         os: "Ubuntu 22.04",
@@ -1734,33 +1726,241 @@ export const adminAPI = {
     }
   },
 
-  // Clusters - chỉ quản lý 1 cluster
-  getCluster: async (): Promise<Cluster | null> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return currentCluster;
-  },
-  createCluster: async (data: Omit<Cluster, "id" | "createdAt">): Promise<Cluster> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (currentCluster) {
-      throw new Error("Đã có cluster, chỉ được phép quản lý 1 cluster");
+  // Ping server để kiểm tra kết nối
+  pingServer: async (id: string, timeoutMs: number = 2000): Promise<{ success: boolean; message: string }> => {
+    try {
+      const response = await api.post(`/servers/${id}/ping`, { timeoutMs });
+      return {
+        success: response.data.success,
+        message: response.data.message || (response.data.success ? "Server có thể ping được" : "Không thể ping đến server"),
+      };
+    } catch (error: any) {
+      console.error("Error pinging server:", error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể ping server";
+      throw new Error(errorMessage);
     }
-    const newCluster: Cluster = {
-      ...data,
-      id: "1",
+  },
+
+  // Reconnect server
+  reconnectServer: async (id: string, password?: string): Promise<Server> => {
+    try {
+      const response = await api.post(`/servers/${id}/reconnect`, { password });
+      const server = response.data;
+      
+      // Map response tương tự như updateServerStatus
+      const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+      const ramTotal = parseSizeToGiB(server.ramTotal);
+      const diskTotal = parseSizeToGiB(server.diskTotal);
+      let statusMapped: "online" | "offline" | "disabled" = "offline";
+      if (server.status === "ONLINE") {
+        statusMapped = "online";
+      } else if (server.status === "DISABLED") {
+        statusMapped = "disabled";
+      } else {
+        statusMapped = "offline";
+      }
+      
+      return {
+        id: String(server.id),
+        name: server.name,
+        ipAddress: server.ip,
+        port: server.port || 22,
+        username: server.username,
+        status: statusMapped,
+        role: server.role,
+        serverStatus: server.serverStatus,
+        clusterStatus: server.clusterStatus,
+        cpu: {
+          total: cpuCores > 0 ? cpuCores : "-",
+        },
+        memory: {
+          total: ramTotal > 0 ? ramTotal : "-",
+        },
+        disk: {
+          total: diskTotal > 0 ? diskTotal : "-",
+        },
+        os: "Ubuntu 22.04",
+        updatedAt: server.createdAt || new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Error reconnecting server:", error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể reconnect server";
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Disconnect server
+  disconnectServer: async (id: string): Promise<Server> => {
+    try {
+      const response = await api.post(`/servers/${id}/disconnect`);
+      const server = response.data;
+      
+      // Map response tương tự như updateServerStatus
+      const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+      const ramTotal = parseSizeToGiB(server.ramTotal);
+      const diskTotal = parseSizeToGiB(server.diskTotal);
+      let statusMapped: "online" | "offline" | "disabled" = "offline";
+      if (server.status === "ONLINE") {
+        statusMapped = "online";
+      } else if (server.status === "DISABLED") {
+        statusMapped = "disabled";
+      } else {
+        statusMapped = "offline";
+      }
+      
+      return {
+        id: String(server.id),
+        name: server.name,
+        ipAddress: server.ip,
+        port: server.port || 22,
+        username: server.username,
+        status: statusMapped,
+        role: server.role,
+        serverStatus: server.serverStatus,
+        clusterStatus: server.clusterStatus,
+        cpu: {
+          total: cpuCores > 0 ? cpuCores : "-",
+        },
+        memory: {
+          total: ramTotal > 0 ? ramTotal : "-",
+        },
+        disk: {
+          total: diskTotal > 0 ? diskTotal : "-",
+        },
+        os: "Ubuntu 22.04",
+        updatedAt: server.createdAt || new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Error disconnecting server:", error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể disconnect server";
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Execute command on server (CLI)
+  execCommand: async (id: string, command: string, timeoutMs: number = 10000): Promise<{ success: boolean; output: string; message: string }> => {
+    try {
+      const response = await api.post(`/servers/${id}/exec`, { command, timeoutMs });
+      return response.data;
+    } catch (error: any) {
+      console.error("Error executing command:", error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể thực thi command";
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Shutdown server
+  shutdownServer: async (id: string): Promise<{ success: boolean; message: string; output: string }> => {
+    try {
+      const response = await api.post(`/servers/${id}/shutdown`);
+      return response.data;
+    } catch (error: any) {
+      console.error("Error shutting down server:", error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể shutdown server";
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Restart server
+  restartServer: async (id: string): Promise<{ success: boolean; message: string; output: string }> => {
+    try {
+      const response = await api.post(`/servers/${id}/restart`);
+      return response.data;
+    } catch (error: any) {
+      console.error("Error restarting server:", error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể restart server";
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Clusters - chỉ quản lý 1 cluster dựa trên clusterStatus
+  getCluster: async (): Promise<Cluster | null> => {
+    try {
+      // Lấy tất cả servers
+      const servers = await adminAPI.getServers();
+      
+      // Lọc servers có clusterStatus = "AVAILABLE"
+      const clusterServers = servers.filter((s) => s.clusterStatus === "AVAILABLE");
+      
+      // Nếu không có server nào trong cluster, trả về null
+      if (clusterServers.length === 0) {
+        return null;
+      }
+      
+      // Tạo cluster object từ servers
+      const serverIds = clusterServers.map((s) => s.id);
+      const serverRoles: Record<string, "master" | "worker"> = {};
+      clusterServers.forEach((s) => {
+        const role = s.role?.toLowerCase() || "worker";
+        serverRoles[s.id] = (role === "master" ? "master" : "worker") as "master" | "worker";
+      });
+      
+      return {
+        id: "1", // Cluster duy nhất có ID = "1"
+        name: "Kubernetes Cluster",
+        version: "v1.28.0",
+        nodeCount: clusterServers.length,
+        status: "healthy" as const,
+        provider: "local" as const,
+        serverIds,
+        serverRoles,
       createdAt: new Date().toISOString(),
     };
-    currentCluster = newCluster;
-    return newCluster;
+    } catch (error) {
+      console.error("Error getting cluster:", error);
+      return null;
+    }
+  },
+  createCluster: async (data: Omit<Cluster, "id" | "createdAt">): Promise<Cluster> => {
+    try {
+      // Kiểm tra xem đã có cluster chưa (có servers với clusterStatus = "AVAILABLE")
+      const existingCluster = await adminAPI.getCluster();
+      if (existingCluster) {
+        throw new Error("Đã có cluster, chỉ được phép quản lý 1 cluster. Vui lòng sử dụng trang Assign Servers để quản lý.");
+      }
+      
+      // Assign servers vào cluster (set clusterStatus = "AVAILABLE")
+      const updates = data.serverIds.map((serverId) => ({
+        serverId,
+        role: data.serverRoles[serverId]?.toUpperCase() || "WORKER",
+      }));
+      
+      await adminAPI.assignServersToCluster(updates);
+      
+      // Trả về cluster mới được tạo
+      return await adminAPI.getCluster() as Cluster;
+    } catch (error: any) {
+      const errorMessage = error.message || "Không thể tạo cluster";
+      throw new Error(errorMessage);
+    }
   },
   updateCluster: async (data: Partial<Cluster>): Promise<Cluster> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!currentCluster) throw new Error("Cluster not found");
-    currentCluster = { ...currentCluster, ...data };
-    return currentCluster;
+    // Cluster được quản lý thông qua clusterStatus của servers
+    // Không có API riêng để update cluster, chỉ update servers
+    throw new Error("Không hỗ trợ update cluster. Vui lòng sử dụng assign/unassign servers.");
   },
   deleteCluster: async (): Promise<void> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    currentCluster = null;
+    // Cluster được quản lý thông qua clusterStatus của servers
+    // Để xóa cluster, cần unassign tất cả servers (set clusterStatus = "UNAVAILABLE")
+    throw new Error("Không hỗ trợ xóa cluster. Vui lòng unassign tất cả servers khỏi cluster.");
   },
 
   // Nodes
@@ -1796,8 +1996,9 @@ export const adminAPI = {
     }));
   },
   getNode: async (id: string): Promise<Node> => {
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    const node = mockNodes.find((n) => n.id === id);
+    // Lấy node từ API backend
+    const nodes = await adminAPI.getNodes();
+    const node = nodes.find((n) => n.id === id || n.name === id);
     if (!node) throw new Error("Node not found");
     return node;
   },
@@ -2455,6 +2656,43 @@ export const adminAPI = {
       params: { frontendId },
     });
     return response.data;
+  },
+
+  // Assign Servers to Cluster
+  assignServersToCluster: async (updates: Array<{ serverId: string; role: string }>): Promise<void> => {
+    try {
+      await api.post("/cluster/assign", { updates });
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể gán servers vào cluster";
+      throw new Error(errorMessage);
+    }
+  },
+
+  updateServerRoles: async (updates: Array<{ serverId: string; role: string }>): Promise<void> => {
+    try {
+      await api.post("/cluster/update-roles", { updates });
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể cập nhật role";
+      throw new Error(errorMessage);
+    }
+  },
+
+  unassignServersFromCluster: async (serverIds: string[]): Promise<void> => {
+    try {
+      await api.post("/cluster/unassign", { serverIds });
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể bỏ servers khỏi cluster";
+      throw new Error(errorMessage);
+    }
   },
 };
 

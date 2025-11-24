@@ -10,13 +10,13 @@ export type Server = {
   port?: number;
   username?: string;
   password?: string; // Không hiển thị trong UI, chỉ dùng để lưu
-  status: "online" | "offline";
+  status: "online" | "offline" | "disabled";
   role?: string; // MASTER, WORKER, DOCKER, ANSIBLE
   serverStatus?: string; // RUNNING, STOPPED, BUILDING, ERROR
   clusterStatus?: string; // AVAILABLE, UNAVAILABLE
-  cpu: { used: number | "-"; total: number | "-" };
-  memory: { used: number | "-"; total: number | "-" };
-  disk: { used: number | "-"; total: number | "-" };
+  cpu: { total: number | "-" };
+  memory: { total: number | "-" };
+  disk: { total: number | "-" };
   os: string;
   updatedAt: string;
 };
