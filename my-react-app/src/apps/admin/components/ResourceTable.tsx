@@ -25,6 +25,7 @@ interface ResourceTableProps<T> {
   onView?: (item: T) => void;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  extraActions?: ReactNode;
   pagination?: {
     page: number;
     pageSize: number;
@@ -158,6 +159,7 @@ export function ResourceTable<T extends { id: string }>({
   onView,
   searchPlaceholder = "Tìm kiếm...",
   emptyMessage = "Không có dữ liệu",
+  extraActions,
   pagination,
 }: ResourceTableProps<T>) {
   const [search, setSearch] = useState("");
@@ -217,6 +219,7 @@ export function ResourceTable<T extends { id: string }>({
               className="pl-8 w-64"
             />
           </div>
+          {extraActions}
           {onAdd && (
             <Button onClick={onAdd}>
               <Plus className="h-4 w-4 mr-2" />

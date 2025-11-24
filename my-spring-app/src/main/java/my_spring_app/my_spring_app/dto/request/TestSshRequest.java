@@ -9,10 +9,7 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateServerRequest {
-
-    @NotBlank(message = "Name không được để trống")
-    private String name;
+public class TestSshRequest {
 
     @NotBlank(message = "IP không được để trống")
     private String ip;
@@ -25,14 +22,5 @@ public class CreateServerRequest {
 
     @NotBlank(message = "Password không được để trống")
     private String password;
-
-    @NotBlank(message = "Role không được để trống")
-    private String role; // MASTER, WORKER, DOCKER, ANSIBLE
-
-    @NotBlank(message = "Server status không được để trống")
-    private String serverStatus; // RUNNING, STOPPED, BUILDING, ERROR
-
-    @NotBlank(message = "Cluster status không được để trống")
-    private String clusterStatus; // AVAILABLE, UNAVAILABLE
 }
 

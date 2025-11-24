@@ -331,8 +331,8 @@ export function Clusters() {
                                 </div>
                                 <div className="text-xs text-muted-foreground mt-1">
                                   CPU: {server.cpu.used}/{server.cpu.total} cores • Memory:{" "}
-                                  {server.memory.used}/{server.memory.total} GB • Disk:{" "}
-                                  {server.disk.used}/{server.disk.total} GB
+                                  {server.memory.used}/{server.memory.total} GiB • Disk:{" "}
+                                  {server.disk.used}/{server.disk.total} GiB
                                 </div>
                               </label>
                             </div>
@@ -477,10 +477,10 @@ export function Clusters() {
                         {server.cpu.used} / {server.cpu.total} cores
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {server.memory.used} / {server.memory.total} GB
+                        {server.memory.used} / {server.memory.total} GiB
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {server.disk.used} / {server.disk.total} GB
+                        {server.disk.used} / {server.disk.total} GiB
                       </td>
                       <td className="px-4 py-3">
                         <Badge
@@ -533,10 +533,10 @@ export function Clusters() {
                         {server.cpu.used} / {server.cpu.total} cores
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {server.memory.used} / {server.memory.total} GB
+                        {server.memory.used} / {server.memory.total} GiB
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {server.disk.used} / {server.disk.total} GB
+                        {server.disk.used} / {server.disk.total} GiB
                       </td>
                       <td className="px-4 py-3">
                         <Badge

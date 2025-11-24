@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateServerResponse {
+public class ServerResponse {
 
     private Long id;
     private String name;
@@ -22,7 +22,7 @@ public class CreateServerResponse {
     private String clusterStatus; // AVAILABLE, UNAVAILABLE
     private LocalDateTime createdAt;
     
-    // Metrics (optional - có thể null nếu chưa lấy được)
+    // Metrics (optional)
     private String cpuCores;
     private String cpuUsed;
     private String ramTotal;

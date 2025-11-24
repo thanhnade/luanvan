@@ -10,6 +10,12 @@ import java.util.Optional;
 public interface ServerRepository extends JpaRepository<ServerEntity, Long> {
 
     Optional<ServerEntity> findByRole(String role);
+
+    // Kiểm tra server đã tồn tại với cùng ip, port, username
+    boolean existsByIpAndPortAndUsername(String ip, Integer port, String username);
+
+    // Tìm server theo ip, port, username (để kiểm tra duplicate)
+    Optional<ServerEntity> findByIpAndPortAndUsername(String ip, Integer port, String username);
 }
 
 

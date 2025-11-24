@@ -1,33 +1,35 @@
-package my_spring_app.my_spring_app.dto.reponse;
+package my_spring_app.my_spring_app.dto.request;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateServerResponse {
+public class UpdateServerRequest {
 
-    private Long id;
     private String name;
+
     private String ip;
+
     private Integer port;
+
     private String username;
-    private String role;
+
+    private String password; // Optional - chỉ cần khi thay đổi password
+
+    private String role; // MASTER, WORKER, DOCKER, ANSIBLE
+
     private String status; // ONLINE, OFFLINE, DISABLED
+
     private String serverStatus; // RUNNING, STOPPED, BUILDING, ERROR
+
     private String clusterStatus; // AVAILABLE, UNAVAILABLE
-    private LocalDateTime createdAt;
-    
-    // Metrics (optional - có thể null nếu chưa lấy được)
+
+    // Metrics (optional)
     private String cpuCores;
-    private String cpuUsed;
     private String ramTotal;
-    private String ramUsed;
     private String diskTotal;
-    private String diskUsed;
 }
 

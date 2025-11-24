@@ -3,6 +3,36 @@
  */
 
 import api from "@/services/api";
+
+/**
+ * Parse giá trị từ string có đơn vị (ví dụ: "8.0Gi", "50.0Gi") và trả về số GiB
+ * Backend trả về GiB, frontend chỉ cần parse và hiển thị
+ */
+function parseSizeToGiB(value: string | null | undefined): number {
+  if (!value) return 0;
+  
+  const cleaned = value.trim();
+  
+  // Kiểm tra nếu có đơn vị GiB
+  if (cleaned.endsWith("Gi") || cleaned.endsWith("GiB")) {
+    const num = parseFloat(cleaned.replace(/[^0-9.]/g, ""));
+    if (isNaN(num)) return 0;
+    return num; // Đã là GiB, không cần convert
+  }
+  
+  // Kiểm tra nếu có đơn vị GB (fallback - không nên xảy ra)
+  if (cleaned.endsWith("G") || cleaned.endsWith("GB")) {
+    const num = parseFloat(cleaned.replace(/[^0-9.]/g, ""));
+    if (isNaN(num)) return 0;
+    // Convert GB sang GiB: GB * 1000^3 / 1024^3 = GB * 0.9313225746154785
+    return num * 0.9313225746154785;
+  }
+  
+  // Nếu không có đơn vị, giả sử đã là GiB
+  const num = parseFloat(cleaned.replace(/[^0-9.]/g, ""));
+  return isNaN(num) ? 0 : num;
+}
+
 import type {
   Server,
   Cluster,
@@ -1306,39 +1336,402 @@ export const adminAPI = {
     };
   },
 
-  // Servers
+  // Servers - Kết nối với backend thật
   getServers: async (): Promise<Server[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return mockServers;
+    try {
+      const response = await api.get("/servers");
+      const servers = response.data;
+      
+      // Map từ backend response sang frontend Server type
+      return servers.map((server: any) => {
+        // Parse CPU cores, RAM, Disk từ string sang number
+        const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+        const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0; // Load average hoặc cores đang dùng
+        // Parse RAM và Disk từ backend (backend trả về GiB)
+        const ramTotal = parseSizeToGiB(server.ramTotal);
+        const ramUsed = parseSizeToGiB(server.ramUsed);
+        const diskTotal = parseSizeToGiB(server.diskTotal);
+        const diskUsed = parseSizeToGiB(server.diskUsed);
+        
+        // Map status từ backend (ONLINE/OFFLINE/DISABLED) sang frontend ("online" | "offline")
+        // Nếu có status thì dùng, nếu không thì map từ serverStatus
+        let status: "online" | "offline" = "offline";
+        if (server.status) {
+            status = server.status === "ONLINE" ? "online" : "offline";
+        } else {
+            status = server.serverStatus === "RUNNING" ? "online" : "offline";
+        }
+        
+        return {
+          id: String(server.id),
+          name: server.name,
+          ipAddress: server.ip,
+          port: server.port || 22,
+          username: server.username,
+          status: status,
+          role: server.role,
+          serverStatus: server.serverStatus,
+          clusterStatus: server.clusterStatus,
+          cpu: {
+            used: cpuUsed > 0 ? cpuUsed : "-", // Dùng giá trị thực hoặc "-"
+            total: cpuCores > 0 ? cpuCores : "-", // Dùng giá trị thực hoặc "-"
+          },
+          memory: {
+            used: ramUsed > 0 ? ramUsed : "-", // Dùng giá trị thực hoặc "-"
+            total: ramTotal > 0 ? ramTotal : "-", // Dùng giá trị thực hoặc "-"
+          },
+          disk: {
+            used: diskUsed > 0 ? diskUsed : "-", // Dùng giá trị thực hoặc "-"
+            total: diskTotal > 0 ? diskTotal : "-", // Dùng giá trị thực hoặc "-"
+          },
+          os: "Ubuntu 22.04", // Default, có thể lấy từ server sau
+          updatedAt: server.createdAt || new Date().toISOString(),
+        };
+      });
+    } catch (error: any) {
+      console.error("Error fetching servers:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể tải danh sách servers";
+      throw new Error(errorMessage);
+    }
   },
+  
   getServer: async (id: string): Promise<Server> => {
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    const server = mockServers.find((s) => s.id === id);
-    if (!server) throw new Error("Server not found");
-    return server;
+    try {
+      const response = await api.get(`/servers/${id}`);
+      const server = response.data;
+      
+      // Map từ backend response sang frontend Server type
+      const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
+      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      const ramTotal = parseSizeToGiB(server.ramTotal);
+      const ramUsed = parseSizeToGiB(server.ramUsed);
+      const diskTotal = parseSizeToGiB(server.diskTotal);
+      const diskUsed = parseSizeToGiB(server.diskUsed);
+      const status = server.serverStatus === "RUNNING" ? "online" : "offline";
+      
+      return {
+        id: String(server.id),
+        name: server.name,
+        ipAddress: server.ip,
+        port: server.port || 22,
+        username: server.username,
+        status: status,
+        role: server.role,
+        serverStatus: server.serverStatus,
+        clusterStatus: server.clusterStatus,
+        cpu: {
+          used: cpuUsed > 0 ? cpuUsed : "-",
+          total: cpuCores || 100,
+        },
+        memory: {
+          used: ramUsed > 0 ? ramUsed : "-",
+          total: ramTotal || 128,
+        },
+        disk: {
+          used: diskUsed > 0 ? diskUsed : "-",
+          total: diskTotal || 500,
+        },
+        os: "Ubuntu 22.04",
+        updatedAt: server.createdAt || new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Error fetching server:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể lấy thông tin server";
+      throw new Error(errorMessage);
+    }
   },
-  createServer: async (data: Omit<Server, "id" | "updatedAt">): Promise<Server> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const newServer: Server = {
-      ...data,
-      id: String(mockServers.length + 1),
-      updatedAt: new Date().toISOString(),
-    };
-    mockServers.push(newServer);
-    return newServer;
+  
+  createServer: async (data: Omit<Server, "id" | "updatedAt"> & { 
+    role?: string; 
+    serverStatus?: string; 
+    clusterStatus?: string;
+  }): Promise<Server> => {
+    try {
+      // Map từ frontend Server type sang backend CreateServerRequest
+      const request = {
+        name: data.name,
+        ip: data.ipAddress,
+        port: data.port || 22,
+        username: data.username || "root",
+        password: data.password || "",
+        role: data.role || "WORKER",
+        serverStatus: data.serverStatus || (data.status === "online" ? "RUNNING" : "STOPPED"),
+        clusterStatus: data.clusterStatus || "UNAVAILABLE",
+      };
+      
+      const response = await api.post("/servers", request);
+      const server = response.data;
+      
+      // Map response về frontend Server type
+      const status = server.status === "ONLINE" ? "online" : "offline";
+      const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
+      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      const ramTotal = parseSizeToGiB(server.ramTotal);
+      const ramUsed = parseSizeToGiB(server.ramUsed);
+      const diskTotal = parseSizeToGiB(server.diskTotal);
+      const diskUsed = parseSizeToGiB(server.diskUsed);
+      
+      return {
+        id: String(server.id),
+        name: server.name,
+        ipAddress: server.ip,
+        port: server.port || 22,
+        username: server.username,
+        status: status,
+        role: server.role,
+        serverStatus: server.serverStatus,
+        clusterStatus: server.clusterStatus,
+        cpu: {
+          used: cpuUsed > 0 ? cpuUsed : "-",
+          total: cpuCores > 0 ? cpuCores : "-",
+        },
+        memory: {
+          used: ramUsed > 0 ? ramUsed : "-",
+          total: ramTotal > 0 ? ramTotal : "-",
+        },
+        disk: {
+          used: diskUsed > 0 ? diskUsed : "-",
+          total: diskTotal > 0 ? diskTotal : "-",
+        },
+        os: data.os || "Ubuntu 22.04",
+        updatedAt: server.createdAt || new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Error creating server:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể tạo server";
+      throw new Error(errorMessage);
+    }
   },
-  updateServer: async (id: string, data: Partial<Server>): Promise<Server> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const index = mockServers.findIndex((s) => s.id === id);
-    if (index === -1) throw new Error("Server not found");
-    mockServers[index] = { ...mockServers[index], ...data, updatedAt: new Date().toISOString() };
-    return mockServers[index];
+  
+  updateServer: async (id: string, data: Partial<Server> & { 
+    role?: string; 
+    serverStatus?: string; 
+    clusterStatus?: string;
+  }): Promise<Server> => {
+    try {
+      // Map từ frontend Server type sang backend UpdateServerRequest
+      const request: any = {};
+      
+      if (data.name !== undefined) request.name = data.name;
+      if (data.ipAddress !== undefined) request.ip = data.ipAddress;
+      if (data.port !== undefined) request.port = data.port;
+      if (data.username !== undefined) request.username = data.username;
+      if (data.password !== undefined) request.password = data.password;
+      if (data.role !== undefined) request.role = data.role;
+      if (data.serverStatus !== undefined) {
+        request.serverStatus = data.serverStatus;
+      } else if (data.status !== undefined) {
+        request.serverStatus = data.status === "online" ? "RUNNING" : "STOPPED";
+      }
+      if (data.clusterStatus !== undefined) request.clusterStatus = data.clusterStatus;
+      
+      const response = await api.put(`/servers/${id}`, request);
+      const server = response.data;
+      
+      // Map response về frontend Server type
+      const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
+      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      const ramTotal = parseSizeToGiB(server.ramTotal);
+      const ramUsed = parseSizeToGiB(server.ramUsed);
+      const diskTotal = parseSizeToGiB(server.diskTotal);
+      const diskUsed = parseSizeToGiB(server.diskUsed);
+      
+      // Map status từ backend (ONLINE/OFFLINE/DISABLED) sang frontend ("online" | "offline")
+      let status: "online" | "offline" = "offline";
+      if (server.status) {
+          status = server.status === "ONLINE" ? "online" : "offline";
+      } else {
+          status = server.serverStatus === "RUNNING" ? "online" : "offline";
+      }
+      
+      return {
+        id: String(server.id),
+        name: server.name,
+        ipAddress: server.ip,
+        port: server.port || 22,
+        username: server.username,
+        status: status,
+        role: server.role,
+        serverStatus: server.serverStatus,
+        clusterStatus: server.clusterStatus,
+        cpu: {
+          used: cpuUsed > 0 ? cpuUsed : "-",
+          total: cpuCores > 0 ? cpuCores : "-",
+        },
+        memory: {
+          used: ramUsed > 0 ? ramUsed : "-",
+          total: ramTotal > 0 ? ramTotal : "-",
+        },
+        disk: {
+          used: diskUsed > 0 ? diskUsed : "-",
+          total: diskTotal > 0 ? diskTotal : "-",
+        },
+        os: data.os || "Ubuntu 22.04",
+        updatedAt: server.createdAt || new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Error updating server:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể cập nhật server";
+      throw new Error(errorMessage);
+    }
   },
+  
   deleteServer: async (id: string): Promise<void> => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const index = mockServers.findIndex((s) => s.id === id);
-    if (index === -1) throw new Error("Server not found");
-    mockServers.splice(index, 1);
+    try {
+      await api.delete(`/servers/${id}`);
+    } catch (error: any) {
+      console.error("Error deleting server:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể xóa server";
+      throw new Error(errorMessage);
+    }
+  },
+  
+  // Test SSH connection
+  testSsh: async (data: { ip: string; port: number; username: string; password: string }): Promise<{ success: boolean; message: string }> => {
+    try {
+      const response = await api.post("/servers/test-ssh", {
+        ip: data.ip,
+        port: data.port,
+        username: data.username,
+        password: data.password,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error("Error testing SSH:", error);
+      return {
+        success: false,
+        message: error.response?.data?.message || "Kết nối SSH thất bại",
+      };
+    }
+  },
+  
+  // Kiểm tra và cập nhật trạng thái tất cả servers
+  checkAllStatuses: async (includeMetrics: boolean = false): Promise<{ servers: Server[]; message: string }> => {
+    try {
+      const response = await api.post("/servers/check-status", null, {
+        params: { includeMetrics }
+      });
+      // Backend trả về { servers: [...], message: "..." }
+      const serversData = response.data.servers || [];
+      return {
+        servers: serversData.map((server: any) => {
+          const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+          const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
+          const ramTotal = server.ramTotal ? parseFloat(server.ramTotal.replace(/[^0-9.]/g, "")) || 0 : 0;
+          const ramUsed = server.ramUsed ? parseFloat(server.ramUsed.replace(/[^0-9.]/g, "")) || 0 : 0;
+          const diskTotal = server.diskTotal ? parseFloat(server.diskTotal.replace(/[^0-9.]/g, "")) || 0 : 0;
+          const diskUsed = server.diskUsed ? parseFloat(server.diskUsed.replace(/[^0-9.]/g, "")) || 0 : 0;
+          const status = server.status === "ONLINE" ? "online" : "offline";
+          
+          return {
+            id: String(server.id),
+            name: server.name,
+            ipAddress: server.ip,
+            port: server.port || 22,
+            username: server.username,
+            status: status,
+            role: server.role,
+            serverStatus: server.serverStatus,
+            clusterStatus: server.clusterStatus,
+            cpu: {
+              used: cpuUsed || Math.floor(cpuCores * 0.3),
+              total: cpuCores || 100,
+            },
+            memory: {
+              used: ramUsed || Math.floor(ramTotal * 0.4),
+              total: ramTotal || 128,
+            },
+            disk: {
+              used: diskUsed || Math.floor(diskTotal * 0.5),
+              total: diskTotal || 500,
+            },
+            os: "Ubuntu 22.04",
+            updatedAt: server.createdAt || new Date().toISOString(),
+          };
+        }),
+        message: response.data.message || 
+                (includeMetrics 
+                  ? `Đã kiểm tra trạng thái và cập nhật metrics cho ${serversData.length} servers`
+                  : `Đã kiểm tra và cập nhật trạng thái ${serversData.length} servers`),
+      };
+    } catch (error: any) {
+      console.error("Error checking statuses:", error);
+      // Extract error message từ backend response
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message || 
+                          "Không thể kiểm tra trạng thái";
+      throw new Error(errorMessage);
+    }
+  },
+  
+  // Cập nhật trạng thái server (ONLINE/OFFLINE/DISABLED)
+  updateServerStatus: async (id: string, status: "ONLINE" | "OFFLINE" | "DISABLED"): Promise<Server> => {
+    try {
+      const response = await api.put(`/servers/${id}/status`, { status });
+      const server = response.data;
+      
+      const cpuCores = server.cpuCores ? parseInt(server.cpuCores) || 0 : 0;
+      const cpuUsed = server.cpuUsed ? parseFloat(server.cpuUsed) || 0 : 0;
+      // Parse RAM và Disk từ backend (có thể là GB hoặc GiB, hàm parseSizeToGB sẽ xử lý)
+      const ramTotal = parseSizeToGiB(server.ramTotal);
+      const ramUsed = parseSizeToGiB(server.ramUsed);
+      const diskTotal = parseSizeToGiB(server.diskTotal);
+      const diskUsed = parseSizeToGiB(server.diskUsed);
+      const statusMapped = server.status === "ONLINE" ? "online" : "offline";
+      
+      return {
+        id: String(server.id),
+        name: server.name,
+        ipAddress: server.ip,
+        port: server.port || 22,
+        username: server.username,
+        status: statusMapped,
+        role: server.role,
+        serverStatus: server.serverStatus,
+        clusterStatus: server.clusterStatus,
+        cpu: {
+          used: cpuUsed > 0 ? cpuUsed : "-",
+          total: cpuCores > 0 ? cpuCores : "-",
+        },
+        memory: {
+          used: ramUsed > 0 ? ramUsed : "-",
+          total: ramTotal > 0 ? ramTotal : "-",
+        },
+        disk: {
+          used: diskUsed > 0 ? diskUsed : "-",
+          total: diskTotal > 0 ? diskTotal : "-",
+        },
+        os: "Ubuntu 22.04",
+        updatedAt: server.createdAt || new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error("Error updating server status:", error);
+      throw error;
+    }
   },
 
   // Clusters - chỉ quản lý 1 cluster
