@@ -12,6 +12,7 @@ import my_spring_app.my_spring_app.dto.request.SavePlaybookRequest;
 import my_spring_app.my_spring_app.dto.request.DeletePlaybookRequest;
 import my_spring_app.my_spring_app.dto.request.ExecutePlaybookRequest;
 import my_spring_app.my_spring_app.dto.request.InstallK8sRequest;
+import org.springframework.web.multipart.MultipartFile;
 
 public interface AnsibleService {
     /**
@@ -79,6 +80,13 @@ public interface AnsibleService {
      */
     AnsibleTaskStatusResponse getInitTaskStatus(String taskId);
     
+    /**
+     * Lấy trạng thái thực thi của playbook
+     * @param taskId Task ID nhận được khi bắt đầu thực thi playbook
+     * @return Trạng thái task bao gồm logs realtime
+     */
+    AnsibleTaskStatusResponse getPlaybookTaskStatus(String taskId);
+    
     // ==================== Config Ansible ====================
     
     /**
@@ -117,6 +125,15 @@ public interface AnsibleService {
      * @return AnsibleOperationResponse với taskId và message
      */
     AnsibleOperationResponse savePlaybook(SavePlaybookRequest request);
+    
+    /**
+     * Upload một file playbook từ client
+     * @param file nội dung file
+     * @param controllerHost IP controller
+     * @param sudoPassword sudo password (optional)
+     * @return AnsibleOperationResponse với kết quả upload
+     */
+    AnsibleOperationResponse uploadPlaybook(MultipartFile file, String controllerHost, String sudoPassword);
     
     /**
      * Xóa playbook

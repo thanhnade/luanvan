@@ -38,7 +38,7 @@ public interface AdminService {
 
     ClusterAllocatableResponse getClusterAllocatable();
 
-    ClusterInfoResponse getClusterInfo();
+    ClusterInfoResponse getClusterInfo(); //25/11/2025
 
     AdminDatabaseDetailResponse getDatabaseDetail(Long databaseId);
 

@@ -11,393 +11,357 @@ export type PlaybookTemplateCategory = {
   templates: PlaybookTemplate[];
 };
 
-const templates = {
-    '01-update-hosts-hostname': `---
-- name: Update /etc/hosts and hostname for entire cluster
-hosts: all
-become: yes
-gather_facts: yes
-tasks:
-- name: Add all inventory nodes to /etc/hosts
-  lineinfile:
-    path: /etc/hosts
-    line: "{{ hostvars[item].ansible_host | default(item) }} {{ hostvars[item].ansible_user }}"
-    state: present
-    create: yes
-    insertafter: EOF
-  loop: "{{ groups['all'] }}"
-  when: hostvars[item].ansible_user is defined
-  tags: addhosts
+const makeTemplate = (id: string, label: string, filename: string): PlaybookTemplate => ({
+  id,
+  label,
+  filename,
+  content: templates[id],
+});
 
-- name: Set hostname according to inventory
-  hostname:
-    name: "{{ hostvars[inventory_hostname].ansible_user }}"
-  when: ansible_hostname != hostvars[inventory_hostname].ansible_user
-  tags: sethostname
+const templates: Record<string, string> = {
+  "00-reset-cluster": `---
+- name: Reset entire Kubernetes cluster
+  hosts: all
+  become: yes
+  gather_facts: no
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  tasks:
+    - name: Reset Kubernetes cluster
+      shell: kubeadm reset -f
+      ignore_errors: true
+      register: reset_output
 
-- name: Verify hostname after update
-  command: hostnamectl
-  register: host_info
-  changed_when: false
-  tags: verify
+    - name: Display reset results
+      debug:
+        msg: "{{ reset_output.stdout_lines | default(['No old cluster to reset.']) }}"
 
-- name: Display information after update
-  debug:
-    msg:
-      - "Current hostname: {{ ansible_hostname }}"
-      - "hostnamectl command result:"
-      - "{{ host_info.stdout_lines }}"
-  tags: verify`,
+    - name: Remove Kubernetes configuration directory
+      file:
+        path: /etc/kubernetes
+        state: absent
 
-    '02-kernel-sysctl': `---
-- hosts: all
-become: yes
-environment:
-DEBIAN_FRONTEND: noninteractive
-tasks:
-- name: Disable swap
-  shell: swapoff -a || true
-  ignore_errors: true
+    - name: Remove CNI network configuration
+      file:
+        path: /etc/cni/net.d
+        state: absent
 
-- name: Comment swap lines in /etc/fstab
-  replace:
-    path: /etc/fstab
-    regexp: '(^.*swap.*$)'
-    replace: '# \\1'
+    - name: Remove root kubeconfig
+      file:
+        path: /root/.kube
+        state: absent
 
-- name: Load kernel modules
-  copy:
-    dest: /etc/modules-load.d/containerd.conf
-    content: |
-      overlay
-      br_netfilter
-
-- name: Load overlay and br_netfilter modules
-  shell: |
-    modprobe overlay
-    modprobe br_netfilter
-
-- name: Configure sysctl for Kubernetes
-  copy:
-    dest: /etc/sysctl.d/99-kubernetes-cri.conf
-    content: |
-      net.bridge.bridge-nf-call-iptables  = 1
-      net.bridge.bridge-nf-call-ip6tables = 1
-      net.ipv4.ip_forward                 = 1
-
-- name: Apply sysctl configuration
-  command: sysctl --system`,
-
-    '03-install-containerd': `---
-- hosts: all
-become: yes
-environment:
-DEBIAN_FRONTEND: noninteractive
-tasks:
-- name: Check if containerd is already installed
-  command: containerd --version
-  register: containerd_check
-  ignore_errors: true
-  changed_when: false
-
-- name: Display current status
-  debug:
-    msg: >
-      {% if containerd_check.rc == 0 %}
-      Containerd is already installed ({{ containerd_check.stdout | default('version unknown') }}).
-      Will upgrade/reinstall with latest version and reconfigure.
-      {% else %}
-      Containerd not found, will install new.
-      {% endif %}
-
-- name: Update apt cache
-  apt:
-    update_cache: yes
-
-- name: Install or upgrade containerd
-  apt:
-    name: containerd
-    state: present
-    force_apt_get: yes
-
-- name: Create containerd configuration directory
-  file:
-    path: /etc/containerd
-    state: directory
-
-- name: Generate default containerd configuration (will overwrite existing)
-  shell: "containerd config default > /etc/containerd/config.toml"
-
-- name: Enable SystemdCgroup
-  replace:
-    path: /etc/containerd/config.toml
-    regexp: 'SystemdCgroup = false'
-    replace: 'SystemdCgroup = true'
-
-- name: Restart containerd service
-  systemd:
-    name: containerd
-    enabled: yes
-    state: restarted
-
-- name: Verify containerd installation
-  command: containerd --version
-  register: containerd_verify
-  changed_when: false
-
-- name: Display installation result
-  debug:
-    msg: "Containerd installation completed: {{ containerd_verify.stdout | default('version check failed') }}"`,
-
-    '04-install-kubernetes': `---
-- hosts: all
-become: yes
-environment:
-DEBIAN_FRONTEND: noninteractive
-tasks:
-- name: Check if Kubernetes packages are already installed
-  command: |
-    if command -v kubelet >/dev/null 2>&1 && command -v kubeadm >/dev/null 2>&1 && command -v kubectl >/dev/null 2>&1; then
-      echo "INSTALLED"
-      kubelet --version 2>&1 | head -1 || echo "version unknown"
-    else
-      echo "NOT_INSTALLED"
-    fi
-  register: k8s_check
-  ignore_errors: true
-  changed_when: false
-
-- name: Display current status
-  debug:
-    msg: >
-      {% if 'INSTALLED' in k8s_check.stdout %}
-      Kubernetes packages (kubelet, kubeadm, kubectl) are already installed.
-      Will upgrade/reinstall with latest version from repository.
-      {% else %}
-      Kubernetes packages not found, will install new.
-      {% endif %}
-
-- name: Install required packages
-  apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-    state: present
-    update_cache: yes
-
-- name: Add Kubernetes GPG key
-  shell: |
-    if [ ! -f /usr/share/keyrings/kubernetes-archive-keyring.gpg ]; then
-      curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \\
-      gpg --dearmor --yes -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
-    else
-      echo "GPG key already exists, skipping this step."
-    fi
-  changed_when: false
-  register: gpg_status
-
-- name: Add Kubernetes repository (will overwrite existing)
-  copy:
-    dest: /etc/apt/sources.list.d/kubernetes.list
-    content: |
-      deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
-
-- name: Install or upgrade kubelet, kubeadm, kubectl
-  apt:
-    name:
-      - kubelet
-      - kubeadm
-      - kubectl
-    state: present
-    update_cache: yes
-
-- name: Hold package versions
-  command: apt-mark hold kubelet kubeadm kubectl
-
-- name: Verify Kubernetes packages installation
-  command: |
-    echo "kubelet: $(kubelet --version 2>&1 | head -1 || echo 'N/A')"
-    echo "kubeadm: $(kubeadm version -o short 2>&1 || echo 'N/A')"
-    echo "kubectl: $(kubectl version --client --short 2>&1 || echo 'N/A')"
-  register: k8s_verify
-  changed_when: false
-  ignore_errors: true
-
-- name: Display installation result
-  debug:
-    msg: "{{ k8s_verify.stdout_lines | default(['Kubernetes packages installation completed']) }}"`,
-
-    '05-init-master': `---
-- hosts: master
-become: yes
-gather_facts: yes
-environment:
-DEBIAN_FRONTEND: noninteractive
-
-vars:
-pod_network_cidr: "10.244.0.0/16"
-calico_manifest: "https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml"
-join_script: "/etc/kubernetes/join-command.sh"
-
-tasks:
-- name: Get dynamic master IP address
-  set_fact:
-    master_ip: "{{ hostvars[inventory_hostname].ansible_host | default(ansible_default_ipv4.address) }}"
-
-- name: Display master IP being used
-  debug:
-    msg: "Using master IP address: {{ master_ip }}"
-
-- name: Reset old cluster and clean up data
-  shell: |
-    kubeadm reset -f || true
-    rm -rf /etc/kubernetes /var/lib/etcd /var/lib/kubelet /etc/cni/net.d
-    systemctl restart containerd || true
-  ignore_errors: yes
-
-- name: Initialize Kubernetes Control Plane
-  command: >
-    kubeadm init
-    --control-plane-endpoint "{{ master_ip }}:6443"
-    --apiserver-advertise-address {{ master_ip }}
-    --pod-network-cidr {{ pod_network_cidr }}
-    --upload-certs
-  args:
-    creates: /etc/kubernetes/admin.conf
-  register: kubeadm_init
-  failed_when: "'error' in kubeadm_init.stderr"
-  changed_when: "'Your Kubernetes control-plane has initialized successfully' in kubeadm_init.stdout"
-
-- name: Configure kubeconfig for root user
-  shell: |
-    mkdir -p $HOME/.kube
-    cp /etc/kubernetes/admin.conf $HOME/.kube/config
-    chown $(id -u):$(id -g) $HOME/.kube/config
-  args:
-    executable: /bin/bash
-
-- name: Configure kubeconfig for normal user
-  when: ansible_user != "root"
-  block:
-    - name: Create kubeconfig directory for user
+    - name: Remove normal user kubeconfig
       file:
         path: "/home/{{ ansible_user }}/.kube"
-        state: directory
-        mode: '0755'
+        state: absent
+      when: ansible_user != "root"
 
-    - name: Copy kubeconfig for user
+    - name: Clean up iptables rules
+      shell: |
+        iptables -F && iptables -X
+        iptables -t nat -F && iptables -t nat -X
+        iptables -t mangle -F && iptables -t mangle -X
+        iptables -P FORWARD ACCEPT
+      ignore_errors: true
+
+    - name: Restart containerd service
+      systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+    - name: Confirm reset completed
+      debug:
+        msg:
+          - "Node {{ inventory_hostname }} has been reset cleanly (data only deleted)."`,
+  "01-update-hosts-hostname": `---
+- name: Update /etc/hosts and hostname for entire cluster
+  hosts: all
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: Add all inventory nodes to /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ hostvars[item].ansible_host | default(item) }} {{ hostvars[item].ansible_user }}"
+        state: present
+        create: yes
+        insertafter: EOF
+      loop: "{{ groups['all'] }}"
+      when: hostvars[item].ansible_user is defined
+      tags: addhosts
+
+    - name: Set hostname according to inventory
+      hostname:
+        name: "{{ hostvars[inventory_hostname].ansible_user }}"
+      when: ansible_hostname != hostvars[inventory_hostname].ansible_user
+      tags: sethostname
+
+    - name: Verify hostname after update
+      command: hostnamectl
+      register: host_info
+      changed_when: false
+      tags: verify
+
+    - name: Display information after update
+      debug:
+        msg:
+          - "Current hostname: {{ ansible_hostname }}"
+          - "hostnamectl command result:"
+          - "{{ host_info.stdout_lines }}"
+      tags: verify`,
+  "02-kernel-sysctl": `---
+- hosts: all
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  tasks:
+    - name: Disable swap
+      shell: swapoff -a || true
+      ignore_errors: true
+
+    - name: Comment swap lines in /etc/fstab
+      replace:
+        path: /etc/fstab
+        regexp: '(^.*swap.*$)'
+        replace: '# \\1'
+
+    - name: Load kernel modules
       copy:
-        src: /etc/kubernetes/admin.conf
-        dest: "/home/{{ ansible_user }}/.kube/config"
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: '0600'
-        remote_src: yes
+        dest: /etc/modules-load.d/containerd.conf
+        content: |
+          overlay
+          br_netfilter
 
-- name: Generate join command for workers
-  shell: kubeadm token create --print-join-command
-  register: join_cmd
-  changed_when: false
+    - name: Load overlay and br_netfilter modules
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
 
-- name: Save join command to file
-  copy:
-    content: "{{ join_cmd.stdout }}"
-    dest: "{{ join_script }}"
-    mode: '0755'
+    - name: Configure sysctl for Kubernetes
+      copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
 
-- name: Display join command
-  debug:
-    msg:
-      - "Worker join command:"
-      - "{{ join_cmd.stdout }}"
-      - "File saved at: {{ join_script }}"
+    - name: Apply sysctl configuration
+      command: sysctl --system`,
+  "03-install-containerd": `---
+- hosts: all
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  tasks:
+    - name: Check if containerd is already installed
+      command: containerd --version
+      register: containerd_check
+      ignore_errors: true
+      changed_when: false
 
-- name: Complete master initialization
-  debug:
-    msg: "Master {{ inventory_hostname }} is ready for worker nodes to join!"`,
+    - name: Display current status
+      debug:
+        msg: >
+          {% if containerd_check.rc == 0 %}
+          Containerd is already installed ({{ containerd_check.stdout | default('version unknown') }}).
+          Will upgrade/reinstall with latest version and reconfigure.
+          {% else %}
+          Containerd not found, will install new.
+          {% endif %}
 
-    '06-install-cni': `---
-- name: Install or update Calico CNI (automatic)
-hosts: master
-become: yes
-gather_facts: false
-environment:
-KUBECONFIG: /etc/kubernetes/admin.conf
-DEBIAN_FRONTEND: noninteractive
+    - name: Update apt cache
+      apt:
+        update_cache: yes
 
-vars:
-calico_version: "v3.27.3"
-calico_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+    - name: Install or upgrade containerd
+      apt:
+        name: containerd
+        state: present
+        force_apt_get: yes
 
-tasks:
-- name: Check if Calico CNI exists
-  command: kubectl get daemonset calico-node -n kube-system
-  register: calico_check
-  ignore_errors: true
+    - name: Create containerd configuration directory
+      file:
+        path: /etc/containerd
+        state: directory
 
-- name: Display current status
-  debug:
-    msg: >
-      {% if calico_check.rc == 0 %}
-      Calico is already installed.
-      {% else %}
-      Calico not found, will install new.
-      {% endif %}
+    - name: Generate default containerd configuration (will overwrite existing)
+      shell: "containerd config default > /etc/containerd/config.toml"
 
-- name: Check kernel modules overlay and br_netfilter
-  shell: |
-    modprobe overlay || true
-    modprobe br_netfilter || true
-    lsmod | grep -E 'overlay|br_netfilter' || echo "Missing kernel module"
-  register: kernel_status
-  ignore_errors: true
+    - name: Enable SystemdCgroup
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
 
-- name: Display kernel module check result
-  debug:
-    var: kernel_status.stdout_lines
+    - name: Restart containerd service
+      systemd:
+        name: containerd
+        enabled: yes
+        state: restarted
 
-- name: Check sysctl configuration
-  shell: |
-    echo "net.bridge.bridge-nf-call-iptables = 1" | tee /etc/sysctl.d/k8s.conf >/dev/null
-    echo "net.ipv4.ip_forward = 1" | tee -a /etc/sysctl.d/k8s.conf >/dev/null
-    sysctl --system | grep -E "net.bridge.bridge-nf-call|net.ipv4.ip_forward"
-  register: sysctl_status
-  ignore_errors: true
+    - name: Verify containerd installation
+      command: containerd --version
+      register: containerd_verify
+      changed_when: false
 
-- name: Display sysctl result
-  debug:
-    var: sysctl_status.stdout_lines
+    - name: Display installation result
+      debug:
+        msg: "Containerd installation completed: {{ containerd_verify.stdout | default('version check failed') }}"`,
+  "04-install-kubernetes": `---
+- hosts: all
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  tasks:
+    - name: Check if Kubernetes packages are already installed
+      command: |
+        if command -v kubelet >/dev/null 2>&1 && command -v kubeadm >/dev/null 2>&1 && command -v kubectl >/dev/null 2>&1; then
+          echo "INSTALLED"
+          kubelet --version 2>&1 | head -1 || echo "version unknown"
+        else
+          echo "NOT_INSTALLED"
+        fi
+      register: k8s_check
+      ignore_errors: true
+      changed_when: false
 
-- name: Apply Calico manifest (install or update)
-  shell: |
-    kubectl apply -f {{ calico_url }}
-  args:
-    executable: /bin/bash
-  register: calico_apply
-  retries: 3
-  delay: 10
-  until: calico_apply.rc == 0
+    - name: Display current status
+      debug:
+        msg: >
+          {% if 'INSTALLED' in k8s_check.stdout %}
+          Kubernetes packages (kubelet, kubeadm, kubectl) are already installed.
+          Will upgrade/reinstall with latest version from repository.
+          {% else %}
+          Kubernetes packages not found, will install new.
+          {% endif %}
 
-- name: Display installation result
-  debug:
-    var: calico_apply.stdout_lines
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: yes
 
-- name: Check Calico node pod starting
-  shell: |
-    kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -c 'Running' || true
-  register: calico_running
+    - name: Add Kubernetes GPG key
+      shell: |
+        if [ ! -f /usr/share/keyrings/kubernetes-archive-keyring.gpg ]; then
+          curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+          gpg --dearmor --yes -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+        else
+          echo "GPG key already exists, skipping this step."
+        fi
+      changed_when: false
+      register: gpg_status
 
-- name: Wait for pod to start (max 10 retries)
-  until: calico_running.stdout | int > 0
-  retries: 10
-  delay: 15
-  shell: |
-    kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -c 'Running' || true
-  register: calico_running
-  ignore_errors: true
+    - name: Add Kubernetes repository (will overwrite existing)
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: |
+          deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
 
-- name: Confirm Calico pods are running
+    - name: Install or upgrade kubelet, kubeadm, kubectl
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: yes
+
+    - name: Hold package versions
+      command: apt-mark hold kubelet kubeadm kubectl
+
+    - name: Verify Kubernetes packages installation
+      command: |
+        echo "kubelet: $(kubelet --version 2>&1 | head -1 || echo 'N/A')"
+        echo "kubeadm: $(kubeadm version -o short 2>&1 || echo 'N/A')"
+        echo "kubectl: $(kubectl version --client --short 2>&1 || echo 'N/A')"
+      register: k8s_verify
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display installation result
+      debug:
+        msg: "{{ k8s_verify.stdout_lines | default(['Kubernetes packages installation completed']) }}"`,
+  "05-init-master": `---
+- hosts: master
+  become: yes
+  gather_facts: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+  vars:
+    pod_network_cidr: "10.244.0.0/16"
+    calico_manifest: "https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml"
+    join_script: "/etc/kubernetes/join-command.sh"
+
+  tasks:
+    - name: Get dynamic master IP address
+      set_fact:
+        master_ip: "{{ hostvars[inventory_hostname].ansible_host | default(ansible_default_ipv4.address) }}"
+
+    - name: Display master IP being used
+      debug:
+        msg: "Using master IP address: {{ master_ip }}"
+
+    - name: Reset old cluster and clean up data
+      shell: |
+        kubeadm reset -f || true
+        rm -rf /etc/kubernetes /var/lib/etcd /var/lib/kubelet /etc/cni/net.d
+        systemctl restart containerd || true
+      ignore_errors: yes
+
+    - name: Initialize Kubernetes Control Plane
+      command: >
+        kubeadm init
+        --control-plane-endpoint "{{ master_ip }}:6443"
+        --apiserver-advertise-address {{ master_ip }}
+        --pod-network-cidr {{ pod_network_cidr }}
+        --upload-certs
+      args:
+        creates: /etc/kubernetes/admin.conf
+      register: kubeadm_init
+      failed_when: "'error' in kubeadm_init.stderr"
+      changed_when: "'Your Kubernetes control-plane has initialized successfully' in kubeadm_init.stdout"
+
+    - name: Configure kubeconfig for root user
+      shell: |
+        mkdir -p $HOME/.kube
+        cp /etc/kubernetes/admin.conf $HOME/.kube/config
+        chown $(id -u):$(id -g) $HOME/.kube/config
+      args:
+        executable: /bin/bash
+
+    - name: Configure kubeconfig for normal user
+      when: ansible_user != "root"
+      block:
+        - name: Create kubeconfig directory for user
+          file:
+            path: "/home/{{ ansible_user }}/.kube"
+            state: directory
+            mode: '0755'
+
+        - name: Copy kubeconfig for user
+          copy:
+            src: /etc/kubernetes/admin.conf
+            dest: "/home/{{ ansible_user }}/.kube/config"
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: '0600'
+            remote_src: yes
+
+    - name: Generate join command for workers
+      shell: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+
+    - name: Save join command to file
+      copy:
+        content: "{{ join_cmd.stdout }}"
   when: calico_running.stdout | int > 0
   debug:
     msg: "Calico is running ({{ calico_running.stdout }} pods Running)."
@@ -1383,63 +1347,6 @@ tasks:
   debug:
     msg: "{{ bad_pods_logs.stdout_lines | default(['No error logs found']) }}"`,
 
-    '00-reset-cluster': `---
-- name: Reset entire Kubernetes cluster
-hosts: all
-become: yes
-gather_facts: no
-environment:
-DEBIAN_FRONTEND: noninteractive
-tasks:
-- name: Reset Kubernetes cluster
-  shell: kubeadm reset -f
-  ignore_errors: true
-  register: reset_output
-
-- name: Display reset results
-  debug:
-    msg: "{{ reset_output.stdout_lines | default(['No old cluster to reset.']) }}"
-
-- name: Remove Kubernetes configuration directory
-  file:
-    path: /etc/kubernetes
-    state: absent
-
-- name: Remove CNI network configuration
-  file:
-    path: /etc/cni/net.d
-    state: absent
-
-- name: Remove root kubeconfig
-  file:
-    path: /root/.kube
-    state: absent
-
-- name: Remove normal user kubeconfig
-  file:
-    path: "/home/{{ ansible_user }}/.kube"
-    state: absent
-  when: ansible_user != "root"
-
-- name: Clean up iptables rules
-  shell: |
-    iptables -F && iptables -X
-    iptables -t nat -F && iptables -t nat -X
-    iptables -t mangle -F && iptables -t mangle -X
-    iptables -P FORWARD ACCEPT
-  ignore_errors: true
-
-- name: Restart containerd service
-  systemd:
-    name: containerd
-    state: restarted
-    enabled: yes
-
-- name: Confirm reset completed
-  debug:
-    msg:
-      - "Node {{ inventory_hostname }} has been reset cleanly (data only deleted)."`,
-
     'deploy-full-cluster': `---
 - import_playbook: 00-reset-cluster.yml
 - import_playbook: 01-update-hosts-hostname.yml
@@ -1462,3 +1369,57 @@ tasks:
 - import_playbook: 07-join-workers.yml
 - import_playbook: 08-verify-cluster.yml`
 };
+
+export const playbookTemplateCatalog: PlaybookTemplateCategory[] = [
+  {
+    id: "phase1",
+    label: "I. Chuẩn bị môi trường",
+    templates: [
+      makeTemplate("01-update-hosts-hostname", "01 📝 Cập nhật hosts & hostname", "01-update-hosts-hostname.yml"),
+      makeTemplate("02-kernel-sysctl", "02 ⚙️ Cấu hình kernel & sysctl", "02-kernel-sysctl.yml"),
+      makeTemplate("03-install-containerd", "03 🐳 Cài đặt containerd", "03-install-containerd.yml"),
+      makeTemplate("04-install-kubernetes", "04 ☸️ Cài đặt kubeadm/kubelet/kubectl", "04-install-kubernetes.yml"),
+    ],
+  },
+  {
+    id: "phase2",
+    label: "II. Triển khai cluster",
+    templates: [
+      makeTemplate("05-init-master", "05 🚀 Khởi tạo master node", "05-init-master.yml"),
+      makeTemplate("06-install-cni", "06 🌐 Cài đặt Calico CNI", "06-install-cni.yml"),
+      makeTemplate("06-install-flannel", "06 🌐 Cài đặt Flannel CNI", "06-install-flannel.yml"),
+      makeTemplate("07-join-workers", "07 🔗 Thêm worker nodes", "07-join-workers.yml"),
+    ],
+  },
+  {
+    id: "phase3",
+    label: "III. Kiểm tra & mở rộng",
+    templates: [
+      makeTemplate("08-verify-cluster", "08 🧩 Xác minh trạng thái cụm", "08-verify-cluster.yml"),
+      makeTemplate("09-install-helm", "09 📦 Cài đặt Helm 3", "09-install-helm.yml"),
+      makeTemplate("10-install-metrics-server", "10 📊 Cài đặt Metrics Server", "10-install-metrics-server.yml"),
+      makeTemplate("11-install-ingress", "11 🌍 Cài đặt Nginx Ingress", "11-install-ingress.yml"),
+      makeTemplate("12-install-metallb", "12 ⚖️ Cài đặt MetalLB LoadBalancer", "12-install-metallb.yml"),
+      makeTemplate("13-setup-storage", "13 💾 Thiết lập Storage", "13-setup-storage.yml"),
+      makeTemplate("14-prepare-and-join-worker", "14 🔗 Chuẩn bị & Join Worker (02→03→04→07)", "14-prepare-and-join-worker.yml"),
+    ],
+  },
+  {
+    id: "phase4",
+    label: "IV. Workflow tổng hợp",
+    templates: [
+      makeTemplate("00-reset-cluster", "00 🧹 Reset toàn bộ cluster", "00-reset-cluster.yml"),
+      makeTemplate("deploy-full-cluster", "🚀 Triển khai toàn bộ cluster (Calico)", "deploy-full-cluster.yml"),
+      makeTemplate("deploy-full-cluster-flannel", "🚀 Triển khai toàn bộ cluster (Flannel)", "deploy-full-cluster-flannel.yml"),
+    ],
+  },
+];
+
+const templateLookup = new Map<string, PlaybookTemplate>();
+for (const category of playbookTemplateCatalog) {
+  for (const template of category.templates) {
+    templateLookup.set(template.id, template);
+  }
+}
+
+export const getPlaybookTemplateById = (id: string): PlaybookTemplate | undefined => templateLookup.get(id);

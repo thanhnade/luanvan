@@ -1987,6 +1987,8 @@ export const adminAPI = {
   savePlaybook: infrastructureAPI.savePlaybook,
   deletePlaybook: infrastructureAPI.deletePlaybook,
   executePlaybook: infrastructureAPI.executePlaybook,
+  getPlaybookExecutionStatus: infrastructureAPI.getPlaybookExecutionStatus,
+  uploadPlaybookFile: infrastructureAPI.uploadPlaybookFile,
   installK8sTab1: infrastructureAPI.installK8sTab1,
   installK8sTab2: infrastructureAPI.installK8sTab2,
   installK8sTab3: infrastructureAPI.installK8sTab3,

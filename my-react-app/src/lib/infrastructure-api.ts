@@ -1314,12 +1314,46 @@ export const infrastructureAPI = {
     }
   },
 
+  uploadPlaybookFile: async (payload: {
+    controllerHost: string;
+    file: File;
+    sudoPassword?: string;
+  }): Promise<{ success: boolean; message: string; error?: string }> => {
+    try {
+      const formData = new FormData();
+      formData.append("file", payload.file);
+      if (payload.controllerHost) {
+        formData.append("controllerHost", payload.controllerHost);
+      }
+      if (payload.sudoPassword) {
+        formData.append("sudoPassword", payload.sudoPassword);
+      }
+
+      const response = await api.post("/admin/ansible/playbooks/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return {
+        success: response.data.success !== false,
+        message: response.data.message || "Đã tải lên playbook",
+        error: response.data.error,
+      };
+    } catch (error: any) {
+      console.error("Error uploading playbook:", error);
+      const errorMessage =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        error.message ||
+        "Không thể tải lên playbook";
+      throw new Error(errorMessage);
+    }
+  },
+
   executePlaybook: async (payload: {
     controllerHost: string;
     filename: string;
     sudoPassword?: string;
     extraVars?: string;
-  }): Promise<{ success: boolean; message: string; error?: string }> => {
+  }): Promise<{ success: boolean; message: string; error?: string; taskId?: string }> => {
     try {
       const response = await api.post("/admin/ansible/playbooks/execute", {
         controllerHost: payload.controllerHost || null,
@@ -1331,6 +1365,7 @@ export const infrastructureAPI = {
         success: response.data.success !== false,
         message: response.data.message || "Đã thực thi playbook",
         error: response.data.error,
+        taskId: response.data.taskId,
       };
     } catch (error: any) {
       console.error("Error executing playbook:", error);
@@ -1339,6 +1374,34 @@ export const infrastructureAPI = {
         error.response?.data?.message ||
         error.message ||
         "Không thể thực thi playbook";
+      throw new Error(errorMessage);
+    }
+  },
+  
+  getPlaybookExecutionStatus: async (
+    taskId: string
+  ): Promise<{
+    success: boolean;
+    taskId: string;
+    status: string;
+    progress?: number;
+    logs?: string;
+    startTime?: number;
+    endTime?: number;
+    error?: string;
+  }> => {
+    try {
+      const response = await api.get("/admin/ansible/playbooks/status", {
+        params: { taskId },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error("Error getting playbook task status:", error);
+      const errorMessage =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        error.message ||
+        "Không thể lấy trạng thái thực thi playbook";
       throw new Error(errorMessage);
     }
   },

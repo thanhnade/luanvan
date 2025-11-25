@@ -40,6 +40,7 @@ import my_spring_app.my_spring_app.dto.request.InstallK8sRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import jakarta.validation.Valid;
 
 @RestController
@@ -229,6 +230,24 @@ public class AdminController {
     @PostMapping("/ansible/playbooks/execute")
     public ResponseEntity<AnsibleOperationResponse> executePlaybook(@Valid @RequestBody ExecutePlaybookRequest request) {
         AnsibleOperationResponse response = ansibleService.executePlaybook(request);
+        return ResponseEntity.ok(response);
+    }
+    
+    @GetMapping("/ansible/playbooks/status")
+    public ResponseEntity<my_spring_app.my_spring_app.dto.reponse.AnsibleTaskStatusResponse> getPlaybookExecutionStatus(
+            @RequestParam String taskId) {
+        my_spring_app.my_spring_app.dto.reponse.AnsibleTaskStatusResponse response =
+                ansibleService.getPlaybookTaskStatus(taskId);
+        return ResponseEntity.ok(response);
+    }
+
+    // Infrastructure - Upload Playbook
+    @PostMapping("/ansible/playbooks/upload")
+    public ResponseEntity<AnsibleOperationResponse> uploadPlaybook(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(required = false) String controllerHost,
+            @RequestParam(required = false) String sudoPassword) {
+        AnsibleOperationResponse response = ansibleService.uploadPlaybook(file, controllerHost, sudoPassword);
         return ResponseEntity.ok(response);
     }
     

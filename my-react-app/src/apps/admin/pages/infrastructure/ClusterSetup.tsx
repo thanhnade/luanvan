@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { adminAPI } from "@/lib/admin-api";
+import { playbookTemplateCatalog, getPlaybookTemplateById } from "@/lib/playbook-templates";
 import type { Server, Cluster } from "@/types/admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,14 @@ import {
   PlayCircle,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+
+type PlaybookLogType = "info" | "success" | "error" | "step";
+
+const formatPlaybookLogLine = (message: string, type: PlaybookLogType = "info") => {
+  const timestamp = new Date().toLocaleTimeString("vi-VN");
+  const prefix = type === "step" ? "📋" : type === "success" ? "✅" : type === "error" ? "❌" : "ℹ️";
+  return `[${timestamp}] ${prefix} ${message}`;
+};
 
 /**
  * Trang Cluster Setup - Thiết lập và cấu hình Kubernetes Cluster
@@ -136,7 +145,10 @@ export function ClusterSetup() {
   const [isDeletingPlaybook, setIsDeletingPlaybook] = useState(false);
   const [playbookExecutionLogs, setPlaybookExecutionLogs] = useState<string[]>([]);
   const [isLoadingPlaybooks, setIsLoadingPlaybooks] = useState(false);
+  const [isUploadingPlaybook, setIsUploadingPlaybook] = useState(false);
   const playbookExecutionLogRef = useRef<HTMLDivElement>(null);
+  const playbookTaskLogLengthRef = useRef(0);
+  const playbookTaskPollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Init Ansible log states
   const [initLogs, setInitLogs] = useState<string[]>([]);
@@ -691,7 +703,7 @@ export function ClusterSetup() {
       setIsInstallingK8sTab1(true);
       setK8sTab1Logs([]);
       addK8sTab1Log("Bắt đầu Tab 1: Chuẩn bị môi trường...", "step");
-
+      
       const result = await adminAPI.installK8sTab1({
         controllerHost: ansibleStatus.controllerHost,
         sudoPassword: initSudoPassword || undefined,
@@ -711,11 +723,11 @@ export function ClusterSetup() {
       if (!result.success) {
         throw new Error(result.error || message);
       }
-
+      
       addK8sTab1Log("🎉 Tab 1 hoàn tất thành công!", "success");
       setK8sTab1Completed(true);
       toast.success("Tab 1: Chuẩn bị môi trường hoàn tất!");
-
+      
       setTimeout(() => {
         setK8sActiveTab("tab2");
         toast.info("Đã chuyển sang Tab 2");
@@ -750,7 +762,7 @@ export function ClusterSetup() {
       setIsInstallingK8sTab2(true);
       setK8sTab2Logs([]);
       addK8sTab2Log("Bắt đầu Tab 2: Triển khai cluster...", "step");
-
+      
       const result = await adminAPI.installK8sTab2({
         controllerHost: ansibleStatus.controllerHost,
         sudoPassword: initSudoPassword || undefined,
@@ -770,11 +782,11 @@ export function ClusterSetup() {
       if (!result.success) {
         throw new Error(result.error || message);
       }
-
+      
       addK8sTab2Log("🎉 Tab 2 hoàn tất thành công!", "success");
       setK8sTab2Completed(true);
       toast.success("Tab 2: Triển khai cluster hoàn tất!");
-
+      
       setTimeout(() => {
         setK8sActiveTab("tab3");
         toast.info("Đã chuyển sang Tab 3");
@@ -812,7 +824,7 @@ export function ClusterSetup() {
       setIsInstallingK8sTab3(true);
       setK8sTab3Logs([]);
       addK8sTab3Log("Bắt đầu Tab 3: Kiểm tra & Tùy chọn mở rộng...", "step");
-
+      
       const result = await adminAPI.installK8sTab3({
         controllerHost: ansibleStatus.controllerHost,
         sudoPassword: initSudoPassword || undefined,
@@ -834,7 +846,7 @@ export function ClusterSetup() {
       if (!result.success) {
         throw new Error(result.error || message);
       }
-
+      
       addK8sTab3Log("🎉 Tab 3 hoàn tất thành công!", "success");
       addK8sTab3Log("🎉 Kubernetes Cluster đã được cài đặt hoàn chỉnh!", "success");
       setK8sTab3Completed(true);
@@ -1239,15 +1251,44 @@ export function ClusterSetup() {
     }
   };
 
-  const addPlaybookExecutionLog = (message: string, type: "info" | "success" | "error" | "step" = "info") => {
-    const timestamp = new Date().toLocaleTimeString("vi-VN");
-    const prefix = type === "step" ? "📋" : type === "success" ? "✅" : type === "error" ? "❌" : "ℹ️";
-    setPlaybookExecutionLogs((prev) => [...prev, `[${timestamp}] ${prefix} ${message}`]);
-  };
+  const addPlaybookExecutionLog = useCallback(
+    (message: string, type: PlaybookLogType = "info") => {
+      setPlaybookExecutionLogs((prev) => [...prev, formatPlaybookLogLine(message, type)]);
+    },
+    [setPlaybookExecutionLogs]
+  );
 
-  const clearPlaybookExecutionLogs = () => {
+  const appendPlaybookLogChunk = useCallback(
+    (chunk: string) => {
+      if (!chunk) return;
+      const normalized = chunk.replace(/\r/g, "");
+      const lines = normalized.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+      if (lines.length === 0) return;
+      setPlaybookExecutionLogs((prev) => [
+        ...prev,
+        ...lines.map((line) => formatPlaybookLogLine(line, "info")),
+      ]);
+    },
+    [setPlaybookExecutionLogs]
+  );
+
+  const clearPlaybookExecutionLogs = useCallback(() => {
+    playbookTaskLogLengthRef.current = 0;
     setPlaybookExecutionLogs([]);
-  };
+  }, [setPlaybookExecutionLogs]);
+  
+  const cancelPlaybookTaskPolling = useCallback(() => {
+    if (playbookTaskPollingRef.current) {
+      clearTimeout(playbookTaskPollingRef.current);
+      playbookTaskPollingRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cancelPlaybookTaskPolling();
+    };
+  }, [cancelPlaybookTaskPolling]);
 
   // Auto-scroll execution log to bottom
   useEffect(() => {
@@ -1255,6 +1296,56 @@ export function ClusterSetup() {
       playbookExecutionLogRef.current.scrollTop = playbookExecutionLogRef.current.scrollHeight;
     }
   }, [playbookExecutionLogs, isExecutingPlaybook]);
+
+  const monitorPlaybookTask = useCallback(
+    (taskId: string, playbookName: string) => {
+      const poll = async () => {
+        try {
+          const status = await adminAPI.getPlaybookExecutionStatus(taskId);
+          if (status.logs) {
+            if (status.logs.length < playbookTaskLogLengthRef.current) {
+              playbookTaskLogLengthRef.current = 0;
+            }
+            const newChunk = status.logs.substring(playbookTaskLogLengthRef.current);
+            playbookTaskLogLengthRef.current = status.logs.length;
+            appendPlaybookLogChunk(newChunk);
+          }
+
+          if (status.status === "running") {
+            playbookTaskPollingRef.current = setTimeout(poll, 1500);
+            return;
+          }
+
+          cancelPlaybookTaskPolling();
+          setIsExecutingPlaybook(false);
+
+          if (status.status === "completed") {
+            addPlaybookExecutionLog(`🎉 Thực thi playbook ${playbookName} hoàn tất!`, "success");
+            toast.success(`Đã thực thi playbook ${playbookName} thành công!`);
+          } else if (status.status === "failed") {
+            const errorMessage = status.error || "Playbook thất bại";
+            addPlaybookExecutionLog(`Lỗi: ${errorMessage}`, "error");
+            toast.error(`Lỗi khi thực thi: ${errorMessage}`);
+          } else if (status.status === "not_found") {
+            const errorMessage = "Không tìm thấy task thực thi playbook";
+            addPlaybookExecutionLog(errorMessage, "error");
+            toast.error(errorMessage);
+          } else {
+            addPlaybookExecutionLog(`Trạng thái task: ${status.status}`, "info");
+          }
+        } catch (error: any) {
+          cancelPlaybookTaskPolling();
+          setIsExecutingPlaybook(false);
+          const errorMessage = error.message || "Không thể lấy trạng thái playbook";
+          addPlaybookExecutionLog(`Lỗi khi lấy trạng thái: ${errorMessage}`, "error");
+          toast.error(errorMessage);
+        }
+      };
+
+      poll();
+    },
+    [appendPlaybookLogChunk, cancelPlaybookTaskPolling, addPlaybookExecutionLog]
+  );
 
   const handleExecutePlaybook = async () => {
     if (!selectedPlaybook) {
@@ -1268,6 +1359,7 @@ export function ClusterSetup() {
     }
 
     try {
+      cancelPlaybookTaskPolling();
       setIsExecutingPlaybook(true);
       clearPlaybookExecutionLogs();
       addPlaybookExecutionLog(`Bắt đầu thực thi playbook: ${selectedPlaybook}`, "step");
@@ -1278,48 +1370,142 @@ export function ClusterSetup() {
         sudoPassword: initSudoPassword || undefined,
       });
 
-      if (!result.success) {
+      if (!result.success && !result.taskId) {
         throw new Error(result.error || result.message || "Thực thi playbook thất bại");
+      }
+
+      if (result.taskId) {
+        monitorPlaybookTask(result.taskId, selectedPlaybook);
+        return;
       }
 
       const normalized = (result.message || "").replace(/\r/g, "");
       const lines = normalized.split("\n").filter((line) => line.trim().length > 0);
       if (lines.length > 0) {
-        lines.forEach((line) => addPlaybookExecutionLog(line, "info"));
+        lines.forEach((line) => addPlaybookExecutionLog(line, result.success ? "info" : "error"));
       }
-      
+
+      if (!result.success) {
+        throw new Error(result.error || result.message || "Thực thi playbook thất bại");
+      }
+
       addPlaybookExecutionLog("🎉 Thực thi playbook thành công!", "success");
       toast.success(result.message || `Đã thực thi playbook ${selectedPlaybook} thành công!`);
+      setIsExecutingPlaybook(false);
     } catch (error: any) {
       const errorMessage = error.message || "Lỗi không xác định";
       addPlaybookExecutionLog(`Lỗi: ${errorMessage}`, "error");
       toast.error(`Lỗi khi thực thi: ${errorMessage}`);
-    } finally {
+      cancelPlaybookTaskPolling();
       setIsExecutingPlaybook(false);
     }
   };
 
-  const handleUploadPlaybook = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadPlaybook = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      const filename = file.name.replace(".yml", "").replace(".yaml", "");
-      setPlaybookFilename(filename);
+    if (!ansibleStatus?.controllerHost) {
+      toast.error("Không tìm thấy controller host.");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      setIsUploadingPlaybook(true);
+      const result = await adminAPI.uploadPlaybookFile({
+        controllerHost: ansibleStatus.controllerHost,
+        file,
+        sudoPassword: initSudoPassword || undefined,
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || result.message || "Không thể tải lên playbook");
+      }
+
+      const content = await file.text();
+      const filenameWithoutExt = file.name.replace(/\.ya?ml$/i, "");
+      setPlaybookFilename(filenameWithoutExt);
       setPlaybookContent(content);
-      setSelectedPlaybook(null);
-      toast.success(`Đã tải lên file ${file.name}`);
-    };
-    reader.readAsText(file);
+      setSelectedPlaybook(file.name.toLowerCase().endsWith(".yml") ? file.name : `${filenameWithoutExt}.yml`);
+      toast.success(result.message || `Đã tải lên playbook ${file.name}`);
+      await loadPlaybooks(file.name);
+    } catch (error: any) {
+      toast.error(error.message || "Không thể tải lên playbook");
+    } finally {
+      setIsUploadingPlaybook(false);
+      event.target.value = "";
+    }
   };
 
-  const handleTemplateChange = (template: string) => {
-    setPlaybookTemplate(template);
-    // TODO: Load template content from backend or predefined templates
-    if (template) {
-      setPlaybookContent(`# Template: ${template}\n---\n- name: Generated from template\n  hosts: all\n  tasks:\n    - debug: msg="Template content"`);
+  const applyTemplateToEditor = (templateId: string, options: { showToast?: boolean } = {}) => {
+    const template = getPlaybookTemplateById(templateId);
+    if (!template) {
+      toast.error("Không tìm thấy template đã chọn");
+      return false;
+    }
+
+    setPlaybookFilename(template.filename.replace(/\.ya?ml$/i, ""));
+    setPlaybookContent(template.content);
+    if (options.showToast !== false) {
+      toast.success(`Đã nạp template ${template.label} vào editor`);
+    }
+    return true;
+  };
+
+  const handleTemplateSelect = (templateId: string) => {
+    setPlaybookTemplate(templateId);
+    if (templateId) {
+      applyTemplateToEditor(templateId, { showToast: false });
+    }
+  };
+
+  const handleCreatePlaybookFromTemplate = async () => {
+    if (!playbookTemplate) {
+      toast.warning("Vui lòng chọn template trước");
+      return;
+    }
+    if (!ansibleStatus?.controllerHost) {
+      toast.error("Không tìm thấy controller host.");
+      return;
+    }
+
+    const template = getPlaybookTemplateById(playbookTemplate);
+    if (!template) {
+      toast.error("Không tìm thấy template đã chọn");
+      return;
+    }
+
+    const customName = playbookFilename.trim();
+    const finalName =
+      customName.length > 0
+        ? customName.toLowerCase().endsWith(".yml") || customName.toLowerCase().endsWith(".yaml")
+          ? customName
+          : `${customName}.yml`
+        : template.filename;
+
+    try {
+      setIsSavingPlaybook(true);
+      const result = await adminAPI.savePlaybook({
+        controllerHost: ansibleStatus.controllerHost,
+        filename: finalName,
+        content: template.content,
+        sudoPassword: initSudoPassword || undefined,
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || result.message || "Không thể tạo playbook từ template");
+      }
+
+      setPlaybookFilename(finalName.replace(/\.ya?ml$/i, ""));
+      setPlaybookContent(template.content);
+      setSelectedPlaybook(finalName);
+      toast.success(result.message || `Đã tạo playbook ${finalName}`);
+      await loadPlaybooks(finalName);
+    } catch (error: any) {
+      toast.error(error.message || "Không thể tạo playbook từ template");
+    } finally {
+      setIsSavingPlaybook(false);
     }
   };
 
@@ -1344,7 +1530,7 @@ export function ClusterSetup() {
       startRequest: () =>
         adminAPI.initAnsibleStep1(
           ansibleStatus?.controllerHost,
-          initSudoPassword || undefined
+        initSudoPassword || undefined
         ),
     });
   };
@@ -1358,10 +1544,10 @@ export function ClusterSetup() {
       startRequest: () =>
         adminAPI.initAnsibleStep2(
           ansibleStatus?.controllerHost,
-          ansibleCfg,
-          ansibleInventory,
-          ansibleVars,
-          initSudoPassword || undefined
+        ansibleCfg,
+        ansibleInventory,
+        ansibleVars,
+        initSudoPassword || undefined
         ),
     });
   };
@@ -1373,15 +1559,15 @@ export function ClusterSetup() {
       return false;
     }
 
-    const clusterServersForInit = servers.filter(
-      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
-    );
+      const clusterServersForInit = servers.filter(
+        (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+      );
 
-    if (clusterServersForInit.length === 0) {
+      if (clusterServersForInit.length === 0) {
       emitInitLogLine("⚠️ Không có nodes nào trong cluster để phân phối key");
-      toast.warning("Không có nodes nào trong cluster");
+        toast.warning("Không có nodes nào trong cluster");
       return false;
-    }
+      }
 
     const serverIds = clusterServersForInit.map((s) => String(s.id));
 
@@ -1391,9 +1577,9 @@ export function ClusterSetup() {
       successMessage: "Bước 3 hoàn tất!",
       startRequest: () =>
         adminAPI.initAnsibleStep3(
-          ansibleStatus.controllerHost,
-          serverIds,
-          initSudoPassword || undefined
+        ansibleStatus.controllerHost,
+        serverIds,
+        initSudoPassword || undefined
         ),
     });
   };
@@ -1405,15 +1591,15 @@ export function ClusterSetup() {
       return false;
     }
 
-    const clusterServersForInit = servers.filter(
-      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
-    );
+      const clusterServersForInit = servers.filter(
+        (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+      );
 
-    if (clusterServersForInit.length === 0) {
+      if (clusterServersForInit.length === 0) {
       emitInitLogLine("⚠️ Không có nodes nào trong cluster để ping");
-      toast.warning("Không có nodes nào trong cluster");
+        toast.warning("Không có nodes nào trong cluster");
       return false;
-    }
+      }
 
     const serverIds = clusterServersForInit.map((s) => String(s.id));
 
@@ -1468,19 +1654,19 @@ export function ClusterSetup() {
 
     emitInitLogLine("");
     emitInitLogLine("🎉 Khởi tạo Ansible hoàn tất thành công!");
-    const clusterServersForInit = servers.filter(
-      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
-    );
+      const clusterServersForInit = servers.filter(
+        (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+      );
     emitInitLogLine(`Đã khởi tạo cho ${clusterServersForInit.length} nodes trong cluster.`);
-    
-    setPart1Completed(true);
-    toast.success("Khởi tạo Ansible thành công! Phần 1 đã hoàn thành.");
-    
-    setTimeout(() => {
-      setExpandedSection("kubernetes");
-      setK8sActiveTab("tab1");
-      toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
-    }, 1000);
+      
+      setPart1Completed(true);
+      toast.success("Khởi tạo Ansible thành công! Phần 1 đã hoàn thành.");
+      
+      setTimeout(() => {
+        setExpandedSection("kubernetes");
+        setK8sActiveTab("tab1");
+        toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
+      }, 1000);
 
     finish();
   };
@@ -2302,113 +2488,113 @@ export function ClusterSetup() {
             
 
             <div className="pt-2 border-t space-y-3">
-              {/* Step Buttons */}
+            {/* Step Buttons */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <Button
-                  onClick={executeStep1}
-                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                  variant="outline"
-                  className="justify-start"
-                >
-                  {runningStep === 1 ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Đang chạy...
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="h-4 w-4 mr-2" />
-                      Bước 1: Tạo cấu trúc thư mục
-                    </>
-                  )}
-                </Button>
-                <Button
-                  onClick={executeStep2}
-                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                  variant="outline"
-                  className="justify-start"
-                >
-                  {runningStep === 2 ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Đang chạy...
-                    </>
-                  ) : (
-                    <>
-                      <Settings className="h-4 w-4 mr-2" />
-                      Bước 2: Ghi cấu hình mặc định
-                    </>
-                  )}
-                </Button>
-                <Button
-                  onClick={executeStep3}
-                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                  variant="outline"
-                  className="justify-start"
-                >
-                  {runningStep === 3 ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Đang chạy...
-                    </>
-                  ) : (
-                    <>
-                      <Network className="h-4 w-4 mr-2" />
-                      Bước 3: Phân phối SSH key
-                    </>
-                  )}
-                </Button>
-                <Button
-                  onClick={executeStep4}
-                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                  variant="outline"
-                  className="justify-start"
-                >
-                  {runningStep === 4 ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Đang chạy...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      Bước 4: Ping nodes
-                    </>
-                  )}
-                </Button>
-              </div>
+              <Button
+                onClick={executeStep1}
+                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                variant="outline"
+                className="justify-start"
+              >
+                {runningStep === 1 ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Bước 1: Tạo cấu trúc thư mục
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={executeStep2}
+                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                variant="outline"
+                className="justify-start"
+              >
+                {runningStep === 2 ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : (
+                  <>
+                    <Settings className="h-4 w-4 mr-2" />
+                    Bước 2: Ghi cấu hình mặc định
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={executeStep3}
+                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                variant="outline"
+                className="justify-start"
+              >
+                {runningStep === 3 ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : (
+                  <>
+                    <Network className="h-4 w-4 mr-2" />
+                    Bước 3: Phân phối SSH key
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={executeStep4}
+                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                variant="outline"
+                className="justify-start"
+              >
+                {runningStep === 4 ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Bước 4: Ping nodes
+                  </>
+                )}
+              </Button>
+            </div>
 
-              {/* Action Buttons */}
+            {/* Action Buttons */}
               <div className="flex justify-end gap-2 flex-wrap">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (!isInitializing && runningStep === null) {
-                      setShowInitModal(false);
-                      clearInitLogs();
-                    }
-                  }}
-                  disabled={isInitializing || runningStep !== null}
-                >
-                  {isInitializing || runningStep !== null ? "Đang chạy..." : "Đóng"}
-                </Button>
-                <Button
-                  onClick={handleStartInit}
-                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                  size="lg"
-                >
-                  {isInitializing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Đang khởi tạo...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="h-4 w-4 mr-2" />
-                      Khởi tạo (Chạy tuần tự 4 bước)
-                    </>
-                  )}
-                </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (!isInitializing && runningStep === null) {
+                    setShowInitModal(false);
+                    clearInitLogs();
+                  }
+                }}
+                disabled={isInitializing || runningStep !== null}
+              >
+                {isInitializing || runningStep !== null ? "Đang chạy..." : "Đóng"}
+              </Button>
+              <Button
+                onClick={handleStartInit}
+                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                size="lg"
+              >
+                {isInitializing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang khởi tạo...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-4 w-4 mr-2" />
+                    Khởi tạo (Chạy tuần tự 4 bước)
+                  </>
+                )}
+              </Button>
               </div>
             </div>
           </div>
@@ -2558,31 +2744,42 @@ export function ClusterSetup() {
                   Tạo playbook
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="default"
                   size="sm"
-                  onClick={() => {
-                    if (playbookTemplate) {
-                      handleTemplateChange(playbookTemplate);
-                      toast.success("Đã tạo playbook từ template");
-                    } else {
-                      toast.warning("Vui lòng chọn template trước");
-                    }
-                  }}
-                  disabled={!ansibleStatus?.installed || !playbookTemplate}
+                  onClick={handleCreatePlaybookFromTemplate}
+                  disabled={!ansibleStatus?.installed || !playbookTemplate || isSavingPlaybook}
                 >
-                  <Zap className="h-4 w-4 mr-2" />
-                  Tạo từ template
+                  {isSavingPlaybook ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Đang tạo từ template...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-4 w-4 mr-2" />
+                      Tạo & lưu template
+                    </>
+                  )}
                 </Button>
                 <label className="cursor-pointer">
                   <Button
                     variant="outline"
                     size="sm"
                     type="button"
-                    disabled={!ansibleStatus?.installed}
+                    disabled={!ansibleStatus?.installed || isUploadingPlaybook}
                     onClick={() => document.getElementById("upload-playbook-input")?.click()}
                   >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Tải lên
+                    {isUploadingPlaybook ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Đang tải lên...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-4 w-4 mr-2" />
+                        Tải lên
+                      </>
+                    )}
                   </Button>
                   <input
                     id="upload-playbook-input"
@@ -2632,39 +2829,17 @@ export function ClusterSetup() {
               </div>
               <div className="space-y-2">
                 <Label>Template K8s (tùy chọn)</Label>
-                <Select
-                  value={playbookTemplate}
-                  onChange={(e) => handleTemplateChange(e.target.value)}
-                >
+                <Select value={playbookTemplate} onChange={(e) => handleTemplateSelect(e.target.value)}>
                   <option value="">-- Chọn template K8s --</option>
-                  <optgroup label="I. Chuẩn bị môi trường">
-                    <option value="update-hosts-hostname">01 📝 Cập nhật hosts & hostname</option>
-                    <option value="kernel-sysctl">02 ⚙️ Cấu hình kernel & sysctl</option>
-                    <option value="install-containerd">03 🐳 Cài đặt containerd</option>
-                    <option value="install-kubernetes">04 ☸️ Cài đặt kubeadm/kubelet/kubectl</option>
-                  </optgroup>
-                  <optgroup label="II. Triển khai cluster">
-                    <option value="init-master">05 🚀 Khởi tạo master node</option>
-                    <option value="install-cni">06 🌐 Cài đặt Calico CNI</option>
-                    <option value="install-flannel">06 🌐 Cài đặt Flannel CNI</option>
-                    <option value="join-workers">07 🔗 Thêm worker nodes</option>
-                  </optgroup>
-                  <optgroup label="III. Kiểm tra & Tùy chọn mở rộng">
-                    <option value="verify-cluster">08 🧩 Xác minh trạng thái cụm</option>
-                    <option value="install-helm">09 📦 Cài đặt Helm 3</option>
-                    <option value="install-metrics-server">10 📊 Cài đặt Metrics Server</option>
-                    <option value="install-ingress">11 🌍 Cài đặt Nginx Ingress</option>
-                    <option value="install-metallb">12 ⚖️ Cài đặt MetalLB LoadBalancer</option>
-                    <option value="setup-storage">13 💾 Thiết lập Storage</option>
-                    <option value="prepare-and-join-worker">14 🔗 Chuẩn bị & Join Worker (02→03→04→07)</option>
-                  </optgroup>
-                  <optgroup label="IV. Triển khai toàn bộ">
-                    <option value="deploy-full-cluster">🚀 Triển khai toàn bộ cluster (0-8, Calico)</option>
-                    <option value="deploy-full-cluster-flannel">🚀 Triển khai toàn bộ cluster (0-8, Flannel)</option>
-                  </optgroup>
-                  <optgroup label="V. Bảo trì & Reset">
-                    <option value="reset-cluster">🧹 Reset toàn bộ cluster</option>
-                  </optgroup>
+                  {playbookTemplateCatalog.map((category) => (
+                    <optgroup key={category.id} label={category.label}>
+                      {category.templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   Chọn template để tự động tạo nội dung playbook

@@ -22,6 +22,7 @@ import my_spring_app.my_spring_app.service.AnsibleService;
 import my_spring_app.my_spring_app.service.ServerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -50,7 +51,9 @@ public class AnsibleServiceImpl implements AnsibleService {
     private ServerService serverService;
     
     private final ExecutorService initTaskExecutor = Executors.newFixedThreadPool(4);
-    private final ConcurrentMap<String, InitTaskStatus> initTaskCache = new ConcurrentHashMap<>();
+    private final ExecutorService playbookTaskExecutor = Executors.newFixedThreadPool(2);
+    private final ConcurrentMap<String, TaskStatus> initTaskCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, TaskStatus> playbookTaskCache = new ConcurrentHashMap<>();
 
     /**
      * Kiểm tra trạng thái Ansible trên controller server (server có role ANSIBLE hoặc MASTER).
@@ -468,31 +471,7 @@ public class AnsibleServiceImpl implements AnsibleService {
                            command.startsWith("cp ") || command.startsWith("mv ") ||
                            (command.startsWith("cat") && command.contains("/etc/"));
         
-        // Kiểm tra xem command đã có sudo chưa
-        boolean alreadyHasSudo = command.trim().startsWith("sudo ");
-        
-        String finalCommand = command;
-        
-        // Xử lý sudo nếu cần và chưa có
-        if (needsSudo && !alreadyHasSudo) {
-            // Kiểm tra auth status
-            my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse authStatus = 
-                serverService.checkServerAuthStatus(serverId);
-            
-            // Nếu có SSH key + sudo NOPASSWD, không cần password
-            if (authStatus.isHasSshKey() && authStatus.getHasSudoNopasswd() != null && 
-                authStatus.getHasSudoNopasswd()) {
-                // Chỉ cần thêm sudo vào command
-                finalCommand = "sudo " + command;
-            } else if (sudoPassword != null && !sudoPassword.trim().isEmpty()) {
-                // Cần sudo password: escape password và tạo command với sudo -S
-                String escapedPassword = sudoPassword.replace("'", "'\"'\"'");
-                finalCommand = "echo '" + escapedPassword + "' | sudo -S " + command;
-            } else {
-                // Không có sudo password, vẫn thử chạy command (có thể sẽ fail)
-                finalCommand = command;
-            }
-        }
+        String finalCommand = ensureSudoIfNeeded(serverId, command, sudoPassword, needsSudo);
         
         // Tái sử dụng execCommand từ ServerService (đã có logging chi tiết output)
         try {
@@ -500,6 +479,35 @@ public class AnsibleServiceImpl implements AnsibleService {
         } catch (Exception e) {
             throw new RuntimeException("Lỗi khi thực thi command: " + e.getMessage(), e);
         }
+    }
+    
+    private String ensureSudoIfNeeded(Long serverId, String command, String sudoPassword, boolean needsSudo) {
+        if (!needsSudo) {
+            return command;
+        }
+        
+        String trimmed = command.trim();
+        if (trimmed.startsWith("sudo ") || trimmed.contains("| sudo -S ")) {
+            return command;
+        }
+        
+        try {
+            my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse authStatus =
+                serverService.checkServerAuthStatus(serverId);
+            if (authStatus.isHasSshKey()
+                    && authStatus.getHasSudoNopasswd() != null
+                    && authStatus.getHasSudoNopasswd()) {
+                return "sudo " + command;
+            }
+        } catch (Exception ignored) {
+        }
+        
+        if (sudoPassword != null && !sudoPassword.trim().isEmpty()) {
+            String escapedPassword = sudoPassword.replace("'", "'\"'\"'");
+            return "echo '" + escapedPassword + "' | sudo -S " + command;
+        }
+        
+        return command;
     }
     
     // ==================== Init Ansible (4 steps) ====================
@@ -518,7 +526,7 @@ public class AnsibleServiceImpl implements AnsibleService {
                 return response;
             }
             
-        InitTaskStatus taskStatus = createInitTask(taskId, null);
+        TaskStatus taskStatus = createInitTask(taskId, null);
         taskStatus.appendLog("Bắt đầu bước 1...\n");
         taskStatus.setProgress(5);
         initTaskExecutor.submit(() -> runInitAnsibleStep1(request, controllerServer, taskStatus));
@@ -542,7 +550,7 @@ public class AnsibleServiceImpl implements AnsibleService {
                 return response;
             }
         
-        InitTaskStatus taskStatus = createInitTask(taskId, null);
+        TaskStatus taskStatus = createInitTask(taskId, null);
         taskStatus.appendLog("Bắt đầu bước 2...\n");
         taskStatus.setProgress(5);
         initTaskExecutor.submit(() -> runInitAnsibleStep2(request, controllerServer, taskStatus));
@@ -566,7 +574,7 @@ public class AnsibleServiceImpl implements AnsibleService {
             return response;
         }
         
-        InitTaskStatus taskStatus = createInitTask(taskId, null);
+        TaskStatus taskStatus = createInitTask(taskId, null);
         taskStatus.appendLog("Bắt đầu bước 3...\n");
         taskStatus.setProgress(5);
         initTaskExecutor.submit(() -> runInitAnsibleStep3(request, controllerServer, taskStatus));
@@ -590,7 +598,7 @@ public class AnsibleServiceImpl implements AnsibleService {
                 return response;
             }
             
-        InitTaskStatus taskStatus = createInitTask(taskId, null);
+        TaskStatus taskStatus = createInitTask(taskId, null);
         taskStatus.appendLog("Bắt đầu bước 4...\n");
         taskStatus.setProgress(5);
         initTaskExecutor.submit(() -> runInitAnsibleStep4(controllerServer, taskStatus));
@@ -610,7 +618,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         return "'" + s.replace("'", "'\\''") + "'";
     }
     
-    private void appendCommandLog(InitTaskStatus taskStatus, String description, String command, String output) {
+    private void appendCommandLog(TaskStatus taskStatus, String description, String command, String output) {
         if (taskStatus == null) {
             return;
         }
@@ -630,7 +638,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         taskStatus.appendLog(buffer.toString());
     }
     
-    private void runInitAnsibleStep1(InitAnsibleRequest request, ServerEntity controllerServer, InitTaskStatus taskStatus) {
+    private void runInitAnsibleStep1(InitAnsibleRequest request, ServerEntity controllerServer, TaskStatus taskStatus) {
         try {
             Long serverId = controllerServer.getId();
             String sudoPassword = request.getSudoPassword();
@@ -666,7 +674,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
     }
     
-    private void runInitAnsibleStep2(InitAnsibleRequest request, ServerEntity controllerServer, InitTaskStatus taskStatus) {
+    private void runInitAnsibleStep2(InitAnsibleRequest request, ServerEntity controllerServer, TaskStatus taskStatus) {
         try {
             Long serverId = controllerServer.getId();
             String sudoPassword = request.getSudoPassword();
@@ -795,7 +803,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
     }
     
-    private void runInitAnsibleStep3(InitAnsibleRequest request, ServerEntity controllerServer, InitTaskStatus taskStatus) {
+    private void runInitAnsibleStep3(InitAnsibleRequest request, ServerEntity controllerServer, TaskStatus taskStatus) {
         try {
             Long controllerServerId = controllerServer.getId();
             String sudoPassword = request.getSudoPassword();
@@ -944,7 +952,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
     }
     
-    private void runInitAnsibleStep4(ServerEntity controllerServer, InitTaskStatus taskStatus) {
+    private void runInitAnsibleStep4(ServerEntity controllerServer, TaskStatus taskStatus) {
         try {
             Long controllerServerId = controllerServer.getId();
             
@@ -967,6 +975,37 @@ public class AnsibleServiceImpl implements AnsibleService {
             }
         } catch (Exception e) {
             taskStatus.markFailed("Lỗi khi ping nodes: " + e.getMessage());
+        }
+    }
+    
+    private void runPlaybookExecution(ExecutePlaybookRequest request, ServerEntity controllerServer, TaskStatus taskStatus) {
+        try {
+            Long serverId = controllerServer.getId();
+            String filename = request.getFilename().trim();
+            String sudoPassword = request.getSudoPassword();
+            
+            StringBuilder commandBuilder = new StringBuilder();
+            commandBuilder.append("bash -lc 'cd /etc/ansible && ansible-playbook /etc/ansible/playbooks/")
+                    .append(filename)
+                    .append("'");
+            
+            if (request.getExtraVars() != null && !request.getExtraVars().trim().isEmpty()) {
+                String escaped = request.getExtraVars().replace("\"", "\\\"");
+                int lastQuoteIndex = commandBuilder.lastIndexOf("'");
+                commandBuilder.insert(lastQuoteIndex, " -e \"" + escaped + "\"");
+            }
+            
+            String baseCommand = commandBuilder.toString();
+            String finalCommand = ensureSudoIfNeeded(serverId, baseCommand, sudoPassword, true);
+            
+            taskStatus.appendLog("▶️ " + baseCommand + "\n");
+            taskStatus.setProgress(25);
+            sshExecWithOutput(controllerServer, finalCommand, chunk -> taskStatus.appendLog(chunk));
+            
+            taskStatus.setProgress(100);
+            taskStatus.markCompleted("🎉 Đã thực thi playbook thành công: " + filename + "\n");
+        } catch (Exception e) {
+            taskStatus.markFailed("Lỗi khi thực thi playbook: " + e.getMessage());
         }
     }
     
@@ -1055,8 +1094,8 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
     }
     
-    private InitTaskStatus createInitTask(String taskId, String title) {
-        InitTaskStatus status = new InitTaskStatus(taskId);
+    private TaskStatus createInitTask(String taskId, String title) {
+        TaskStatus status = new TaskStatus(taskId);
         if (title != null && !title.isBlank()) {
             status.appendLog(title + "\n");
         }
@@ -1064,7 +1103,16 @@ public class AnsibleServiceImpl implements AnsibleService {
         return status;
     }
     
-    private static class InitTaskStatus {
+    private TaskStatus createPlaybookTask(String taskId, String title) {
+        TaskStatus status = new TaskStatus(taskId);
+        if (title != null && !title.isBlank()) {
+            status.appendLog(title + "\n");
+        }
+        playbookTaskCache.put(taskId, status);
+        return status;
+    }
+    
+    private static class TaskStatus {
         private final String taskId;
         private final StringBuilder logs = new StringBuilder();
         private final long startTime = System.currentTimeMillis();
@@ -1073,7 +1121,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         private volatile int progress = 0;
         private volatile String error;
         
-        InitTaskStatus(String taskId) {
+        TaskStatus(String taskId) {
             this.taskId = taskId;
         }
         
@@ -1136,7 +1184,31 @@ public class AnsibleServiceImpl implements AnsibleService {
     public AnsibleTaskStatusResponse getInitTaskStatus(String taskId) {
         AnsibleTaskStatusResponse response = new AnsibleTaskStatusResponse();
         response.setTaskId(taskId);
-        InitTaskStatus status = initTaskCache.get(taskId);
+        TaskStatus status = initTaskCache.get(taskId);
+        if (status == null) {
+            response.setSuccess(false);
+            response.setStatus("not_found");
+            response.setLogs("");
+            response.setProgress(0);
+            response.setError("Không tìm thấy task hoặc task đã hết hạn");
+            return response;
+        }
+        
+        response.setSuccess(true);
+        response.setStatus(status.getStatus());
+        response.setProgress(status.getProgress());
+        response.setLogs(status.snapshotLogs());
+        response.setStartTime(status.getStartTime());
+        response.setEndTime(status.getEndTime());
+        response.setError(status.getError());
+        return response;
+    }
+    
+    @Override
+    public AnsibleTaskStatusResponse getPlaybookTaskStatus(String taskId) {
+        AnsibleTaskStatusResponse response = new AnsibleTaskStatusResponse();
+        response.setTaskId(taskId);
+        TaskStatus status = playbookTaskCache.get(taskId);
         if (status == null) {
             response.setSuccess(false);
             response.setStatus("not_found");
@@ -1438,6 +1510,39 @@ public class AnsibleServiceImpl implements AnsibleService {
         
         return response;
     }
+
+    @Override
+    public AnsibleOperationResponse uploadPlaybook(MultipartFile file, String controllerHost, String sudoPassword) {
+        AnsibleOperationResponse response = new AnsibleOperationResponse();
+        response.setTaskId(UUID.randomUUID().toString());
+        if (file == null || file.isEmpty()) {
+            response.setSuccess(false);
+            response.setError("File playbook không hợp lệ");
+            response.setMessage("File playbook không hợp lệ");
+            return response;
+        }
+
+        try {
+            String originalName = file.getOriginalFilename();
+            String filename = (originalName != null && !originalName.isBlank()) ? originalName.trim() : ("playbook-" + System.currentTimeMillis() + ".yml");
+            if (!filename.toLowerCase().endsWith(".yml") && !filename.toLowerCase().endsWith(".yaml")) {
+                filename = filename + ".yml";
+            }
+
+            String content = new String(file.getBytes(), StandardCharsets.UTF_8);
+            SavePlaybookRequest saveRequest = new SavePlaybookRequest(controllerHost, sudoPassword, filename, content);
+            AnsibleOperationResponse saveResponse = savePlaybook(saveRequest);
+            if (saveResponse.getMessage() == null || saveResponse.getMessage().isBlank()) {
+                saveResponse.setMessage("Đã tải lên playbook " + filename);
+            }
+            return saveResponse;
+        } catch (Exception e) {
+            response.setSuccess(false);
+            response.setError("Lỗi khi upload playbook: " + e.getMessage());
+            response.setMessage("Lỗi khi upload playbook: " + e.getMessage());
+            return response;
+        }
+    }
     
     @Override
     public AnsibleOperationResponse deletePlaybook(DeletePlaybookRequest request) {
@@ -1495,9 +1600,6 @@ public class AnsibleServiceImpl implements AnsibleService {
                 return response;
             }
             
-            Long serverId = controllerServer.getId();
-            String sudoPassword = request.getSudoPassword();
-            
             String filename = request.getFilename();
             if (filename == null || filename.trim().isEmpty()) {
                 response.setSuccess(false);
@@ -1506,17 +1608,12 @@ public class AnsibleServiceImpl implements AnsibleService {
                 return response;
             }
             
-            String playbookPath = "/etc/ansible/playbooks/" + filename;
-            String executeCmd = "cd /etc/ansible && ansible-playbook " + playbookPath;
-            
-            if (request.getExtraVars() != null && !request.getExtraVars().trim().isEmpty()) {
-                executeCmd += " -e \"" + request.getExtraVars().replace("\"", "\\\"") + "\"";
-            }
-            
-            String result = executeCommandWithAuth(serverId, executeCmd, sudoPassword, 300000); // 5 phút timeout
+            TaskStatus taskStatus = createPlaybookTask(taskId, "Bắt đầu thực thi playbook: " + filename);
+            taskStatus.setProgress(5);
+            playbookTaskExecutor.submit(() -> runPlaybookExecution(request, controllerServer, taskStatus));
             
             response.setSuccess(true);
-            response.setMessage("Đã thực thi playbook thành công: " + filename + "\n" + result);
+            response.setMessage("Đang thực thi playbook. Theo dõi tiến trình bằng taskId.");
         } catch (Exception e) {
             response.setSuccess(false);
             response.setError(e.getMessage());
