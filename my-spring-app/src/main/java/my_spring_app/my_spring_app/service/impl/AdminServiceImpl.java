@@ -10,6 +10,7 @@ import my_spring_app.my_spring_app.dto.reponse.AdminUserProjectSummaryResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminUserUsageResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterCapacityResponse;
 import my_spring_app.my_spring_app.dto.reponse.ClusterAllocatableResponse;
+import my_spring_app.my_spring_app.dto.reponse.ClusterInfoResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminDatabaseDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminBackendDetailResponse;
 import my_spring_app.my_spring_app.dto.reponse.AdminFrontendDetailResponse;
@@ -45,6 +46,7 @@ import my_spring_app.my_spring_app.repository.ProjectFrontendRepository;
 import my_spring_app.my_spring_app.repository.ServerRepository;
 import my_spring_app.my_spring_app.repository.UserRepository;
 import my_spring_app.my_spring_app.service.AdminService;
+import my_spring_app.my_spring_app.service.ServerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -99,6 +101,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -154,6 +157,10 @@ public class AdminServiceImpl implements AdminService {
     // Repository lấy thông tin server (MASTER) để chạy kubectl
     @Autowired
     private ServerRepository serverRepository;
+    
+    // Service để thực thi commands trên server
+    @Autowired
+    private ServerService serverService;
 
     /**
      * Tổng hợp số lượng user, project và tài nguyên CPU/Memory đang sử dụng trên toàn hệ thống.
@@ -1381,6 +1388,82 @@ public class AdminServiceImpl implements AdminService {
                 session.disconnect();
             }
         }
+    }
+
+    /**
+     * Lấy thông tin cluster: số lượng nodes, trạng thái (healthy/unhealthy), và Kubernetes version.
+     * 
+     * Quy trình xử lý:
+     * 1. Lấy danh sách servers từ database có cluster_status=AVAILABLE và role là MASTER hoặc WORKER
+     * 2. Đếm số lượng nodes
+     * 3. Kiểm tra trạng thái: healthy nếu tất cả nodes có status=ONLINE, unhealthy nếu có node OFFLINE
+     * 4. Lấy Kubernetes version từ kubectl get nodes trên master AVAILABLE
+     * 
+     * @return ClusterInfoResponse chứa nodeCount, status, version
+     * @throws RuntimeException nếu không thể kết nối MASTER hoặc lỗi khi thực thi lệnh
+     */
+    @Override
+    public ClusterInfoResponse getClusterInfo() {
+        ClusterInfoResponse response = new ClusterInfoResponse();
+        
+        // Bước 1: Lấy danh sách servers có cluster_status=AVAILABLE và role MASTER/WORKER
+        List<ServerEntity> allServers = serverRepository.findAll();
+        List<ServerEntity> clusterServers = allServers.stream()
+                .filter(s -> s != null 
+                        && "AVAILABLE".equals(s.getClusterStatus())
+                        && ("MASTER".equals(s.getRole()) || "WORKER".equals(s.getRole())))
+                .collect(Collectors.toList());
+        
+        // Bước 2: Đếm số lượng nodes
+        int nodeCount = clusterServers.size();
+        response.setNodeCount(nodeCount);
+        
+        // Bước 3: Kiểm tra trạng thái (healthy/unhealthy)
+        // healthy nếu tất cả nodes có status=ONLINE, unhealthy nếu có node OFFLINE
+        boolean allOnline = clusterServers.stream()
+                .allMatch(s -> s.getStatus() == ServerEntity.ServerStatus.ONLINE);
+        response.setStatus(allOnline ? "healthy" : "unhealthy");
+        
+        // Bước 4: Lấy Kubernetes version từ kubectl get nodes trên master AVAILABLE
+        String version = "Unknown";
+        try {
+            // Tìm master server có cluster_status=AVAILABLE
+            ServerEntity masterServer = clusterServers.stream()
+                    .filter(s -> "MASTER".equals(s.getRole()) 
+                            && s.getStatus() == ServerEntity.ServerStatus.ONLINE)
+                    .findFirst()
+                    .orElse(null);
+            
+            if (masterServer != null) {
+                try {
+                    // Lấy Kubernetes version từ node đầu tiên - tái sử dụng ServerService
+                    // Format: kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}'
+                    String versionCmd = "kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' 2>/dev/null || kubectl version --short --client 2>/dev/null | head -1 || echo ''";
+                    String versionOutput = serverService.execCommand(masterServer.getId(), versionCmd, 15000); // Timeout 15s
+                    
+                    if (versionOutput != null && !versionOutput.trim().isEmpty() && !versionOutput.trim().equals("''")) {
+                        version = versionOutput.trim();
+                        // Loại bỏ các ký tự không cần thiết (quotes, newlines)
+                        version = version.replaceAll("^['\"]|['\"]$", "").trim();
+                        // Format có thể là "v1.28.0" hoặc "1.28.0", giữ nguyên
+                    }
+                } catch (Exception e) {
+                    // Nếu không lấy được version, giữ giá trị mặc định "Unknown"
+                    System.err.println("Không thể lấy Kubernetes version: " + e.getMessage());
+                    // Log thêm thông tin để debug
+                    if (e.getMessage() != null && e.getMessage().contains("timeout")) {
+                        System.err.println("  → Server " + masterServer.getIp() + " có thể đang offline hoặc kubectl chưa được cài đặt");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Nếu có lỗi, giữ giá trị mặc định
+            System.err.println("Lỗi khi lấy cluster info: " + e.getMessage());
+        }
+        
+        response.setVersion(version);
+        
+        return response;
     }
 
     /**

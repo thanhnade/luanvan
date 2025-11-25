@@ -6,6 +6,7 @@ import com.jcraft.jsch.KeyPair;
 import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.CreateServerResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServerResponse;
+import my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse;
 import my_spring_app.my_spring_app.dto.reponse.TestSshResponse;
 import my_spring_app.my_spring_app.dto.request.CreateServerRequest;
 import my_spring_app.my_spring_app.dto.request.UpdateServerRequest;
@@ -1379,17 +1380,26 @@ public class ServerServiceImpl implements ServerService {
             channel.setCommand(command);
             
             InputStream in = channel.getInputStream();
+            InputStream err = channel.getErrStream();
             channel.connect(timeoutMs);
             
             ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+            ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
             long deadline = System.currentTimeMillis() + timeoutMs;
             
             while (true) {
+                // Read stdout
                 while (in.available() > 0) {
                     int read = in.read(buffer, 0, buffer.length);
                     if (read < 0) break;
                     outBuf.write(buffer, 0, read);
+                }
+                // Read stderr
+                while (err.available() > 0) {
+                    int read = err.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    errBuf.write(buffer, 0, read);
                 }
                 if (channel.isClosed()) break;
                 if (System.currentTimeMillis() > deadline) break;
@@ -1401,9 +1411,32 @@ public class ServerServiceImpl implements ServerService {
                 }
             }
             
+            // Log stderr if present
+            String errOutput = errBuf.toString(StandardCharsets.UTF_8).trim();
+            if (!errOutput.isEmpty()) {
+                System.out.println("[execCommandWithKey] Stderr output length: " + errOutput.length() + " characters");
+                if (errOutput.length() > 1000) {
+                    System.out.println("[execCommandWithKey] Stderr (first 500 chars):\n" + errOutput.substring(0, Math.min(500, errOutput.length())));
+                    System.out.println("[execCommandWithKey] ... (truncated " + (errOutput.length() - 500) + " chars) ...");
+                } else {
+                    System.out.println("[execCommandWithKey] Stderr:\n" + errOutput);
+                }
+            }
+            
+            // Log exit status
+            if (channel.isClosed()) {
+                int exitStatus = channel.getExitStatus();
+                if (exitStatus == 0) {
+                    System.out.println("[execCommandWithKey] Exit status: 0 (success)");
+                } else {
+                    System.out.println("[execCommandWithKey] Exit status: " + exitStatus + " (non-zero, may indicate error)");
+                }
+            }
+            
             return outBuf.toString(StandardCharsets.UTF_8).trim();
         } catch (Exception e) {
             System.err.println("[execCommandWithKey] Loi: " + e.getMessage());
+            e.printStackTrace();
             return null;
         } finally {
             if (channel != null && channel.isConnected()) {
@@ -1433,17 +1466,26 @@ public class ServerServiceImpl implements ServerService {
             channel.setCommand(command);
             
             InputStream in = channel.getInputStream();
+            InputStream err = channel.getErrStream();
             channel.connect(timeoutMs);
             
             ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+            ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
             long deadline = System.currentTimeMillis() + timeoutMs;
             
             while (true) {
+                // Read stdout
                 while (in.available() > 0) {
                     int read = in.read(buffer, 0, buffer.length);
                     if (read < 0) break;
                     outBuf.write(buffer, 0, read);
+                }
+                // Read stderr
+                while (err.available() > 0) {
+                    int read = err.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    errBuf.write(buffer, 0, read);
                 }
                 if (channel.isClosed()) break;
                 if (System.currentTimeMillis() > deadline) break;
@@ -1455,9 +1497,32 @@ public class ServerServiceImpl implements ServerService {
                 }
             }
             
+            // Log stderr if present
+            String errOutput = errBuf.toString(StandardCharsets.UTF_8).trim();
+            if (!errOutput.isEmpty()) {
+                System.out.println("[execCommandWithPassword] Stderr output length: " + errOutput.length() + " characters");
+                if (errOutput.length() > 1000) {
+                    System.out.println("[execCommandWithPassword] Stderr (first 500 chars):\n" + errOutput.substring(0, Math.min(500, errOutput.length())));
+                    System.out.println("[execCommandWithPassword] ... (truncated " + (errOutput.length() - 500) + " chars) ...");
+                } else {
+                    System.out.println("[execCommandWithPassword] Stderr:\n" + errOutput);
+                }
+            }
+            
+            // Log exit status
+            if (channel.isClosed()) {
+                int exitStatus = channel.getExitStatus();
+                if (exitStatus == 0) {
+                    System.out.println("[execCommandWithPassword] Exit status: 0 (success)");
+                } else {
+                    System.out.println("[execCommandWithPassword] Exit status: " + exitStatus + " (non-zero, may indicate error)");
+                }
+            }
+            
             return outBuf.toString(StandardCharsets.UTF_8).trim();
         } catch (Exception e) {
             System.err.println("[execCommandWithPassword] Loi: " + e.getMessage());
+            e.printStackTrace();
             return null;
         } finally {
             if (channel != null && channel.isConnected()) {
@@ -1579,6 +1644,22 @@ public class ServerServiceImpl implements ServerService {
             String output = execCommandWithKey(ip, port, username, privateKeyPem, command, timeoutMs);
             if (output != null) {
                 System.out.println("[execCommand] Thuc thi thanh cong bang SSH key");
+                // Log output chi tiet
+                if (!output.trim().isEmpty()) {
+                    System.out.println("[execCommand] Output length: " + output.length() + " characters");
+                    // Neu output qua dai (> 2000 ky tu), chi log 1000 ky tu dau va cuoi
+                    if (output.length() > 2000) {
+                        String preview = output.substring(0, Math.min(1000, output.length()));
+                        String suffix = output.length() > 1000 ? output.substring(Math.max(0, output.length() - 1000)) : "";
+                        System.out.println("[execCommand] Output (first 1000 chars):\n" + preview);
+                        System.out.println("[execCommand] ... (truncated " + (output.length() - 2000) + " chars) ...");
+                        System.out.println("[execCommand] Output (last 1000 chars):\n" + suffix);
+                    } else {
+                        System.out.println("[execCommand] Output:\n" + output);
+                    }
+                } else {
+                    System.out.println("[execCommand] Output: (empty)");
+                }
                 return output;
             }
         }
@@ -1589,6 +1670,22 @@ public class ServerServiceImpl implements ServerService {
             String output = execCommandWithPassword(ip, port, username, password, command, timeoutMs);
             if (output != null) {
                 System.out.println("[execCommand] Thuc thi thanh cong bang password");
+                // Log output chi tiet
+                if (!output.trim().isEmpty()) {
+                    System.out.println("[execCommand] Output length: " + output.length() + " characters");
+                    // Neu output qua dai (> 2000 ky tu), chi log 1000 ky tu dau va cuoi
+                    if (output.length() > 2000) {
+                        String preview = output.substring(0, Math.min(1000, output.length()));
+                        String suffix = output.length() > 1000 ? output.substring(Math.max(0, output.length() - 1000)) : "";
+                        System.out.println("[execCommand] Output (first 1000 chars):\n" + preview);
+                        System.out.println("[execCommand] ... (truncated " + (output.length() - 2000) + " chars) ...");
+                        System.out.println("[execCommand] Output (last 1000 chars):\n" + suffix);
+                    } else {
+                        System.out.println("[execCommand] Output:\n" + output);
+                    }
+                } else {
+                    System.out.println("[execCommand] Output: (empty)");
+                }
                 return output;
             }
         }
@@ -1671,6 +1768,82 @@ public class ServerServiceImpl implements ServerService {
             System.out.println("[pingServer] Ping that bai den server " + ip + ":" + port + " - " + e.getMessage());
             return false;
         }
+    }
+    
+    @Override
+    public my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse checkServerAuthStatus(Long id) {
+        ServerAuthStatusResponse response = new ServerAuthStatusResponse();
+        
+        try {
+            ServerEntity server = serverRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+            
+            String ip = server.getIp();
+            Integer port = server.getPort() != null ? server.getPort() : 22;
+            String username = server.getUsername();
+            
+            // Bước 1: Kiểm tra SSH key
+            String privateKeyPem = resolveServerPrivateKeyPem(id);
+            boolean hasSshKey = (privateKeyPem != null && !privateKeyPem.trim().isEmpty());
+            response.setHasSshKey(hasSshKey);
+            
+            boolean hasSudoNopasswd = false;
+            boolean needsPassword = true;
+            String authMethod = "password";
+            
+            if (hasSshKey) {
+                // Có SSH key, kiểm tra kết nối và sudo NOPASSWD
+                try {
+                    // Kiểm tra kết nối SSH với key
+                    boolean canConnect = testSshWithKey(ip, port, username, privateKeyPem, 5000);
+                    
+                    if (canConnect) {
+                        // Kiểm tra sudo NOPASSWD
+                        String checkSudoCmd = "sudo -l 2>/dev/null | grep -q 'NOPASSWD' && echo 'HAS_NOPASSWD' || echo 'NO_NOPASSWD'";
+                        String sudoCheckResult = execCommandWithKey(ip, port, username, privateKeyPem, checkSudoCmd, 5000);
+                        
+                        if (sudoCheckResult != null && sudoCheckResult.contains("HAS_NOPASSWD")) {
+                            hasSudoNopasswd = true;
+                            needsPassword = false;
+                            authMethod = "SSH key + sudo NOPASSWD";
+                        } else {
+                            hasSudoNopasswd = false;
+                            needsPassword = true;
+                            authMethod = "SSH key (cần sudo password)";
+                        }
+                    } else {
+                        // SSH key không hoạt động
+                        hasSudoNopasswd = false;
+                        needsPassword = true;
+                        authMethod = "SSH key (không kết nối được)";
+                    }
+                } catch (Exception e) {
+                    // Không kiểm tra được với SSH key
+                    hasSudoNopasswd = false;
+                    needsPassword = true;
+                    authMethod = "SSH key (lỗi kiểm tra)";
+                    System.err.println("[checkServerAuthStatus] Loi khi kiem tra SSH key: " + e.getMessage());
+                }
+            } else {
+                // Không có SSH key, cần password
+                hasSudoNopasswd = false;
+                needsPassword = true;
+                authMethod = "password";
+            }
+            
+            response.setHasSudoNopasswd(hasSudoNopasswd);
+            response.setNeedsPassword(needsPassword);
+            response.setAuthMethod(authMethod);
+            
+        } catch (Exception e) {
+            response.setHasSshKey(false);
+            response.setHasSudoNopasswd(false);
+            response.setNeedsPassword(true);
+            response.setAuthMethod("error");
+            response.setError("Lỗi khi kiểm tra trạng thái xác thực: " + e.getMessage());
+        }
+        
+        return response;
     }
     
 }

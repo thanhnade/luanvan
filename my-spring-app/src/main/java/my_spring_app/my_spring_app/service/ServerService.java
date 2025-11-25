@@ -2,6 +2,7 @@ package my_spring_app.my_spring_app.service;
 
 import my_spring_app.my_spring_app.dto.reponse.CreateServerResponse;
 import my_spring_app.my_spring_app.dto.reponse.ServerResponse;
+import my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse;
 import my_spring_app.my_spring_app.dto.reponse.TestSshResponse;
 import my_spring_app.my_spring_app.dto.request.CreateServerRequest;
 import my_spring_app.my_spring_app.dto.request.UpdateServerRequest;
@@ -81,6 +82,13 @@ public interface ServerService {
      * @return true nếu ping thành công, false nếu không
      */
     boolean pingServer(Long id, int timeoutMs);
+    
+    /**
+     * Kiểm tra trạng thái xác thực của server (SSH key và sudo NOPASSWD)
+     * @param id Server ID
+     * @return ServerAuthStatusResponse chứa thông tin về SSH key và sudo NOPASSWD
+     */
+    ServerAuthStatusResponse checkServerAuthStatus(Long id);
 }
 
 

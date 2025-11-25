@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { adminAPI } from "@/lib/admin-api";
-import type { Server, Cluster } from "@/types/admin";
+import type { Server } from "@/types/admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -16,7 +16,6 @@ import { toast } from "sonner";
  * Có nút gán server vào cluster qua modal
  */
 export function Clusters() {
-  const [cluster, setCluster] = useState<Cluster | null>(null);
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -39,11 +38,8 @@ export function Clusters() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [clusterData, serversData] = await Promise.all([
-        adminAPI.getCluster(),
-        adminAPI.getServers(),
-      ]);
-      setCluster(clusterData);
+      // Chỉ lấy danh sách servers, không gọi getCluster() để tránh timeout
+      const serversData = await adminAPI.getServers();
       setServers(serversData);
     } catch (error) {
       toast.error("Không thể tải dữ liệu");
@@ -274,11 +270,6 @@ export function Clusters() {
           <h2 className="text-2xl font-bold">🔗 Quản lý Cluster</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Danh sách servers trong cluster
-            {cluster && (
-              <span className="ml-2">
-                • Cluster: {cluster.name} ({cluster.nodeCount} nodes)
-              </span>
-            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
