@@ -413,6 +413,110 @@ const templates: Record<string, string> = {
     - name: Display cluster result
       debug:
         var: nodes_status.stdout_lines`,
+  "06-install-cni": `---
+- name: Install or update Calico CNI (automatic)
+  hosts: master
+  become: yes
+  gather_facts: false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+    DEBIAN_FRONTEND: noninteractive
+  
+  vars:
+    calico_version: "v3.27.3"
+    calico_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+  
+  tasks:
+    - name: Check if Calico CNI exists
+      command: kubectl get daemonset calico-node -n kube-system
+      register: calico_check
+      ignore_errors: true
+  
+    - name: Display current status
+      debug:
+        msg: >
+          {% if calico_check.rc == 0 %}
+          Calico is already installed.
+          {% else %}
+          Calico not found, will install new.
+          {% endif %}
+  
+    - name: Check kernel modules overlay and br_netfilter
+      shell: |
+        modprobe overlay || true
+        modprobe br_netfilter || true
+        lsmod | grep -E 'overlay|br_netfilter' || echo "Missing kernel module"
+      register: kernel_status
+      ignore_errors: true
+  
+    - name: Display kernel module check result
+      debug:
+        var: kernel_status.stdout_lines
+  
+    - name: Check sysctl configuration
+      shell: |
+        echo "net.bridge.bridge-nf-call-iptables = 1" | tee /etc/sysctl.d/k8s.conf >/dev/null
+        echo "net.ipv4.ip_forward = 1" | tee -a /etc/sysctl.d/k8s.conf >/dev/null
+        sysctl --system | grep -E "net.bridge.bridge-nf-call|net.ipv4.ip_forward"
+      register: sysctl_status
+      ignore_errors: true
+  
+    - name: Display sysctl result
+      debug:
+        var: sysctl_status.stdout_lines
+  
+    - name: Apply Calico manifest (install or update)
+      shell: |
+        kubectl apply -f {{ calico_url }}
+      args:
+        executable: /bin/bash
+      register: calico_apply
+      retries: 3
+      delay: 10
+      until: calico_apply.rc == 0
+  
+    - name: Display installation result
+      debug:
+        var: calico_apply.stdout_lines
+  
+    - name: Check Calico node pod starting
+      shell: |
+        kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -c 'Running' || true
+      register: calico_running
+  
+    - name: Wait for pod to start (max 10 retries)
+      until: calico_running.stdout | int > 0
+      retries: 10
+      delay: 15
+      shell: |
+        kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -c 'Running' || true
+      register: calico_running
+      ignore_errors: true
+  
+    - name: Confirm Calico pods are running
+      when: calico_running.stdout | int > 0
+      debug:
+        msg: "Calico is running ({{ calico_running.stdout }} pods Running)."
+  
+    - name: Log Calico pod if error
+      when: calico_running.stdout | int == 0
+      shell: kubectl logs -n kube-system -l k8s-app=calico-node --tail=50 || true
+      register: calico_logs
+      ignore_errors: true
+  
+    - name: Display Calico pod logs
+      when: calico_running.stdout | int == 0
+      debug:
+        msg: "{{ calico_logs.stdout_lines | default(['Calico pod is not ready or has no logs.']) }}"
+  
+    - name: Check node status
+      command: kubectl get nodes -o wide
+      register: nodes_status
+      ignore_errors: true
+  
+    - name: Display cluster result
+      debug:
+        var: nodes_status.stdout_lines`        ,
   "06-install-flannel": `---
 - name: Install or update Flannel CNI (WSL2 compatible)
   hosts: master

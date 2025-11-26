@@ -40,6 +40,7 @@ import {
   Upload,
   FileCode,
   PlayCircle,
+  Users,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
@@ -65,6 +66,9 @@ interface StepperProps {
   steps: StepperStep[];
   className?: string;
 }
+
+type UtilityActionKey = "resetCluster" | "installHelm" | "joinExistingWorkers";
+type UtilityActionStatus = "idle" | "running" | "completed" | "error";
 
 const Stepper = ({ steps, className = "" }: StepperProps) => {
   return (
@@ -218,7 +222,7 @@ export function ClusterSetup() {
     },
   ]);
 
-  // Step tracking states for Part 2 - Tab 3 (K8s Verification)
+  // Step tracking states for Part 2 - Tab 3 (K8s Verification & Extensions)
   const [k8sTab3Steps, setK8sTab3Steps] = useState<StepperStep[]>([
     {
       id: "verify-cluster",
@@ -244,6 +248,18 @@ export function ClusterSetup() {
       description: "Cài đặt ingress controller",
       status: "pending",
     },
+    {
+      id: "install-metallb",
+      label: "Cài đặt MetalLB LoadBalancer",
+      description: "Cài đặt MetalLB để cung cấp LoadBalancer service",
+      status: "pending",
+    },
+    {
+      id: "setup-storage",
+      label: "Thiết lập Storage (NFS)",
+      description: "Cài đặt NFS server và provisioner cho persistent storage",
+      status: "pending",
+    },
   ]);
 
   // K8s installation states for 3 tabs
@@ -261,6 +277,12 @@ export function ClusterSetup() {
   const k8sTab1LogRef = useRef<HTMLDivElement>(null);
   const k8sTab2LogRef = useRef<HTMLDivElement>(null);
   const k8sTab3LogRef = useRef<HTMLDivElement>(null);
+  const [utilityActionsStatus, setUtilityActionsStatus] = useState<Record<UtilityActionKey, UtilityActionStatus>>({
+    resetCluster: "idle",
+    installHelm: "idle",
+    joinExistingWorkers: "idle",
+  });
+  const stepExecutionLogRef = useRef<HTMLDivElement>(null);
 
   // Ansible status states
   const [ansibleStatus, setAnsibleStatus] = useState<{
@@ -278,6 +300,21 @@ export function ClusterSetup() {
   const [showPlaybookModal, setShowPlaybookModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showSudoPasswordModal, setShowSudoPasswordModal] = useState(false);
+  const [showStepExecutionModal, setShowStepExecutionModal] = useState(false);
+  
+  // Step execution modal state
+  const [currentExecutingStep, setCurrentExecutingStep] = useState<{
+    stepLabel: string;
+    playbookFilename: string;
+    status: "running" | "completed" | "error";
+    logs: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (stepExecutionLogRef.current && currentExecutingStep?.logs.length) {
+      stepExecutionLogRef.current.scrollTop = stepExecutionLogRef.current.scrollHeight;
+    }
+  }, [currentExecutingStep?.logs]);
 
   // Init quickly steps status for quick modal - Bước 2 có 3 bước con
   const [initQuicklySteps, setInitQuicklySteps] = useState<Array<{
@@ -293,6 +330,12 @@ export function ClusterSetup() {
 
   // Ping nodes step status (Bước 3 riêng)
   const [pingNodesStep, setPingNodesStep] = useState<{
+    status: "pending" | "running" | "completed" | "error";
+    errorMessage?: string;
+  }>({ status: "pending" });
+
+  // Init templates step status (Bước 4)
+  const [initTemplatesStep, setInitTemplatesStep] = useState<{
     status: "pending" | "running" | "completed" | "error";
     errorMessage?: string;
   }>({ status: "pending" });
@@ -509,6 +552,38 @@ export function ClusterSetup() {
       </Button>
     ) : null;
 
+    // Bước 4: Khởi tạo templates
+    const step4Status = 
+      initTemplatesStep.status === "running"
+        ? "active"
+        : initTemplatesStep.status === "completed"
+        ? "completed"
+        : initTemplatesStep.status === "error"
+        ? "error"
+        : pingNodesStep.status === "completed"
+        ? "pending"
+        : "pending";
+
+    const step4Button = pingNodesStep.status === "completed" ? (
+      <Button
+        onClick={handleInitTemplates}
+        disabled={initTemplatesStep.status === "running" || !ansibleStatus?.installed}
+        size="sm"
+      >
+        {initTemplatesStep.status === "running" ? (
+          <>
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            Đang khởi tạo...
+          </>
+        ) : (
+          <>
+            <FileCode className="h-4 w-4 mr-2" />
+            Khởi tạo templates
+          </>
+        )}
+      </Button>
+    ) : null;
+
     setAnsibleSteps([
       {
         id: "step1",
@@ -531,6 +606,13 @@ export function ClusterSetup() {
         status: step3Status as "pending" | "active" | "completed" | "error",
         button: step3Button,
       },
+      {
+        id: "step4",
+        label: "Bước 4: Khởi tạo templates",
+        description: "Tạo các template playbook cho việc cài đặt K8s",
+        status: step4Status as "pending" | "active" | "completed" | "error",
+        button: step4Button,
+      },
     ]);
   }, [
     isCheckingAnsibleStatus,
@@ -541,69 +623,412 @@ export function ClusterSetup() {
     part1Completed,
     initQuicklySteps,
     pingNodesStep,
+    initTemplatesStep,
   ]);
 
-  // Auto-update K8s Tab 1 steps based on status
+  // Auto-update K8s Tab 1 steps with buttons
+  // TODO: Bỏ ràng buộc thứ tự để test - có thể bật lại sau bằng cách đổi canExecute = true thành canExecute = isFirstStep || (prevStep?.status === "completed")
   useEffect(() => {
     setK8sTab1Steps((prev) =>
-      prev.map((step) => {
-        if (isInstallingK8sTab1) {
-          // When installing, set first pending step to active
-          const firstPendingIndex = prev.findIndex((s) => s.status === "pending");
-          if (firstPendingIndex === prev.indexOf(step)) {
-            return { ...step, status: "active" as const };
+      prev.map((step, index) => {
+        const isFirstStep = index === 0;
+        const prevStep = index > 0 ? prev[index - 1] : null;
+        // Tạm thời bỏ ràng buộc: cho phép thực thi bất kỳ bước nào
+        const canExecute = true; // TEST MODE: isFirstStep || (prevStep?.status === "completed");
+        const isRunning = step.status === "active";
+        const isCompleted = step.status === "completed";
+
+        let button = null;
+        if (canExecute || isCompleted) {
+          if (step.id === "update-hosts") {
+            button = (
+              <Button
+                onClick={handleK8sTab1Step1}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "kernel-sysctl") {
+            button = (
+              <Button
+                onClick={handleK8sTab1Step2}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-containerd") {
+            button = (
+              <Button
+                onClick={handleK8sTab1Step3}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-kubernetes") {
+            button = (
+              <Button
+                onClick={handleK8sTab1Step4}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
           }
-          // Set completed steps
-          if (prev.indexOf(step) < firstPendingIndex) {
-            return { ...step, status: "completed" as const };
-          }
-        } else if (k8sTab1Completed) {
-          return { ...step, status: "completed" as const };
         }
-        return step;
+
+        return { ...step, button };
       })
     );
-  }, [isInstallingK8sTab1, k8sTab1Completed]);
+  }, [k8sTab1Steps.map(s => `${s.id}-${s.status}`).join(","), ansibleStatus?.installed]);
 
-  // Auto-update K8s Tab 2 steps based on status
+  // Auto-update K8s Tab 2 steps with buttons
+  // TODO: Bỏ ràng buộc thứ tự để test - có thể bật lại sau bằng cách đổi canExecute = true thành canExecute = isFirstStep || (prevStep?.status === "completed")
   useEffect(() => {
     setK8sTab2Steps((prev) =>
-      prev.map((step) => {
-        if (isInstallingK8sTab2) {
-          const firstPendingIndex = prev.findIndex((s) => s.status === "pending");
-          if (firstPendingIndex === prev.indexOf(step)) {
-            return { ...step, status: "active" as const };
+      prev.map((step, index) => {
+        const isFirstStep = index === 0;
+        const prevStep = index > 0 ? prev[index - 1] : null;
+        // Tạm thời bỏ ràng buộc: cho phép thực thi bất kỳ bước nào
+        const canExecute = true; // TEST MODE: isFirstStep || (prevStep?.status === "completed");
+        const isRunning = step.status === "active";
+        const isCompleted = step.status === "completed";
+
+        let button = null;
+        if (canExecute || isCompleted) {
+          if (step.id === "init-master") {
+            button = (
+              <Button
+                onClick={handleK8sTab2Step1}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-cni") {
+            button = (
+              <Button
+                onClick={handleK8sTab2Step2}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "join-workers") {
+            button = (
+              <Button
+                onClick={handleK8sTab2Step3}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
           }
-          if (prev.indexOf(step) < firstPendingIndex) {
-            return { ...step, status: "completed" as const };
-          }
-        } else if (k8sTab2Completed) {
-          return { ...step, status: "completed" as const };
         }
-        return step;
+
+        return { ...step, button };
       })
     );
-  }, [isInstallingK8sTab2, k8sTab2Completed]);
+  }, [k8sTab2Steps.map(s => `${s.id}-${s.status}`).join(","), ansibleStatus?.installed]);
 
-  // Auto-update K8s Tab 3 steps based on status
+  // Auto-update K8s Tab 3 steps with buttons
+  // TODO: Bỏ ràng buộc thứ tự để test - có thể bật lại sau bằng cách đổi canExecute = true thành canExecute = isFirstStep || (prevStep?.status === "completed")
   useEffect(() => {
     setK8sTab3Steps((prev) =>
-      prev.map((step) => {
-        if (isInstallingK8sTab3) {
-          const firstPendingIndex = prev.findIndex((s) => s.status === "pending");
-          if (firstPendingIndex === prev.indexOf(step)) {
-            return { ...step, status: "active" as const };
+      prev.map((step, index) => {
+        const isFirstStep = index === 0;
+        const prevStep = index > 0 ? prev[index - 1] : null;
+        // Tạm thời bỏ ràng buộc: cho phép thực thi bất kỳ bước nào
+        const canExecute = true; // TEST MODE: isFirstStep || (prevStep?.status === "completed");
+        const isRunning = step.status === "active";
+        const isCompleted = step.status === "completed";
+
+        let button = null;
+        if (canExecute || isCompleted) {
+          if (step.id === "verify-cluster") {
+            button = (
+              <Button
+                onClick={handleK8sTab3Step1}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-helm") {
+            button = (
+              <Button
+                onClick={handleK8sTab3Step2}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-metrics") {
+            button = (
+              <Button
+                onClick={handleK8sTab3Step3}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-ingress") {
+            button = (
+              <Button
+                onClick={handleK8sTab3Step4}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "install-metallb") {
+            button = (
+              <Button
+                onClick={handleK8sTab3Step5}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
+          } else if (step.id === "setup-storage") {
+            button = (
+              <Button
+                onClick={handleK8sTab3Step6}
+                disabled={isRunning || isCompleted || !ansibleStatus?.installed}
+                size="sm"
+                variant={isCompleted ? "outline" : "default"}
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang chạy...
+                  </>
+                ) : isCompleted ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Hoàn thành
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Thực thi
+                  </>
+                )}
+              </Button>
+            );
           }
-          if (prev.indexOf(step) < firstPendingIndex) {
-            return { ...step, status: "completed" as const };
-          }
-        } else if (k8sTab3Completed) {
-          return { ...step, status: "completed" as const };
         }
-        return step;
+
+        return { ...step, button };
       })
     );
-  }, [isInstallingK8sTab3, k8sTab3Completed]);
+  }, [k8sTab3Steps.map(s => `${s.id}-${s.status}`).join(","), ansibleStatus?.installed]);
 
   // Load Ansible config từ server khi mở modal
   useEffect(() => {
@@ -1090,6 +1515,292 @@ export function ClusterSetup() {
   }, [k8sTab3Logs, isInstallingK8sTab3]);
 
   // K8s Tab 1: Chuẩn bị môi trường
+  // Helper function để thực thi một playbook và cập nhật stepper
+  const runPlaybookWithModal = async (
+    playbookFilename: string,
+    stepLabel: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!ansibleStatus?.controllerHost) {
+      return { success: false, error: "Không tìm thấy controller host." };
+    }
+
+    const startMessage = `▶️ Bắt đầu: ${stepLabel}...`;
+    setCurrentExecutingStep({
+      stepLabel,
+      playbookFilename,
+      status: "running",
+      logs: [startMessage],
+    });
+    setShowStepExecutionModal(true);
+
+    try {
+      const result = await adminAPI.executePlaybook({
+        controllerHost: ansibleStatus.controllerHost,
+        filename: playbookFilename,
+        sudoPassword: initSudoPassword || undefined,
+      });
+
+      if (!result.success && !result.taskId) {
+        throw new Error(result.error || result.message || `Lỗi khi thực thi ${playbookFilename}`);
+      }
+
+      if (result.taskId) {
+        await monitorPlaybookTaskForStepWithModal(result.taskId, playbookFilename, stepLabel);
+      } else {
+        const normalized = (result.message || "").replace(/\r/g, "");
+        const lines = normalized.split("\n").filter((line) => line.trim().length > 0);
+        const successMessage = `🎉 Đã thực thi playbook thành công: ${playbookFilename}`;
+
+        setCurrentExecutingStep((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "completed",
+                logs: [...prev.logs, ...lines, successMessage],
+              }
+            : null
+        );
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      const errorMessage = error.message || "Lỗi không xác định";
+      setCurrentExecutingStep((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "error",
+              logs: [...prev.logs, `❌ Lỗi: ${errorMessage}`],
+            }
+          : null
+      );
+      return { success: false, error: errorMessage };
+    }
+  };
+
+  // Helper function để thực thi một playbook và cập nhật stepper
+  const executePlaybookStep = async (
+    playbookFilename: string,
+    stepId: string,
+    stepLabel: string,
+    setSteps: React.Dispatch<React.SetStateAction<StepperStep[]>>,
+    addLog: (message: string, type?: "info" | "error" | "success" | "step") => void
+  ): Promise<boolean> => {
+    if (!ansibleStatus?.controllerHost) {
+      const errorMsg = "Không tìm thấy controller host.";
+      addLog(`❌ Lỗi: ${stepLabel} - ${errorMsg}`, "error");
+      toast.error(errorMsg);
+      return false;
+    }
+
+    setSteps((prev) =>
+      prev.map((step) =>
+        step.id === stepId ? { ...step, status: "active" } : step
+      )
+    );
+    addLog(`▶️ Bắt đầu: ${stepLabel}...`, "step");
+
+    const result = await runPlaybookWithModal(playbookFilename, stepLabel);
+
+    if (result.success) {
+      setSteps((prev) =>
+        prev.map((step) =>
+          step.id === stepId ? { ...step, status: "completed" } : step
+        )
+      );
+      addLog(`✅ Hoàn tất: ${stepLabel}`, "success");
+      return true;
+    }
+
+    const errorMessage = result.error || "Lỗi không xác định";
+    setSteps((prev) =>
+      prev.map((step) =>
+        step.id === stepId ? { ...step, status: "error" } : step
+      )
+    );
+    addLog(`❌ Lỗi: ${stepLabel} - ${errorMessage}`, "error");
+    toast.error(errorMessage);
+    return false;
+  };
+
+  // Helper function để monitor playbook task và cập nhật logs (cho modal)
+  const monitorPlaybookTaskForStepWithModal = async (
+    taskId: string,
+    playbookFilename: string,
+    stepLabel: string
+  ): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      let lastLogLength = 0;
+      const poll = async () => {
+        try {
+          const status = await adminAPI.getPlaybookExecutionStatus(taskId);
+          
+          if (status.logs) {
+            const normalized = status.logs.replace(/\r/g, "");
+            const allLines = normalized.split("\n").filter((line: string) => line.trim().length > 0);
+            
+            // Chỉ lấy các dòng mới (từ lastLogLength trở đi)
+            const newLines = allLines.slice(lastLogLength);
+            lastLogLength = allLines.length;
+            
+            // Cập nhật logs trong modal
+            if (newLines.length > 0) {
+              setCurrentExecutingStep((prev) => {
+                if (!prev) return null;
+                return {
+                  ...prev,
+                  logs: [...prev.logs, ...newLines]
+                };
+              });
+            }
+          }
+
+          if (status.status === "running") {
+            setTimeout(poll, 1000);
+          } else if (status.status === "completed") {
+            const successMessage = `🎉 Đã thực thi playbook thành công: ${playbookFilename}`;
+            setCurrentExecutingStep((prev) => 
+              prev ? { 
+                ...prev, 
+                status: "completed",
+                logs: [...prev.logs, successMessage] 
+              } : null
+            );
+            resolve();
+          } else if (status.status === "failed") {
+            const errorMsg = status.error || "Thực thi playbook thất bại";
+            setCurrentExecutingStep((prev) => 
+              prev ? { 
+                ...prev, 
+                status: "error",
+                logs: [...prev.logs, `❌ ${errorMsg}`] 
+              } : null
+            );
+            reject(new Error(errorMsg));
+          }
+        } catch (error: any) {
+          setCurrentExecutingStep((prev) => 
+            prev ? { 
+              ...prev, 
+              status: "error",
+              logs: [...prev.logs, `❌ Lỗi: ${error.message || "Không xác định"}`] 
+            } : null
+          );
+          reject(error);
+        }
+      };
+      poll();
+    });
+  };
+
+  const handleUtilityAction = async (
+    actionKey: UtilityActionKey,
+    playbookFilename: string,
+    label: string
+  ) => {
+    if (!ansibleStatus?.controllerHost) {
+      toast.error("Không tìm thấy controller host.");
+      return;
+    }
+
+    setUtilityActionsStatus((prev) => ({ ...prev, [actionKey]: "running" }));
+    const result = await runPlaybookWithModal(playbookFilename, label);
+    setUtilityActionsStatus((prev) => ({
+      ...prev,
+      [actionKey]: result.success ? "completed" : "error",
+    }));
+
+    if (result.success) {
+      toast.success(`${label} hoàn tất!`);
+    } else {
+      toast.error(result.error || `Lỗi khi thực thi ${label}`);
+    }
+  };
+
+  const renderUtilityStatus = (status: UtilityActionStatus) => {
+    if (status === "running") {
+      return (
+        <span className="mt-3 text-xs font-medium text-blue-600 flex items-center gap-1">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Đang thực thi...
+        </span>
+      );
+    }
+
+    if (status === "completed") {
+      return (
+        <span className="mt-3 text-xs font-medium text-green-600 flex items-center gap-1">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Đã hoàn thành
+        </span>
+      );
+    }
+
+    if (status === "error") {
+      return (
+        <span className="mt-3 text-xs font-medium text-red-600 flex items-center gap-1">
+          <XCircle className="h-3.5 w-3.5" />
+          Thất bại, thử lại
+        </span>
+      );
+    }
+
+    return null;
+  };
+
+  // Handlers riêng cho từng bước trong Tab 1
+  const handleK8sTab1Step1 = useCallback(async () => {
+    await executePlaybookStep(
+      "01-update-hosts-hostname.yml",
+      "update-hosts",
+      "Cập nhật hosts & hostname",
+      setK8sTab1Steps,
+      addK8sTab1Log
+    );
+  }, [ansibleStatus?.controllerHost, initSudoPassword]);
+
+  const handleK8sTab1Step2 = useCallback(async () => {
+    await executePlaybookStep(
+      "02-kernel-sysctl.yml",
+      "kernel-sysctl",
+      "Cấu hình kernel & sysctl",
+      setK8sTab1Steps,
+      addK8sTab1Log
+    );
+  }, [ansibleStatus?.controllerHost, initSudoPassword]);
+
+  const handleK8sTab1Step3 = useCallback(async () => {
+    await executePlaybookStep(
+      "03-install-containerd.yml",
+      "install-containerd",
+      "Cài đặt containerd",
+      setK8sTab1Steps,
+      addK8sTab1Log
+    );
+  }, [ansibleStatus?.controllerHost, initSudoPassword]);
+
+  const handleK8sTab1Step4 = useCallback(async () => {
+    const success = await executePlaybookStep(
+      "04-install-kubernetes.yml",
+      "install-kubernetes",
+      "Cài đặt Kubernetes tools",
+      setK8sTab1Steps,
+      addK8sTab1Log
+    );
+    
+    if (success) {
+      // Kiểm tra xem tất cả các bước đã hoàn thành chưa
+      setK8sTab1Steps((prev) => {
+        const allCompleted = prev.every(step => step.status === "completed");
+        if (allCompleted) {
+          setK8sTab1Completed(true);
+          toast.success("Tab 1: Chuẩn bị môi trường hoàn tất!");
+        }
+        return prev;
+      });
+    }
+  }, [ansibleStatus?.controllerHost, initSudoPassword]);
+
   const handleInstallK8sTab1 = async () => {
     if (clusterServers.length === 0) {
       toast.error("Chưa có server nào trong cluster.");
@@ -1106,24 +1817,27 @@ export function ClusterSetup() {
       setK8sTab1Logs([]);
       addK8sTab1Log("Bắt đầu Tab 1: Chuẩn bị môi trường...", "step");
 
-      const result = await adminAPI.installK8sTab1({
-        controllerHost: ansibleStatus.controllerHost,
-        sudoPassword: initSudoPassword || undefined,
-        k8sVersion,
-        podNetworkCidr,
-        serviceCidr,
-        containerRuntime,
-      });
+      // Định nghĩa các playbook cần thực thi cho Tab 1
+      const playbooks = [
+        { filename: "01-update-hosts-hostname.yml", stepId: "update-hosts", label: "Cập nhật hosts & hostname" },
+        { filename: "02-kernel-sysctl.yml", stepId: "kernel-sysctl", label: "Cấu hình kernel & sysctl" },
+        { filename: "03-install-containerd.yml", stepId: "install-containerd", label: "Cài đặt containerd" },
+        { filename: "04-install-kubernetes.yml", stepId: "install-kubernetes", label: "Cài đặt Kubernetes tools" },
+      ];
 
-      const message = result.message || "Đã hoàn thành Tab 1";
-      message
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .forEach((line) => addK8sTab1Log(line, result.success ? "info" : "error"));
+      // Thực thi từng playbook tuần tự
+      for (const playbook of playbooks) {
+        const success = await executePlaybookStep(
+          playbook.filename,
+          playbook.stepId,
+          playbook.label,
+          setK8sTab1Steps,
+          addK8sTab1Log
+        );
 
-      if (!result.success) {
-        throw new Error(result.error || message);
+        if (!success) {
+          throw new Error(`Lỗi khi thực thi ${playbook.label}`);
+        }
       }
 
       addK8sTab1Log("🎉 Tab 1 hoàn tất thành công!", "success");
@@ -1143,12 +1857,53 @@ export function ClusterSetup() {
     }
   };
 
+  // Handlers riêng cho từng bước trong Tab 2
+  const handleK8sTab2Step1 = async () => {
+    await executePlaybookStep(
+      "05-init-master.yml",
+      "init-master",
+      "Khởi tạo master node",
+      setK8sTab2Steps,
+      addK8sTab2Log
+    );
+  };
+
+  const handleK8sTab2Step2 = async () => {
+    await executePlaybookStep(
+      "06-install-cni.yml",
+      "install-cni",
+      "Cài đặt CNI (Calico)",
+      setK8sTab2Steps,
+      addK8sTab2Log
+    );
+  };
+
+  const handleK8sTab2Step3 = async () => {
+    const success = await executePlaybookStep(
+      "07-join-workers.yml",
+      "join-workers",
+      "Thêm worker nodes",
+      setK8sTab2Steps,
+      addK8sTab2Log
+    );
+    
+    if (success) {
+      // Kiểm tra xem tất cả các bước đã hoàn thành chưa
+      const allCompleted = k8sTab2Steps.every(step => step.status === "completed");
+      if (allCompleted) {
+        setK8sTab2Completed(true);
+        toast.success("Tab 2: Triển khai cluster hoàn tất!");
+      }
+    }
+  };
+
   // K8s Tab 2: Triển khai cluster
   const handleInstallK8sTab2 = async () => {
-    if (!k8sTab1Completed) {
-      toast.error("Phải hoàn thành Tab 1 trước.");
-      return;
-    }
+    // TODO: TEST MODE - Bỏ ràng buộc để test
+    // if (!k8sTab1Completed) {
+    //   toast.error("Phải hoàn thành Tab 1 trước.");
+    //   return;
+    // }
 
     if (masterServers.length === 0) {
       toast.error("Phải có ít nhất 1 Master node.");
@@ -1165,24 +1920,27 @@ export function ClusterSetup() {
       setK8sTab2Logs([]);
       addK8sTab2Log("Bắt đầu Tab 2: Triển khai cluster...", "step");
 
-      const result = await adminAPI.installK8sTab2({
-        controllerHost: ansibleStatus.controllerHost,
-        sudoPassword: initSudoPassword || undefined,
-        k8sVersion,
-        podNetworkCidr,
-        serviceCidr,
-        containerRuntime,
-      });
+      // Định nghĩa các playbook cần thực thi cho Tab 2
+      // Sử dụng Calico CNI (có thể thay đổi thành Flannel nếu cần)
+      const playbooks = [
+        { filename: "05-init-master.yml", stepId: "init-master", label: "Khởi tạo master node" },
+        { filename: "06-install-cni.yml", stepId: "install-cni", label: "Cài đặt CNI (Calico)" },
+        { filename: "07-join-workers.yml", stepId: "join-workers", label: "Thêm worker nodes" },
+      ];
 
-      const message = result.message || "Đã hoàn thành Tab 2";
-      message
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .forEach((line) => addK8sTab2Log(line, result.success ? "info" : "error"));
+      // Thực thi từng playbook tuần tự
+      for (const playbook of playbooks) {
+        const success = await executePlaybookStep(
+          playbook.filename,
+          playbook.stepId,
+          playbook.label,
+          setK8sTab2Steps,
+          addK8sTab2Log
+        );
 
-      if (!result.success) {
-        throw new Error(result.error || message);
+        if (!success) {
+          throw new Error(`Lỗi khi thực thi ${playbook.label}`);
+        }
       }
 
       addK8sTab2Log("🎉 Tab 2 hoàn tất thành công!", "success");
@@ -1202,12 +1960,83 @@ export function ClusterSetup() {
     }
   };
 
+  // Handlers riêng cho từng bước trong Tab 3
+  const handleK8sTab3Step1 = async () => {
+    await executePlaybookStep(
+      "08-verify-cluster.yml",
+      "verify-cluster",
+      "Xác minh trạng thái cluster",
+      setK8sTab3Steps,
+      addK8sTab3Log
+    );
+  };
+
+  const handleK8sTab3Step2 = async () => {
+    await executePlaybookStep(
+      "09-install-helm.yml",
+      "install-helm",
+      "Cài đặt Helm 3",
+      setK8sTab3Steps,
+      addK8sTab3Log
+    );
+  };
+
+  const handleK8sTab3Step3 = async () => {
+    await executePlaybookStep(
+      "10-install-metrics-server.yml",
+      "install-metrics",
+      "Cài đặt Metrics Server",
+      setK8sTab3Steps,
+      addK8sTab3Log
+    );
+  };
+
+  const handleK8sTab3Step4 = async () => {
+    await executePlaybookStep(
+      "11-install-ingress.yml",
+      "install-ingress",
+      "Cài đặt Nginx Ingress",
+      setK8sTab3Steps,
+      addK8sTab3Log
+    );
+  };
+
+  const handleK8sTab3Step5 = async () => {
+    await executePlaybookStep(
+      "12-install-metallb.yml",
+      "install-metallb",
+      "Cài đặt MetalLB LoadBalancer",
+      setK8sTab3Steps,
+      addK8sTab3Log
+    );
+  };
+
+  const handleK8sTab3Step6 = async () => {
+    const success = await executePlaybookStep(
+      "13-setup-storage.yml",
+      "setup-storage",
+      "Thiết lập Storage (NFS)",
+      setK8sTab3Steps,
+      addK8sTab3Log
+    );
+    
+    if (success) {
+      // Kiểm tra xem tất cả các bước đã hoàn thành chưa
+      const allCompleted = k8sTab3Steps.every(step => step.status === "completed");
+      if (allCompleted) {
+        setK8sTab3Completed(true);
+        toast.success("Tab 3: Kiểm tra & Tùy chọn mở rộng hoàn tất!");
+      }
+    }
+  };
+
   // K8s Tab 3: Kiểm tra & Tùy chọn mở rộng
   const handleInstallK8sTab3 = async () => {
-    if (!k8sTab2Completed) {
-      toast.error("Phải hoàn thành Tab 2 trước.");
-      return;
-    }
+    // TODO: TEST MODE - Bỏ ràng buộc để test
+    // if (!k8sTab2Completed) {
+    //   toast.error("Phải hoàn thành Tab 2 trước.");
+    //   return;
+    // }
 
     if (!ansibleStatus?.controllerHost) {
       toast.error("Không tìm thấy controller host.");
@@ -1220,33 +2049,34 @@ export function ClusterSetup() {
       return;
     }
 
-    const workerNodeIps = workerServers.map((worker) => worker.ipAddress).filter((ip): ip is string => Boolean(ip));
-
     try {
       setIsInstallingK8sTab3(true);
       setK8sTab3Logs([]);
       addK8sTab3Log("Bắt đầu Tab 3: Kiểm tra & Tùy chọn mở rộng...", "step");
 
-      const result = await adminAPI.installK8sTab3({
-        controllerHost: ansibleStatus.controllerHost,
-        sudoPassword: initSudoPassword || undefined,
-        masterNodeIp: masterNode.ipAddress,
-        workerNodeIps,
-        k8sVersion,
-        podNetworkCidr,
-        serviceCidr,
-        containerRuntime,
-      });
+      // Định nghĩa các playbook cần thực thi cho Tab 3
+      const playbooks = [
+        { filename: "08-verify-cluster.yml", stepId: "verify-cluster", label: "Xác minh trạng thái cluster" },
+        { filename: "09-install-helm.yml", stepId: "install-helm", label: "Cài đặt Helm 3" },
+        { filename: "10-install-metrics-server.yml", stepId: "install-metrics", label: "Cài đặt Metrics Server" },
+        { filename: "11-install-ingress.yml", stepId: "install-ingress", label: "Cài đặt Nginx Ingress" },
+        { filename: "12-install-metallb.yml", stepId: "install-metallb", label: "Cài đặt MetalLB LoadBalancer" },
+        { filename: "13-setup-storage.yml", stepId: "setup-storage", label: "Thiết lập Storage (NFS)" },
+      ];
 
-      const message = result.message || "Đã hoàn thành Tab 3";
-      message
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .forEach((line) => addK8sTab3Log(line, result.success ? "info" : "error"));
+      // Thực thi từng playbook tuần tự
+      for (const playbook of playbooks) {
+        const success = await executePlaybookStep(
+          playbook.filename,
+          playbook.stepId,
+          playbook.label,
+          setK8sTab3Steps,
+          addK8sTab3Log
+        );
 
-      if (!result.success) {
-        throw new Error(result.error || message);
+        if (!success) {
+          throw new Error(`Lỗi khi thực thi ${playbook.label}`);
+        }
       }
 
       addK8sTab3Log("🎉 Tab 3 hoàn tất thành công!", "success");
@@ -2099,23 +2929,16 @@ export function ClusterSetup() {
     try {
       const serverIds = clusterServersForInit.map((s) => String(s.id));
       const result = await runInitStep({
-        stepNumber: 4,
-        startMessage: `Bước 4: Ping và kiểm tra kết nối đến ${serverIds.length} node(s)...`,
-        successMessage: "Bước 4 hoàn tất!",
+        stepNumber: 3,
+        startMessage: `Bước 3: Ping và kiểm tra kết nối đến ${serverIds.length} node(s)...`,
+        successMessage: "Bước 3 hoàn tất!",
         startRequest: () =>
           adminAPI.initAnsibleStep4(ansibleStatus.controllerHost, serverIds),
       });
 
       if (result) {
         setPingNodesStep({ status: "completed" });
-        setPart1Completed(true);
-        toast.success("Ping nodes thành công! Phần 1 đã hoàn thành.");
-
-        setTimeout(() => {
-          setExpandedSection("kubernetes");
-          setK8sActiveTab("tab1");
-          toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
-        }, 1000);
+        toast.success("Ping nodes thành công!");
       } else {
         setPingNodesStep({ status: "error", errorMessage: "Xảy ra lỗi" });
         toast.error("Lỗi khi ping nodes");
@@ -2125,6 +2948,89 @@ export function ClusterSetup() {
       toast.error(error.message || "Lỗi khi ping nodes");
     } finally {
       cancelInitTaskPolling();
+    }
+  };
+
+  // Khởi tạo templates (Bước 4)
+  const handleInitTemplates = async () => {
+    if (!ansibleStatus?.controllerHost) {
+      toast.error("Không tìm thấy controller host.");
+      return;
+    }
+
+    setInitTemplatesStep({ status: "running" });
+
+    try {
+      // Lấy tất cả templates từ playbookTemplateCatalog
+      const allTemplates: Array<{ id: string; filename: string; content: string }> = [];
+      playbookTemplateCatalog.forEach((category) => {
+        category.templates.forEach((template) => {
+          const templateData = getPlaybookTemplateById(template.id);
+          if (templateData) {
+            allTemplates.push({
+              id: template.id,
+              filename: template.filename,
+              content: templateData.content,
+            });
+          }
+        });
+      });
+
+      if (allTemplates.length === 0) {
+        throw new Error("Không tìm thấy template nào");
+      }
+
+      toast.info(`Bắt đầu khởi tạo ${allTemplates.length} template(s) playbook cho K8s...`);
+
+      let successCount = 0;
+      let failCount = 0;
+      const errors: string[] = [];
+
+      // Lưu từng template
+      for (const template of allTemplates) {
+        try {
+          const result = await adminAPI.savePlaybook({
+            controllerHost: ansibleStatus.controllerHost,
+            filename: template.filename,
+            content: template.content,
+            sudoPassword: initSudoPassword || undefined,
+          });
+
+          if (result.success) {
+            successCount++;
+          } else {
+            failCount++;
+            const errorMsg = result.error || result.message || "Lỗi không xác định";
+            errors.push(`${template.filename}: ${errorMsg}`);
+          }
+        } catch (error: any) {
+          failCount++;
+          const errorMsg = error.message || "Lỗi không xác định";
+          errors.push(`${template.filename}: ${errorMsg}`);
+        }
+      }
+
+      if (failCount === 0) {
+        setInitTemplatesStep({ status: "completed" });
+        setPart1Completed(true);
+        toast.success(`Đã khởi tạo thành công ${successCount} template(s)! Phần 1 đã hoàn thành.`);
+
+        setTimeout(() => {
+          setExpandedSection("kubernetes");
+          setK8sActiveTab("tab1");
+          toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
+        }, 1000);
+      } else if (successCount > 0) {
+        setInitTemplatesStep({ status: "completed" });
+        setPart1Completed(true);
+        toast.warning(`Đã khởi tạo ${successCount}/${allTemplates.length} template(s). ${failCount} template(s) thất bại.`);
+      } else {
+        setInitTemplatesStep({ status: "error", errorMessage: `Tất cả ${failCount} template(s) thất bại` });
+        toast.error(`Tất cả template(s) thất bại. Lỗi: ${errors.slice(0, 3).join("; ")}${errors.length > 3 ? "..." : ""}`);
+      }
+    } catch (error: any) {
+      setInitTemplatesStep({ status: "error", errorMessage: error.message || "Xảy ra lỗi" });
+      toast.error(error.message || "Lỗi khi khởi tạo templates");
     }
   };
 
@@ -2589,14 +3495,15 @@ export function ClusterSetup() {
             <Tabs
                 value={k8sActiveTab}
                 onValueChange={(value) => {
-                  if (value === "tab2" && !k8sTab1Completed) {
-                    toast.warning("Phải hoàn thành Tab 1 trước");
-                    return;
-                  }
-                  if (value === "tab3" && !k8sTab2Completed) {
-                    toast.warning("Phải hoàn thành Tab 2 trước");
-                    return;
-                  }
+                  // TODO: TEST MODE - Bỏ ràng buộc để test
+                  // if (value === "tab2" && !k8sTab1Completed) {
+                  //   toast.warning("Phải hoàn thành Tab 1 trước");
+                  //   return;
+                  // }
+                  // if (value === "tab3" && !k8sTab2Completed) {
+                  //   toast.warning("Phải hoàn thành Tab 2 trước");
+                  //   return;
+                  // }
                   setK8sActiveTab(value);
                 }}
                 className="w-full"
@@ -2608,14 +3515,14 @@ export function ClusterSetup() {
                   </TabsTrigger>
                   <TabsTrigger
                     value="tab2"
-                    className={`flex items-center gap-2 ${!k8sTab1Completed ? "opacity-50 cursor-not-allowed" : ""}`}
+                    className="flex items-center gap-2"
                   >
                     Tab 2: Triển khai cluster
                     {k8sTab2Completed && <CheckCircle2 className="h-4 w-4 text-green-500" />}
                   </TabsTrigger>
                   <TabsTrigger
                     value="tab3"
-                    className={`flex items-center gap-2 ${!k8sTab2Completed ? "opacity-50 cursor-not-allowed" : ""}`}
+                    className="flex items-center gap-2"
                   >
                     Tab 3: Kiểm tra & Mở rộng
                     {k8sTab3Completed && <CheckCircle2 className="h-4 w-4 text-green-500" />}
@@ -2643,71 +3550,7 @@ export function ClusterSetup() {
                     </CardContent>
                   </Card>
 
-                  {/* Log Console */}
-                  <div className="border rounded-lg overflow-hidden bg-gray-900 flex flex-col" style={{ minHeight: "400px", maxHeight: "500px" }}>
-                    <div className="flex items-center justify-between p-2 bg-gray-800 border-b border-gray-700">
-                      <div className="flex items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${isInstallingK8sTab1 ? "bg-green-500 animate-pulse" : "bg-gray-500"}`}></div>
-                        <span className="text-xs text-gray-300 font-mono">Console Output</span>
-                        {k8sTab1Logs.length > 0 && (
-                          <span className="text-xs text-gray-400">({k8sTab1Logs.length} dòng)</span>
-                        )}
-                      </div>
-                      {k8sTab1Logs.length > 0 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const logText = k8sTab1Logs.join("\n");
-                            navigator.clipboard.writeText(logText);
-                            toast.success("Đã sao chép log vào clipboard");
-                          }}
-                          className="h-7 px-2 text-xs text-gray-300 hover:text-white"
-                        >
-                          <Copy className="h-3 w-3 mr-1" />
-                          Copy
-                        </Button>
-                      )}
-                    </div>
-                    <div
-                      ref={k8sTab1LogRef}
-                      className="flex-1 overflow-y-auto p-4 font-mono text-sm"
-                      style={{ minHeight: "350px", maxHeight: "450px" }}
-                    >
-                      {k8sTab1Logs.length === 0 ? (
-                        <div className="text-gray-500 italic">
-                          Nhấn "Bắt đầu cài đặt" để xem log...
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {k8sTab1Logs.map((log, index) => {
-                            let logClass = "text-gray-300";
-                            if (log.includes("✓") || log.includes("✅") || log.includes("🎉")) {
-                              logClass = "text-green-400";
-                            } else if (log.includes("❌") || log.includes("Lỗi")) {
-                              logClass = "text-red-400";
-                            } else if (log.includes("📋") || log.includes("Bước") || log.includes("Tab")) {
-                              logClass = "text-yellow-400 font-semibold";
-                            } else if (log.includes("→") || log.includes("Đang")) {
-                              logClass = "text-blue-400";
-                            }
-                            return (
-                              <div key={index} className={logClass}>
-                                {log || "\u00A0"}
-                              </div>
-                            );
-                          })}
-                          {isInstallingK8sTab1 && (
-                            <div className="text-yellow-400 animate-pulse">
-                              <span className="inline-block animate-bounce">▋</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
+                  <div className="flex justify-center pt-4">
                     <Button
                       onClick={handleInstallK8sTab1}
                       disabled={isInstallingK8sTab1 || k8sTab1Completed}
@@ -2755,74 +3598,10 @@ export function ClusterSetup() {
                     </CardContent>
                   </Card>
 
-                  {/* Log Console */}
-                  <div className="border rounded-lg overflow-hidden bg-gray-900 flex flex-col" style={{ minHeight: "400px", maxHeight: "500px" }}>
-                    <div className="flex items-center justify-between p-2 bg-gray-800 border-b border-gray-700">
-                      <div className="flex items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${isInstallingK8sTab2 ? "bg-green-500 animate-pulse" : "bg-gray-500"}`}></div>
-                        <span className="text-xs text-gray-300 font-mono">Console Output</span>
-                        {k8sTab2Logs.length > 0 && (
-                          <span className="text-xs text-gray-400">({k8sTab2Logs.length} dòng)</span>
-                        )}
-                      </div>
-                      {k8sTab2Logs.length > 0 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const logText = k8sTab2Logs.join("\n");
-                            navigator.clipboard.writeText(logText);
-                            toast.success("Đã sao chép log vào clipboard");
-                          }}
-                          className="h-7 px-2 text-xs text-gray-300 hover:text-white"
-                        >
-                          <Copy className="h-3 w-3 mr-1" />
-                          Copy
-                        </Button>
-                      )}
-                    </div>
-                    <div
-                      ref={k8sTab2LogRef}
-                      className="flex-1 overflow-y-auto p-4 font-mono text-sm"
-                      style={{ minHeight: "350px", maxHeight: "450px" }}
-                    >
-                      {k8sTab2Logs.length === 0 ? (
-                        <div className="text-gray-500 italic">
-                          Nhấn "Bắt đầu cài đặt" để xem log...
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {k8sTab2Logs.map((log, index) => {
-                            let logClass = "text-gray-300";
-                            if (log.includes("✓") || log.includes("✅") || log.includes("🎉")) {
-                              logClass = "text-green-400";
-                            } else if (log.includes("❌") || log.includes("Lỗi")) {
-                              logClass = "text-red-400";
-                            } else if (log.includes("📋") || log.includes("Bước") || log.includes("Tab")) {
-                              logClass = "text-yellow-400 font-semibold";
-                            } else if (log.includes("→") || log.includes("Đang")) {
-                              logClass = "text-blue-400";
-                            }
-                            return (
-                              <div key={index} className={logClass}>
-                                {log || "\u00A0"}
-                              </div>
-                            );
-                          })}
-                          {isInstallingK8sTab2 && (
-                            <div className="text-yellow-400 animate-pulse">
-                              <span className="inline-block animate-bounce">▋</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
+                  <div className="flex justify-center pt-4">
                     <Button
                       onClick={handleInstallK8sTab2}
-                      disabled={isInstallingK8sTab2 || k8sTab2Completed || !k8sTab1Completed}
+                      disabled={isInstallingK8sTab2 || k8sTab2Completed}
                       size="lg"
                       className="min-w-[200px]"
                     >
@@ -2853,7 +3632,7 @@ export function ClusterSetup() {
                       Tab 3: Kiểm tra & Tùy chọn mở rộng
                     </Label>
                     <p className="text-sm text-muted-foreground mb-4">
-                      Xác minh trạng thái cluster, cài đặt Helm 3, Metrics Server, và Nginx Ingress
+                      Xác minh trạng thái cluster, cài đặt các công cụ mở rộng: Helm 3, Metrics Server, Nginx Ingress, MetalLB, và Storage (NFS)
                     </p>
                   </div>
 
@@ -2867,74 +3646,10 @@ export function ClusterSetup() {
                     </CardContent>
                   </Card>
 
-                  {/* Log Console */}
-                  <div className="border rounded-lg overflow-hidden bg-gray-900 flex flex-col" style={{ minHeight: "400px", maxHeight: "500px" }}>
-                    <div className="flex items-center justify-between p-2 bg-gray-800 border-b border-gray-700">
-                      <div className="flex items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${isInstallingK8sTab3 ? "bg-green-500 animate-pulse" : "bg-gray-500"}`}></div>
-                        <span className="text-xs text-gray-300 font-mono">Console Output</span>
-                        {k8sTab3Logs.length > 0 && (
-                          <span className="text-xs text-gray-400">({k8sTab3Logs.length} dòng)</span>
-                        )}
-                      </div>
-                      {k8sTab3Logs.length > 0 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const logText = k8sTab3Logs.join("\n");
-                            navigator.clipboard.writeText(logText);
-                            toast.success("Đã sao chép log vào clipboard");
-                          }}
-                          className="h-7 px-2 text-xs text-gray-300 hover:text-white"
-                        >
-                          <Copy className="h-3 w-3 mr-1" />
-                          Copy
-                        </Button>
-                      )}
-                    </div>
-                    <div
-                      ref={k8sTab3LogRef}
-                      className="flex-1 overflow-y-auto p-4 font-mono text-sm"
-                      style={{ minHeight: "350px", maxHeight: "450px" }}
-                    >
-                      {k8sTab3Logs.length === 0 ? (
-                        <div className="text-gray-500 italic">
-                          Nhấn "Bắt đầu cài đặt" để xem log...
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {k8sTab3Logs.map((log, index) => {
-                            let logClass = "text-gray-300";
-                            if (log.includes("✓") || log.includes("✅") || log.includes("🎉")) {
-                              logClass = "text-green-400";
-                            } else if (log.includes("❌") || log.includes("Lỗi")) {
-                              logClass = "text-red-400";
-                            } else if (log.includes("📋") || log.includes("Bước") || log.includes("Tab")) {
-                              logClass = "text-yellow-400 font-semibold";
-                            } else if (log.includes("→") || log.includes("Đang")) {
-                              logClass = "text-blue-400";
-                            }
-                            return (
-                              <div key={index} className={logClass}>
-                                {log || "\u00A0"}
-                              </div>
-                            );
-                          })}
-                          {isInstallingK8sTab3 && (
-                            <div className="text-yellow-400 animate-pulse">
-                              <span className="inline-block animate-bounce">▋</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
+                  <div className="flex justify-center pt-4">
                     <Button
                       onClick={handleInstallK8sTab3}
-                      disabled={isInstallingK8sTab3 || k8sTab3Completed || !k8sTab2Completed}
+                      disabled={isInstallingK8sTab3 || k8sTab3Completed}
                       size="lg"
                       className="min-w-[200px]"
                     >
@@ -2958,6 +3673,88 @@ export function ClusterSetup() {
                   </div>
                 </TabsContent>
               </Tabs>
+            
+            {ansibleStatus?.installed && (
+              <Card className="bg-gradient-to-br from-indigo-50/60 to-teal-50/60 dark:from-indigo-950/30 dark:to-teal-950/20 border-indigo-200/60 dark:border-indigo-900/40">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <div className="p-1.5 bg-indigo-100 dark:bg-indigo-900/40 rounded-lg">
+                      <Settings className="h-4 w-4 text-indigo-600 dark:text-indigo-300" />
+                    </div>
+                    Tùy chọn khác cho Phần 2
+                  </CardTitle>
+                  <CardDescription className="text-sm">
+                    Thực hiện nhanh các tác vụ độc lập như reset cluster, cài đặt Helm hoặc join thêm worker.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <Button
+                      onClick={() => handleUtilityAction("resetCluster", "00-reset-cluster.yml", "Reset toàn bộ cluster")}
+                      disabled={utilityActionsStatus.resetCluster === "running" || !ansibleStatus.installed}
+                      size="lg"
+                      variant="outline"
+                      className="h-auto py-5 px-4 flex flex-col items-start bg-white dark:bg-gray-900/60 hover:bg-gray-50 dark:hover:bg-gray-800 border shadow-sm transition-all hover:shadow-md"
+                    >
+                      <div className="flex items-center gap-2.5 mb-2.5 w-full">
+                        <div className="p-1.5 bg-red-100 dark:bg-red-900/40 rounded-lg">
+                          <RotateCcw className="h-4 w-4 text-red-600 dark:text-red-300" />
+                        </div>
+                        <span className="font-semibold text-base">Reset cluster</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground text-left leading-relaxed">
+                        Dọn sạch toàn bộ cấu hình Kubernetes và đưa các node về trạng thái ban đầu.
+                      </span>
+                      {renderUtilityStatus(utilityActionsStatus.resetCluster)}
+                    </Button>
+
+                    <Button
+                      onClick={() => handleUtilityAction("installHelm", "09-install-helm.yml", "Cài đặt Helm 3")}
+                      disabled={utilityActionsStatus.installHelm === "running" || !ansibleStatus.installed}
+                      size="lg"
+                      variant="outline"
+                      className="h-auto py-5 px-4 flex flex-col items-start bg-white dark:bg-gray-900/60 hover:bg-gray-50 dark:hover:bg-gray-800 border shadow-sm transition-all hover:shadow-md"
+                    >
+                      <div className="flex items-center gap-2.5 mb-2.5 w-full">
+                        <div className="p-1.5 bg-amber-100 dark:bg-amber-900/40 rounded-lg">
+                          <Package className="h-4 w-4 text-amber-600 dark:text-amber-300" />
+                        </div>
+                        <span className="font-semibold text-base">Cài đặt Helm 3</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground text-left leading-relaxed">
+                        Cài đặt hoặc cập nhật Helm để quản lý các ứng dụng trên cluster hiện có.
+                      </span>
+                      {renderUtilityStatus(utilityActionsStatus.installHelm)}
+                    </Button>
+
+                    <Button
+                      onClick={() =>
+                        handleUtilityAction(
+                          "joinExistingWorkers",
+                          "14-prepare-and-join-worker.yml",
+                          "Join worker vào cụm hiện có"
+                        )
+                      }
+                      disabled={utilityActionsStatus.joinExistingWorkers === "running" || !ansibleStatus.installed}
+                      size="lg"
+                      variant="outline"
+                      className="h-auto py-5 px-4 flex flex-col items-start bg-white dark:bg-gray-900/60 hover:bg-gray-50 dark:hover:bg-gray-800 border shadow-sm transition-all hover:shadow-md"
+                    >
+                      <div className="flex items-center gap-2.5 mb-2.5 w-full">
+                        <div className="p-1.5 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg">
+                          <Users className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
+                        </div>
+                        <span className="font-semibold text-base">Join worker vào cụm</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground text-left leading-relaxed">
+                        Chuẩn bị và join thêm worker nodes vào cụm Kubernetes đã vận hành.
+                      </span>
+                      {renderUtilityStatus(utilityActionsStatus.joinExistingWorkers)}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </CardContent>
         )}
       </Card>
@@ -2997,6 +3794,112 @@ export function ClusterSetup() {
             <Button onClick={() => setShowInfoModal(false)}>
               Đóng
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Step Execution Modal - Hiển thị tiến trình thực thi từng bước */}
+      <Dialog 
+        open={showStepExecutionModal} 
+        onOpenChange={(open) => {
+          if (!open && currentExecutingStep?.status !== "running") {
+            setShowStepExecutionModal(false);
+            setCurrentExecutingStep(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {currentExecutingStep?.status === "running" ? (
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              ) : currentExecutingStep?.status === "completed" ? (
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+              ) : currentExecutingStep?.status === "error" ? (
+                <XCircle className="h-5 w-5 text-red-500" />
+              ) : (
+                <Play className="h-5 w-5" />
+              )}
+              {currentExecutingStep?.stepLabel || "Đang thực thi"}
+            </DialogTitle>
+            <DialogDescription>
+              Playbook: {currentExecutingStep?.playbookFilename || "N/A"}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-hidden flex flex-col mt-4">
+            {/* Status Badge */}
+            <div className="mb-4">
+              {currentExecutingStep?.status === "running" && (
+                <Badge variant="default" className="bg-blue-500">
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Đang thực thi...
+                </Badge>
+              )}
+              {currentExecutingStep?.status === "completed" && (
+                <Badge variant="default" className="bg-green-500">
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  Hoàn thành
+                </Badge>
+              )}
+              {currentExecutingStep?.status === "error" && (
+                <Badge variant="destructive">
+                  <XCircle className="h-3 w-3 mr-1" />
+                  Thất bại
+                </Badge>
+              )}
+            </div>
+
+            {/* Logs Container */}
+            <div 
+              ref={stepExecutionLogRef}
+              className="flex-1 border rounded-lg bg-gray-900 text-green-400 p-4 overflow-auto font-mono text-sm"
+            >
+              {currentExecutingStep?.logs.length === 0 ? (
+                <div className="text-gray-500">Đang khởi tạo...</div>
+              ) : (
+                currentExecutingStep?.logs.map((log, index) => {
+                  const isError = log.includes("❌") || log.toLowerCase().includes("lỗi") || log.toLowerCase().includes("error") || log.toLowerCase().includes("failed");
+                  const isSuccess = log.includes("✅") || log.includes("🎉") || log.includes("Hoàn tất") || log.toLowerCase().includes("success");
+                  const isStep = log.includes("▶️") || log.includes("Bắt đầu");
+                  
+                  return (
+                    <div
+                      key={index}
+                      className={`mb-1 whitespace-pre-wrap break-words ${
+                        isError
+                          ? "text-red-400"
+                          : isSuccess
+                          ? "text-green-400"
+                          : isStep
+                          ? "text-yellow-400 font-semibold"
+                          : "text-gray-300"
+                      }`}
+                    >
+                      {log}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
+            {currentExecutingStep?.status === "running" ? (
+              <Button variant="outline" disabled>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Đang thực thi...
+              </Button>
+            ) : (
+              <Button 
+                onClick={() => {
+                  setShowStepExecutionModal(false);
+                  setCurrentExecutingStep(null);
+                }}
+              >
+                Đóng
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
