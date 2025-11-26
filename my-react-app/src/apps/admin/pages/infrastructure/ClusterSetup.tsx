@@ -65,11 +65,11 @@ export function ClusterSetup() {
   const [expandedSection, setExpandedSection] = useState<string | null>("ansible");
   const [showAnsibleConfig, setShowAnsibleConfig] = useState(false);
   const [isCheckingAnsibleStatus, setIsCheckingAnsibleStatus] = useState(false);
-  
+
   // Completion tracking states
   const [part1Completed, setPart1Completed] = useState(false);
   const [k8sActiveTab, setK8sActiveTab] = useState<string>("tab1");
-  
+
   // K8s installation states for 3 tabs
   const [isInstallingK8sTab1, setIsInstallingK8sTab1] = useState(false);
   const [isInstallingK8sTab2, setIsInstallingK8sTab2] = useState(false);
@@ -77,7 +77,7 @@ export function ClusterSetup() {
   const [k8sTab1Completed, setK8sTab1Completed] = useState(false);
   const [k8sTab2Completed, setK8sTab2Completed] = useState(false);
   const [k8sTab3Completed, setK8sTab3Completed] = useState(false);
-  
+
   // K8s installation logs for each tab
   const [k8sTab1Logs, setK8sTab1Logs] = useState<string[]>([]);
   const [k8sTab2Logs, setK8sTab2Logs] = useState<string[]>([]);
@@ -85,7 +85,7 @@ export function ClusterSetup() {
   const k8sTab1LogRef = useRef<HTMLDivElement>(null);
   const k8sTab2LogRef = useRef<HTMLDivElement>(null);
   const k8sTab3LogRef = useRef<HTMLDivElement>(null);
-  
+
   // Ansible status states
   const [ansibleStatus, setAnsibleStatus] = useState<{
     installed: boolean;
@@ -94,7 +94,7 @@ export function ClusterSetup() {
     controllerRole?: "ANSIBLE" | "MASTER";
     error?: string;
   } | null>(null);
-  
+
   // Modal states
   const [showInitModal, setShowInitModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -104,7 +104,7 @@ export function ClusterSetup() {
   const [pendingAnsibleAction, setPendingAnsibleAction] = useState<"install" | "reinstall" | "uninstall" | null>(null);
   const [pendingControllerHost, setPendingControllerHost] = useState<string | null>(null);
   const [pendingServerId, setPendingServerId] = useState<number | null>(null);
-  
+
   // Server auth status states
   const [serverAuthStatus, setServerAuthStatus] = useState<{
     hasSshKey: boolean;
@@ -114,7 +114,7 @@ export function ClusterSetup() {
     error?: string;
   } | null>(null);
   const [isCheckingAuthStatus, setIsCheckingAuthStatus] = useState(false);
-  
+
   // Ansible operation steps (thay thế logs)
   const [ansibleOperationSteps, setAnsibleOperationSteps] = useState<Array<{
     id: number;
@@ -122,7 +122,7 @@ export function ClusterSetup() {
     status: "pending" | "running" | "completed" | "error";
   }>>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(-1);
-  
+
   // Config backup states (for rollback)
   const [configBackup, setConfigBackup] = useState<{
     ansibleCfg: string;
@@ -132,7 +132,7 @@ export function ClusterSetup() {
   const [isVerifyingConfig, setIsVerifyingConfig] = useState(false);
   const [isRollingBack, setIsRollingBack] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
-  
+
   // Playbook states
   const [playbooks, setPlaybooks] = useState<Array<{ name: string; content: string; size?: number }>>([]);
   const [selectedPlaybook, setSelectedPlaybook] = useState<string | null>(null);
@@ -149,7 +149,7 @@ export function ClusterSetup() {
   const playbookExecutionLogRef = useRef<HTMLDivElement>(null);
   const playbookTaskLogLengthRef = useRef(0);
   const playbookTaskPollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
+
   // Init Ansible log states
   const [initLogs, setInitLogs] = useState<string[]>([]);
   const [isInitializing, setIsInitializing] = useState(false);
@@ -229,7 +229,7 @@ export function ClusterSetup() {
 
   const checkServerAuthStatus = async () => {
     if (!pendingServerId) return;
-    
+
     setIsCheckingAuthStatus(true);
     try {
       const status = await adminAPI.checkServerAuthStatus(pendingServerId);
@@ -251,7 +251,7 @@ export function ClusterSetup() {
   // Khởi tạo các bước dựa trên action type
   const initializeAnsibleSteps = (action: "install" | "reinstall" | "uninstall") => {
     let steps: Array<{ id: number; label: string; status: "pending" | "running" | "completed" | "error" }> = [];
-    
+
     if (action === "install") {
       steps = [
         { id: 1, label: "Cập nhật package manager", status: "pending" },
@@ -274,7 +274,7 @@ export function ClusterSetup() {
         { id: 5, label: "Kiểm tra sau khi gỡ", status: "pending" },
       ];
     }
-    
+
     setAnsibleOperationSteps(steps);
     setCurrentStepIndex(-1);
   };
@@ -345,7 +345,7 @@ export function ClusterSetup() {
   );
   const masterServers = clusterServers.filter((s) => s.role === "MASTER");
   const workerServers = clusterServers.filter((s) => s.role === "WORKER");
-  
+
   // Tính toán thông tin cluster để hiển thị
   const masterCount = masterServers.length;
   const workerCount = workerServers.length;
@@ -359,7 +359,7 @@ export function ClusterSetup() {
       const status = await adminAPI.checkAnsibleStatus();
       // Luôn cập nhật status, kể cả khi có error
       setAnsibleStatus(status);
-      
+
       // Chỉ hiển thị toast nếu không phải silent mode
       if (!silent) {
         if (status.error) {
@@ -416,7 +416,7 @@ export function ClusterSetup() {
     }
 
     const sudoPassword = sudoPasswords[pendingControllerHost] || "";
-    
+
     // Kiểm tra nếu cần password nhưng chưa nhập
     if (serverAuthStatus?.needsPassword && (!sudoPassword || sudoPassword.trim() === "")) {
       toast.error("Vui lòng nhập sudo password.");
@@ -425,29 +425,29 @@ export function ClusterSetup() {
 
     try {
       setIsInstallingAnsible(true);
-      
+
       // Bước 1: Cập nhật package manager
       setAnsibleRunningStep(1);
       await new Promise((resolve) => setTimeout(resolve, 1000));
       completeStep(1);
-      
+
       // Bước 2: Cài đặt Python và pip
       setAnsibleRunningStep(2);
       await new Promise((resolve) => setTimeout(resolve, 1500));
       completeStep(2);
-      
+
       // Bước 3: Cài đặt Ansible
       setAnsibleRunningStep(3);
       const result = await adminAPI.installAnsible(pendingControllerHost, sudoPassword);
-      
+
       // Nếu API call thành công (không throw error), coi như đã bắt đầu cài đặt
       completeStep(3);
-      
+
       // Bước 4: Kiểm tra cài đặt
       setAnsibleRunningStep(4);
       await new Promise((resolve) => setTimeout(resolve, 2000));
       completeStep(4);
-      
+
       // Refresh status sau khi cài đặt
       setTimeout(async () => {
         try {
@@ -460,7 +460,7 @@ export function ClusterSetup() {
           console.error("Không thể kiểm tra trạng thái sau khi cài đặt", error);
         }
       }, 1000);
-      
+
       // Clear passwords sau khi sử dụng
       setSudoPasswords({});
     } catch (error: any) {
@@ -482,7 +482,7 @@ export function ClusterSetup() {
     }
 
     const ansibleServer = ansibleServers[0]; // Chỉ có 1 máy Ansible
-    
+
     // Mở modal để nhập sudo password
     setPendingAnsibleAction("reinstall");
     setPendingControllerHost(ansibleServer.ipAddress);
@@ -498,7 +498,7 @@ export function ClusterSetup() {
     }
 
     const sudoPassword = sudoPasswords[pendingControllerHost] || "";
-    
+
     // Kiểm tra nếu cần password nhưng chưa nhập
     if (serverAuthStatus?.needsPassword && (!sudoPassword || sudoPassword.trim() === "")) {
       toast.error("Vui lòng nhập sudo password.");
@@ -507,24 +507,24 @@ export function ClusterSetup() {
 
     try {
       setIsReinstallingAnsible(true);
-      
+
       // Bước 1: Cập nhật pip
       setAnsibleRunningStep(1);
       await new Promise((resolve) => setTimeout(resolve, 1000));
       completeStep(1);
-      
+
       // Bước 2: Cài đặt lại/nâng cấp Ansible
       setAnsibleRunningStep(2);
       const result = await adminAPI.reinstallAnsible(pendingControllerHost, sudoPassword);
-      
+
       // Nếu API call thành công (không throw error), coi như đã bắt đầu cài đặt lại
       completeStep(2);
-      
+
       // Bước 3: Kiểm tra phiên bản
       setAnsibleRunningStep(3);
       await new Promise((resolve) => setTimeout(resolve, 2000));
       completeStep(3);
-      
+
       // Refresh status sau khi cài đặt lại
       setTimeout(async () => {
         try {
@@ -537,7 +537,7 @@ export function ClusterSetup() {
           console.error("Không thể kiểm tra trạng thái sau khi cài đặt lại", error);
         }
       }, 1000);
-      
+
       // Clear passwords sau khi sử dụng
       setSudoPasswords({});
     } catch (error: any) {
@@ -559,7 +559,7 @@ export function ClusterSetup() {
     }
 
     const ansibleServer = ansibleServers[0]; // Chỉ có 1 máy Ansible
-    
+
     // Mở modal để nhập sudo password
     setPendingAnsibleAction("uninstall");
     setPendingControllerHost(ansibleServer.ipAddress);
@@ -575,7 +575,7 @@ export function ClusterSetup() {
     }
 
     const sudoPassword = sudoPasswords[pendingControllerHost] || "";
-    
+
     // Kiểm tra nếu cần password nhưng chưa nhập
     if (serverAuthStatus?.needsPassword && (!sudoPassword || sudoPassword.trim() === "")) {
       toast.error("Vui lòng nhập sudo password.");
@@ -584,34 +584,34 @@ export function ClusterSetup() {
 
     try {
       setIsUninstallingAnsible(true);
-      
+
       // Bước 1: Kiểm tra hiện trạng
       setAnsibleRunningStep(1);
       await new Promise((resolve) => setTimeout(resolve, 800));
       completeStep(1);
-      
+
       // Bước 2: Gỡ bằng pip
       setAnsibleRunningStep(2);
       await new Promise((resolve) => setTimeout(resolve, 1500));
       completeStep(2);
-      
+
       // Bước 3: Gỡ bằng apt
       setAnsibleRunningStep(3);
       await new Promise((resolve) => setTimeout(resolve, 1200));
       completeStep(3);
-      
+
       // Bước 4: Dọn dẹp
       setAnsibleRunningStep(4);
       await new Promise((resolve) => setTimeout(resolve, 1000));
       completeStep(4);
-      
+
       // Bước 5: Kiểm tra sau khi gỡ
       setAnsibleRunningStep(5);
       const result = await adminAPI.uninstallAnsible(pendingControllerHost, sudoPassword);
-      
+
       // Nếu API call thành công (không throw error), coi như đã hoàn tất
       completeStep(5);
-      
+
       // Update status after uninstallation
       setTimeout(async () => {
         try {
@@ -629,7 +629,7 @@ export function ClusterSetup() {
           toast.success("Gỡ Ansible hoàn tất!");
         }
       }, 1000);
-      
+
       // Clear passwords sau khi sử dụng
       setSudoPasswords({});
     } catch (error: any) {
@@ -703,7 +703,7 @@ export function ClusterSetup() {
       setIsInstallingK8sTab1(true);
       setK8sTab1Logs([]);
       addK8sTab1Log("Bắt đầu Tab 1: Chuẩn bị môi trường...", "step");
-      
+
       const result = await adminAPI.installK8sTab1({
         controllerHost: ansibleStatus.controllerHost,
         sudoPassword: initSudoPassword || undefined,
@@ -723,11 +723,11 @@ export function ClusterSetup() {
       if (!result.success) {
         throw new Error(result.error || message);
       }
-      
+
       addK8sTab1Log("🎉 Tab 1 hoàn tất thành công!", "success");
       setK8sTab1Completed(true);
       toast.success("Tab 1: Chuẩn bị môi trường hoàn tất!");
-      
+
       setTimeout(() => {
         setK8sActiveTab("tab2");
         toast.info("Đã chuyển sang Tab 2");
@@ -762,7 +762,7 @@ export function ClusterSetup() {
       setIsInstallingK8sTab2(true);
       setK8sTab2Logs([]);
       addK8sTab2Log("Bắt đầu Tab 2: Triển khai cluster...", "step");
-      
+
       const result = await adminAPI.installK8sTab2({
         controllerHost: ansibleStatus.controllerHost,
         sudoPassword: initSudoPassword || undefined,
@@ -782,11 +782,11 @@ export function ClusterSetup() {
       if (!result.success) {
         throw new Error(result.error || message);
       }
-      
+
       addK8sTab2Log("🎉 Tab 2 hoàn tất thành công!", "success");
       setK8sTab2Completed(true);
       toast.success("Tab 2: Triển khai cluster hoàn tất!");
-      
+
       setTimeout(() => {
         setK8sActiveTab("tab3");
         toast.info("Đã chuyển sang Tab 3");
@@ -824,7 +824,7 @@ export function ClusterSetup() {
       setIsInstallingK8sTab3(true);
       setK8sTab3Logs([]);
       addK8sTab3Log("Bắt đầu Tab 3: Kiểm tra & Tùy chọn mở rộng...", "step");
-      
+
       const result = await adminAPI.installK8sTab3({
         controllerHost: ansibleStatus.controllerHost,
         sudoPassword: initSudoPassword || undefined,
@@ -846,7 +846,7 @@ export function ClusterSetup() {
       if (!result.success) {
         throw new Error(result.error || message);
       }
-      
+
       addK8sTab3Log("🎉 Tab 3 hoàn tất thành công!", "success");
       addK8sTab3Log("🎉 Kubernetes Cluster đã được cài đặt hoàn chỉnh!", "success");
       setK8sTab3Completed(true);
@@ -1024,10 +1024,10 @@ export function ClusterSetup() {
       return;
     }
 
-      if (!ansibleCfg.trim() || !ansibleInventory.trim()) {
-        toast.error("Vui lòng điền đầy đủ ansible.cfg và inventory");
-        return;
-      }
+    if (!ansibleCfg.trim() || !ansibleInventory.trim()) {
+      toast.error("Vui lòng điền đầy đủ ansible.cfg và inventory");
+      return;
+    }
 
     setIsVerifyingConfig(true);
 
@@ -1065,12 +1065,12 @@ export function ClusterSetup() {
 
     try {
       setIsRollingBack(true);
-      
+
       // Restore from backup
       setAnsibleCfg(configBackup.ansibleCfg);
       setAnsibleInventory(configBackup.ansibleInventory);
       setAnsibleVars(configBackup.ansibleVars);
-      
+
       toast.success("Đã khôi phục cấu hình");
     } catch (error: any) {
       const errorMessage = error.message || "Không thể khôi phục cấu hình";
@@ -1276,7 +1276,7 @@ export function ClusterSetup() {
     playbookTaskLogLengthRef.current = 0;
     setPlaybookExecutionLogs([]);
   }, [setPlaybookExecutionLogs]);
-  
+
   const cancelPlaybookTaskPolling = useCallback(() => {
     if (playbookTaskPollingRef.current) {
       clearTimeout(playbookTaskPollingRef.current);
@@ -1362,8 +1362,8 @@ export function ClusterSetup() {
       cancelPlaybookTaskPolling();
       setIsExecutingPlaybook(true);
       clearPlaybookExecutionLogs();
-      addPlaybookExecutionLog(`Bắt đầu thực thi playbook: ${selectedPlaybook}`, "step");
-      
+      // addPlaybookExecutionLog(`Bắt đầu thực thi playbook: ${selectedPlaybook}`, "step");
+
       const result = await adminAPI.executePlaybook({
         controllerHost: ansibleStatus.controllerHost,
         filename: selectedPlaybook,
@@ -1530,7 +1530,7 @@ export function ClusterSetup() {
       startRequest: () =>
         adminAPI.initAnsibleStep1(
           ansibleStatus?.controllerHost,
-        initSudoPassword || undefined
+          initSudoPassword || undefined
         ),
     });
   };
@@ -1544,10 +1544,10 @@ export function ClusterSetup() {
       startRequest: () =>
         adminAPI.initAnsibleStep2(
           ansibleStatus?.controllerHost,
-        ansibleCfg,
-        ansibleInventory,
-        ansibleVars,
-        initSudoPassword || undefined
+          ansibleCfg,
+          ansibleInventory,
+          ansibleVars,
+          initSudoPassword || undefined
         ),
     });
   };
@@ -1559,15 +1559,15 @@ export function ClusterSetup() {
       return false;
     }
 
-      const clusterServersForInit = servers.filter(
-        (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
-      );
+    const clusterServersForInit = servers.filter(
+      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+    );
 
-      if (clusterServersForInit.length === 0) {
+    if (clusterServersForInit.length === 0) {
       emitInitLogLine("⚠️ Không có nodes nào trong cluster để phân phối key");
-        toast.warning("Không có nodes nào trong cluster");
+      toast.warning("Không có nodes nào trong cluster");
       return false;
-      }
+    }
 
     const serverIds = clusterServersForInit.map((s) => String(s.id));
 
@@ -1577,9 +1577,9 @@ export function ClusterSetup() {
       successMessage: "Bước 3 hoàn tất!",
       startRequest: () =>
         adminAPI.initAnsibleStep3(
-        ansibleStatus.controllerHost,
-        serverIds,
-        initSudoPassword || undefined
+          ansibleStatus.controllerHost,
+          serverIds,
+          initSudoPassword || undefined
         ),
     });
   };
@@ -1591,15 +1591,15 @@ export function ClusterSetup() {
       return false;
     }
 
-      const clusterServersForInit = servers.filter(
-        (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
-      );
+    const clusterServersForInit = servers.filter(
+      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+    );
 
-      if (clusterServersForInit.length === 0) {
+    if (clusterServersForInit.length === 0) {
       emitInitLogLine("⚠️ Không có nodes nào trong cluster để ping");
-        toast.warning("Không có nodes nào trong cluster");
+      toast.warning("Không có nodes nào trong cluster");
       return false;
-      }
+    }
 
     const serverIds = clusterServersForInit.map((s) => String(s.id));
 
@@ -1654,19 +1654,19 @@ export function ClusterSetup() {
 
     emitInitLogLine("");
     emitInitLogLine("🎉 Khởi tạo Ansible hoàn tất thành công!");
-      const clusterServersForInit = servers.filter(
-        (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
-      );
+    const clusterServersForInit = servers.filter(
+      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+    );
     emitInitLogLine(`Đã khởi tạo cho ${clusterServersForInit.length} nodes trong cluster.`);
-      
-      setPart1Completed(true);
-      toast.success("Khởi tạo Ansible thành công! Phần 1 đã hoàn thành.");
-      
-      setTimeout(() => {
-        setExpandedSection("kubernetes");
-        setK8sActiveTab("tab1");
-        toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
-      }, 1000);
+
+    setPart1Completed(true);
+    toast.success("Khởi tạo Ansible thành công! Phần 1 đã hoàn thành.");
+
+    setTimeout(() => {
+      setExpandedSection("kubernetes");
+      setK8sActiveTab("tab1");
+      toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
+    }, 1000);
 
     finish();
   };
@@ -2045,8 +2045,8 @@ export function ClusterSetup() {
             )}
 
             {part1Completed && (
-              <Tabs 
-                value={k8sActiveTab} 
+              <Tabs
+                value={k8sActiveTab}
                 onValueChange={(value) => {
                   if (value === "tab2" && !k8sTab1Completed) {
                     toast.warning("Phải hoàn thành Tab 1 trước");
@@ -2057,7 +2057,7 @@ export function ClusterSetup() {
                     return;
                   }
                   setK8sActiveTab(value);
-                }} 
+                }}
                 className="w-full"
               >
                 <TabsList className="grid w-full grid-cols-3">
@@ -2065,15 +2065,15 @@ export function ClusterSetup() {
                     Tab 1: Chuẩn bị môi trường
                     {k8sTab1Completed && <CheckCircle2 className="h-4 w-4 text-green-500" />}
                   </TabsTrigger>
-                  <TabsTrigger 
-                    value="tab2" 
+                  <TabsTrigger
+                    value="tab2"
                     className={`flex items-center gap-2 ${!k8sTab1Completed ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     Tab 2: Triển khai cluster
                     {k8sTab2Completed && <CheckCircle2 className="h-4 w-4 text-green-500" />}
                   </TabsTrigger>
-                  <TabsTrigger 
-                    value="tab3" 
+                  <TabsTrigger
+                    value="tab3"
                     className={`flex items-center gap-2 ${!k8sTab2Completed ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     Tab 3: Kiểm tra & Mở rộng
@@ -2485,116 +2485,116 @@ export function ClusterSetup() {
               </div>
             </div>
 
-            
+
 
             <div className="pt-2 border-t space-y-3">
-            {/* Step Buttons */}
+              {/* Step Buttons */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <Button
-                onClick={executeStep1}
-                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                variant="outline"
-                className="justify-start"
-              >
-                {runningStep === 1 ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Đang chạy...
-                  </>
-                ) : (
-                  <>
-                    <FileText className="h-4 w-4 mr-2" />
-                    Bước 1: Tạo cấu trúc thư mục
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={executeStep2}
-                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                variant="outline"
-                className="justify-start"
-              >
-                {runningStep === 2 ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Đang chạy...
-                  </>
-                ) : (
-                  <>
-                    <Settings className="h-4 w-4 mr-2" />
-                    Bước 2: Ghi cấu hình mặc định
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={executeStep3}
-                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                variant="outline"
-                className="justify-start"
-              >
-                {runningStep === 3 ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Đang chạy...
-                  </>
-                ) : (
-                  <>
-                    <Network className="h-4 w-4 mr-2" />
-                    Bước 3: Phân phối SSH key
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={executeStep4}
-                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                variant="outline"
-                className="justify-start"
-              >
-                {runningStep === 4 ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Đang chạy...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    Bước 4: Ping nodes
-                  </>
-                )}
-              </Button>
-            </div>
+                <Button
+                  onClick={executeStep1}
+                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                  variant="outline"
+                  className="justify-start"
+                >
+                  {runningStep === 1 ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Đang chạy...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4 mr-2" />
+                      Bước 1: Tạo cấu trúc thư mục
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={executeStep2}
+                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                  variant="outline"
+                  className="justify-start"
+                >
+                  {runningStep === 2 ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Đang chạy...
+                    </>
+                  ) : (
+                    <>
+                      <Settings className="h-4 w-4 mr-2" />
+                      Bước 2: Ghi cấu hình mặc định
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={executeStep3}
+                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                  variant="outline"
+                  className="justify-start"
+                >
+                  {runningStep === 3 ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Đang chạy...
+                    </>
+                  ) : (
+                    <>
+                      <Network className="h-4 w-4 mr-2" />
+                      Bước 3: Phân phối SSH key
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={executeStep4}
+                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                  variant="outline"
+                  className="justify-start"
+                >
+                  {runningStep === 4 ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Đang chạy...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Bước 4: Ping nodes
+                    </>
+                  )}
+                </Button>
+              </div>
 
-            {/* Action Buttons */}
+              {/* Action Buttons */}
               <div className="flex justify-end gap-2 flex-wrap">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (!isInitializing && runningStep === null) {
-                    setShowInitModal(false);
-                    clearInitLogs();
-                  }
-                }}
-                disabled={isInitializing || runningStep !== null}
-              >
-                {isInitializing || runningStep !== null ? "Đang chạy..." : "Đóng"}
-              </Button>
-              <Button
-                onClick={handleStartInit}
-                disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
-                size="lg"
-              >
-                {isInitializing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Đang khởi tạo...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="h-4 w-4 mr-2" />
-                    Khởi tạo (Chạy tuần tự 4 bước)
-                  </>
-                )}
-              </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (!isInitializing && runningStep === null) {
+                      setShowInitModal(false);
+                      clearInitLogs();
+                    }
+                  }}
+                  disabled={isInitializing || runningStep !== null}
+                >
+                  {isInitializing || runningStep !== null ? "Đang chạy..." : "Đóng"}
+                </Button>
+                <Button
+                  onClick={handleStartInit}
+                  disabled={isInitializing || runningStep !== null || !ansibleStatus?.installed}
+                  size="lg"
+                >
+                  {isInitializing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Đang khởi tạo...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-4 w-4 mr-2" />
+                      Khởi tạo (Chạy tuần tự 4 bước)
+                    </>
+                  )}
+                </Button>
               </div>
             </div>
           </div>
@@ -2642,7 +2642,7 @@ export function ClusterSetup() {
                     className="font-mono text-sm"
                     placeholder="[master]..."
                   />
-                  
+
                 </div>
               </TabsContent>
               <TabsContent value="variables" className="mt-4">
@@ -2726,57 +2726,57 @@ export function ClusterSetup() {
               <BookOpen className="h-5 w-5" />
               Quản lý playbook & cài đặt K8s
             </DialogTitle>
-            <DialogDescription>
-              Quản lý file playbook, chạy playbook trên controller, theo dõi output real-time.
-            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-4 flex-1 flex flex-col min-h-0">
             {/* Action Buttons and Search */}
-            <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="default"
+                  className="px-3 py-2 h-9 text-sm"
                   onClick={handleCreatePlaybook}
                   disabled={!ansibleStatus?.installed}
                 >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Tạo playbook
+                  <Plus className="h-4 w-4 mr-1" />
+                  Tạo
                 </Button>
                 <Button
                   variant="default"
-                  size="sm"
+                  size="default"
+                  className="px-3 py-2 h-9 text-sm"
                   onClick={handleCreatePlaybookFromTemplate}
                   disabled={!ansibleStatus?.installed || !playbookTemplate || isSavingPlaybook}
                 >
                   {isSavingPlaybook ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Đang tạo từ template...
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      Đang tạo...
                     </>
                   ) : (
                     <>
-                      <Zap className="h-4 w-4 mr-2" />
-                      Tạo & lưu template
+                      <Zap className="h-4 w-4 mr-1" />
+                      Tạo từ template
                     </>
                   )}
                 </Button>
                 <label className="cursor-pointer">
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="default"
+                    className="px-3 py-2 h-9 text-sm"
                     type="button"
                     disabled={!ansibleStatus?.installed || isUploadingPlaybook}
                     onClick={() => document.getElementById("upload-playbook-input")?.click()}
                   >
                     {isUploadingPlaybook ? (
                       <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Đang tải lên...
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        Đang tải...
                       </>
                     ) : (
                       <>
-                        <Upload className="h-4 w-4 mr-2" />
+                        <Upload className="h-4 w-4 mr-1" />
                         Tải lên
                       </>
                     )}
@@ -2791,21 +2791,22 @@ export function ClusterSetup() {
                 </label>
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="default"
+                  className="px-3 py-2 h-9 text-sm"
                   onClick={() => loadPlaybooks(selectedPlaybook)}
                   disabled={!ansibleStatus?.installed || isLoadingPlaybooks}
                 >
-                  <RefreshCw className="h-4 w-4 mr-2" />
+                  <RefreshCw className="h-4 w-4 mr-1" />
                   Làm mới
                 </Button>
               </div>
-              <div className="flex items-center gap-2 flex-1 max-w-[320px]">
-                <Search className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-3 flex-1 max-w-[270px]">
+                <Search className="h-5 w-5 text-muted-foreground" />
                 <Input
                   placeholder="Tìm playbook..."
                   value={playbookSearchQuery}
                   onChange={(e) => setPlaybookSearchQuery(e.target.value)}
-                  className="h-9"
+                  className="h-10 text-base"
                 />
               </div>
             </div>
@@ -2823,9 +2824,6 @@ export function ClusterSetup() {
                   />
                   <span className="text-sm text-muted-foreground whitespace-nowrap">.yml</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Extension .yml sẽ được thêm tự động
-                </p>
               </div>
               <div className="space-y-2">
                 <Label>Template K8s (tùy chọn)</Label>
@@ -2841,9 +2839,7 @@ export function ClusterSetup() {
                     </optgroup>
                   ))}
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Chọn template để tự động tạo nội dung playbook
-                </p>
+
               </div>
             </div>
 
@@ -2867,11 +2863,10 @@ export function ClusterSetup() {
                         <button
                           key={playbook.name}
                           onClick={() => handleSelectPlaybook(playbook.name)}
-                          className={`w-full p-3 text-left hover:bg-muted transition-colors ${
-                            selectedPlaybook === playbook.name
-                              ? "bg-primary/10 border-l-2 border-primary"
-                              : ""
-                          }`}
+                          className={`w-full p-3 text-left hover:bg-muted transition-colors ${selectedPlaybook === playbook.name
+                            ? "bg-primary/10 border-l-2 border-primary"
+                            : ""
+                            }`}
                         >
                           <div className="flex items-center gap-2">
                             <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -2904,50 +2899,13 @@ export function ClusterSetup() {
                       )}
                     </div>
                     <div className="border rounded-lg overflow-hidden flex-1 min-h-0 bg-gray-900" style={{ maxHeight: "500px" }}>
-                      <div className="flex items-center justify-between p-2 bg-gray-800 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <div className={`h-2 w-2 rounded-full ${isExecutingPlaybook ? "bg-green-500 animate-pulse" : "bg-gray-500"}`}></div>
-                          <span className="text-xs text-gray-300 font-mono">Execution Output</span>
-                          {playbookExecutionLogs.length > 0 && (
-                            <span className="text-xs text-gray-400">({playbookExecutionLogs.length} dòng)</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {playbookExecutionLogs.length > 0 && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  const logText = playbookExecutionLogs.join("\n");
-                                  navigator.clipboard.writeText(logText);
-                                  toast.success("Đã sao chép log vào clipboard");
-                                }}
-                                className="h-7 px-2 text-xs text-gray-300 hover:text-white"
-                              >
-                                <Copy className="h-3 w-3 mr-1" />
-                                Copy
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={clearPlaybookExecutionLogs}
-                                disabled={isExecutingPlaybook}
-                                className="h-7 px-2 text-xs text-gray-300 hover:text-white"
-                              >
-                                <Trash2 className="h-3 w-3 mr-1" />
-                                Clear
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
                       <div
                         ref={playbookExecutionLogRef}
                         className="flex-1 overflow-y-auto p-4 font-mono text-sm"
                         style={{
                           minHeight: "400px",
                           maxHeight: "500px",
+                          height: "100%",
                         }}
                       >
                         {playbookExecutionLogs.length === 0 ? (
@@ -2989,17 +2947,19 @@ export function ClusterSetup() {
                   <>
                     <Label className="mb-2">Nội dung playbook</Label>
                     <div className="border rounded-lg overflow-hidden flex-1 min-h-0" style={{ maxHeight: "500px" }}>
-                      <Textarea
-                        value={playbookContent}
-                        onChange={(e) => setPlaybookContent(e.target.value)}
-                        className="font-mono text-sm w-full h-full resize-none overflow-y-auto"
-                        style={{ 
-                          minHeight: "400px", 
-                          maxHeight: "500px",
-                          height: "100%"
-                        }}
-                        placeholder="---&#10;- name: Example&#10;  hosts: all&#10;  tasks:&#10;    - debug: msg=&quot;hello&quot;&#10;"
-                      />
+                      <div className="overflow-y-auto" style={{ minHeight: "400px", maxHeight: "500px", height: "100%" }}>
+                        <Textarea
+                          value={playbookContent}
+                          onChange={(e) => setPlaybookContent(e.target.value)}
+                          className="font-mono text-sm w-full h-full resize-none"
+                          style={{
+                            minHeight: "400px",
+                            maxHeight: "500px",
+                            height: "100%",
+                          }}
+                          placeholder="---&#10;- name: Example&#10;  hosts: all&#10;  tasks:&#10;    - debug: msg=&quot;hello&quot;&#10;"
+                        />
+                      </div>
                     </div>
                   </>
                 )}
@@ -3076,8 +3036,8 @@ export function ClusterSetup() {
       </Dialog>
 
       {/* Sudo Password Modal */}
-      <Dialog 
-        open={showSudoPasswordModal} 
+      <Dialog
+        open={showSudoPasswordModal}
         onOpenChange={(open) => {
           // Chỉ cho phép đóng khi không đang xử lý
           if (!open && !isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible) {
@@ -3120,7 +3080,7 @@ export function ClusterSetup() {
               )}
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="flex-1 flex flex-col gap-3 mt-2 min-h-0">
             {/* Password input section - chỉ hiển thị khi chưa bắt đầu và cần password */}
             {!isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible && (
@@ -3145,7 +3105,7 @@ export function ClusterSetup() {
                         </div>
                       </div>
                     ) : null}
-                    
+
                     {/* Chỉ hiển thị password input khi cần password */}
                     {serverAuthStatus?.needsPassword && (
                       <div className="flex items-center gap-2">
@@ -3169,16 +3129,15 @@ export function ClusterSetup() {
                 )}
               </div>
             )}
-            
+
             {/* Steps section - thay thế console log */}
             <div className="flex-1 flex flex-col border rounded-lg overflow-hidden bg-background min-h-0">
               <div className="flex items-center justify-between p-4 border-b">
                 <div className="flex items-center gap-2">
-                  <div className={`h-2 w-2 rounded-full ${
-                    (isInstallingAnsible || isReinstallingAnsible || isUninstallingAnsible) 
-                      ? "bg-green-500 animate-pulse" 
-                      : "bg-gray-400"
-                  }`}></div>
+                  <div className={`h-2 w-2 rounded-full ${(isInstallingAnsible || isReinstallingAnsible || isUninstallingAnsible)
+                    ? "bg-green-500 animate-pulse"
+                    : "bg-gray-400"
+                    }`}></div>
                   <span className="text-sm font-semibold">
                     {pendingAnsibleAction === "install" && "Cài đặt Ansible"}
                     {pendingAnsibleAction === "reinstall" && "Cài đặt lại Ansible"}
@@ -3198,19 +3157,18 @@ export function ClusterSetup() {
                       const isRunning = step.status === "running";
                       const isCompleted = step.status === "completed";
                       const isError = step.status === "error";
-                      
+
                       return (
                         <div
                           key={step.id}
-                          className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${
-                            isRunning
-                              ? "bg-primary/10 border border-primary/20"
-                              : isCompleted
+                          className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${isRunning
+                            ? "bg-primary/10 border border-primary/20"
+                            : isCompleted
                               ? "bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800"
                               : isError
-                              ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
-                              : "bg-muted/50 border border-border"
-                          }`}
+                                ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                                : "bg-muted/50 border border-border"
+                            }`}
                         >
                           <div className="flex-shrink-0 mt-0.5">
                             {isRunning ? (
@@ -3225,15 +3183,14 @@ export function ClusterSetup() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p
-                              className={`text-sm font-medium ${
-                                isRunning
-                                  ? "text-primary"
-                                  : isCompleted
+                              className={`text-sm font-medium ${isRunning
+                                ? "text-primary"
+                                : isCompleted
                                   ? "text-green-700 dark:text-green-300"
                                   : isError
-                                  ? "text-red-700 dark:text-red-300"
-                                  : "text-muted-foreground"
-                              }`}
+                                    ? "text-red-700 dark:text-red-300"
+                                    : "text-muted-foreground"
+                                }`}
                             >
                               {step.label}
                             </p>
@@ -3251,19 +3208,19 @@ export function ClusterSetup() {
               </div>
             </div>
           </div>
-          
+
           <div className="flex justify-between items-center pt-4 border-t mt-4">
             <div className="flex flex-col gap-1">
               {/* Auth status - hiển thị "Không cần password" ở footer */}
-              {!isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible && 
-               serverAuthStatus && !serverAuthStatus.needsPassword && (
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                  <span className="text-green-700 dark:text-green-300 font-medium">
-                    ✓ Không cần password
-                  </span>
-                </div>
-              )}
+              {!isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible &&
+                serverAuthStatus && !serverAuthStatus.needsPassword && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                    <span className="text-green-700 dark:text-green-300 font-medium">
+                      ✓ Không cần password
+                    </span>
+                  </div>
+                )}
               {/* Status messages */}
               <div className="text-sm text-muted-foreground">
                 {(isInstallingAnsible || isReinstallingAnsible || isUninstallingAnsible) && (
@@ -3272,14 +3229,14 @@ export function ClusterSetup() {
                     Đang xử lý, vui lòng đợi...
                   </span>
                 )}
-                {!isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible && 
-                 ansibleOperationSteps.length > 0 && 
-                 ansibleOperationSteps.every(s => s.status === "completed") && (
-                  <span className="flex items-center gap-2 text-green-600 dark:text-green-400">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Hoàn tất!
-                  </span>
-                )}
+                {!isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible &&
+                  ansibleOperationSteps.length > 0 &&
+                  ansibleOperationSteps.every(s => s.status === "completed") && (
+                    <span className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Hoàn tất!
+                    </span>
+                  )}
               </div>
             </div>
             <div className="flex gap-2">
@@ -3301,16 +3258,16 @@ export function ClusterSetup() {
                   isUninstallingAnsible
                 }
               >
-                {ansibleOperationSteps.length > 0 && 
-                 ansibleOperationSteps.every(s => s.status === "completed")
-                  ? "Đóng" 
+                {ansibleOperationSteps.length > 0 &&
+                  ansibleOperationSteps.every(s => s.status === "completed")
+                  ? "Đóng"
                   : "Hủy"}
               </Button>
               {!isInstallingAnsible && !isReinstallingAnsible && !isUninstallingAnsible && (
                 <>
                   {/* Hiển thị nút "Xác nhận" khi chưa bắt đầu */}
-                  {ansibleOperationSteps.length === 0 || 
-                   !ansibleOperationSteps.every(s => s.status === "completed") ? (
+                  {ansibleOperationSteps.length === 0 ||
+                    !ansibleOperationSteps.every(s => s.status === "completed") ? (
                     <Button
                       onClick={() => {
                         if (pendingAnsibleAction === "install") {

@@ -232,7 +232,7 @@ public class AdminController {
         AnsibleOperationResponse response = ansibleService.executePlaybook(request);
         return ResponseEntity.ok(response);
     }
-    
+
     @GetMapping("/ansible/playbooks/status")
     public ResponseEntity<my_spring_app.my_spring_app.dto.reponse.AnsibleTaskStatusResponse> getPlaybookExecutionStatus(
             @RequestParam String taskId) {

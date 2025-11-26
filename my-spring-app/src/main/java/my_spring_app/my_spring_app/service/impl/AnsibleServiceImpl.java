@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -492,7 +493,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
         
         try {
-            my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse authStatus =
+            my_spring_app.my_spring_app.dto.reponse.ServerAuthStatusResponse authStatus = 
                 serverService.checkServerAuthStatus(serverId);
             if (authStatus.isHasSshKey()
                     && authStatus.getHasSudoNopasswd() != null
@@ -503,7 +504,7 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
         
         if (sudoPassword != null && !sudoPassword.trim().isEmpty()) {
-            String escapedPassword = sudoPassword.replace("'", "'\"'\"'");
+                String escapedPassword = sudoPassword.replace("'", "'\"'\"'");
             return "echo '" + escapedPassword + "' | sudo -S " + command;
         }
         
@@ -1248,18 +1249,18 @@ public class AnsibleServiceImpl implements AnsibleService {
             Long serverId = controllerServer.getId();
             String sudoPassword = request.getSudoPassword();
             
-            // Escape và ghi các file config
-            String escapedCfg = request.getAnsibleCfg().replace("'", "'\"'\"'").replace("$", "\\$");
-            String escapedInventory = request.getAnsibleInventory().replace("'", "'\"'\"'").replace("$", "\\$");
-            String escapedVars = request.getAnsibleVars().replace("'", "'\"'\"'").replace("$", "\\$");
+            // Ghi thẳng nội dung (heredoc với quote đơn giữ nguyên mọi ký tự)
+            String cfgContent = Optional.ofNullable(request.getAnsibleCfg()).orElse("");
+            String inventoryContent = Optional.ofNullable(request.getAnsibleInventory()).orElse("");
+            String varsContent = Optional.ofNullable(request.getAnsibleVars()).orElse("");
             
-            String writeCfgCmd = "sudo tee /etc/ansible/ansible.cfg > /dev/null << 'EOFCFG'\n" + escapedCfg + "\nEOFCFG";
+            String writeCfgCmd = "sudo tee /etc/ansible/ansible.cfg > /dev/null << 'EOFCFG'\n" + cfgContent + "\nEOFCFG";
             executeCommandWithAuth(serverId, writeCfgCmd, sudoPassword, 10000);
             
-            String writeInventoryCmd = "sudo tee /etc/ansible/hosts > /dev/null << 'EOFINV'\n" + escapedInventory + "\nEOFINV";
+            String writeInventoryCmd = "sudo tee /etc/ansible/hosts > /dev/null << 'EOFINV'\n" + inventoryContent + "\nEOFINV";
             executeCommandWithAuth(serverId, writeInventoryCmd, sudoPassword, 10000);
             
-            String writeVarsCmd = "sudo tee /etc/ansible/group_vars/all.yml > /dev/null << 'EOFVARS'\n" + escapedVars + "\nEOFVARS";
+            String writeVarsCmd = "sudo tee /etc/ansible/group_vars/all.yml > /dev/null << 'EOFVARS'\n" + varsContent + "\nEOFVARS";
             executeCommandWithAuth(serverId, writeVarsCmd, sudoPassword, 10000);
             
             response.setSuccess(true);
@@ -1307,8 +1308,8 @@ public class AnsibleServiceImpl implements AnsibleService {
             // Kiểm tra syntax inventory bằng ansible-inventory
             Long serverId = controllerServer.getId();
             String tempInventory = "/tmp/ansible_inventory_verify_" + System.currentTimeMillis();
-            String escapedInventory = request.getAnsibleInventory().replace("'", "'\"'\"'").replace("$", "\\$");
-            String writeTempCmd = "sudo tee " + tempInventory + " > /dev/null << 'EOFTEMP'\n" + escapedInventory + "\nEOFTEMP";
+            String inventoryContent = Optional.ofNullable(request.getAnsibleInventory()).orElse("");
+            String writeTempCmd = "sudo tee " + tempInventory + " > /dev/null << 'EOFTEMP'\n" + inventoryContent + "\nEOFTEMP";
             executeCommandWithAuth(serverId, writeTempCmd, null, 10000);
             
             try {
@@ -1496,8 +1497,8 @@ public class AnsibleServiceImpl implements AnsibleService {
             
             // Ghi file playbook
             String filePath = "/etc/ansible/playbooks/" + filename;
-            String escapedContent = request.getContent().replace("'", "'\"'\"'").replace("$", "\\$");
-            String writeCmd = "sudo tee " + filePath + " > /dev/null << 'EOFPB'\n" + escapedContent + "\nEOFPB";
+            String playbookContent = Optional.ofNullable(request.getContent()).orElse("");
+            String writeCmd = "sudo tee " + filePath + " > /dev/null << 'EOFPB'\n" + playbookContent + "\nEOFPB";
             executeCommandWithAuth(serverId, writeCmd, sudoPassword, 10000);
             
             response.setSuccess(true);
