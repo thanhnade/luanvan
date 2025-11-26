@@ -51,6 +51,101 @@ const formatPlaybookLogLine = (message: string, type: PlaybookLogType = "info") 
   return `[${timestamp}] ${prefix} ${message}`;
 };
 
+// Component Stepper để hiển thị các bước nhỏ
+interface StepperStep {
+  id: string;
+  label: string;
+  description?: string;
+  status: "pending" | "active" | "completed" | "error";
+  icon?: any; // React icon component
+  button?: any; // React button component
+}
+
+interface StepperProps {
+  steps: StepperStep[];
+  className?: string;
+}
+
+const Stepper = ({ steps, className = "" }: StepperProps) => {
+  return (
+    <div className={`space-y-4 ${className}`}>
+      {steps.map((step, index) => {
+        const isLast = index === steps.length - 1;
+        const isCompleted = step.status === "completed";
+        const isActive = step.status === "active";
+        const isError = step.status === "error";
+
+        return (
+          <div key={step.id} className="relative">
+            {/* Connector line */}
+            {!isLast && (
+              <div
+                className={`absolute left-5 top-10 w-0.5 h-full ${
+                  isCompleted ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                }`}
+              />
+            )}
+
+            <div className="flex items-start gap-4">
+              {/* Step icon/number */}
+              <div
+                className={`relative z-10 flex items-center justify-center w-10 h-10 rounded-full border-2 transition-colors ${
+                  isCompleted
+                    ? "bg-green-500 border-green-500 text-white"
+                    : isActive
+                    ? "bg-primary border-primary text-primary-foreground"
+                    : isError
+                    ? "bg-red-500 border-red-500 text-white"
+                    : "bg-muted border-gray-300 dark:border-gray-600 text-muted-foreground"
+                }`}
+              >
+                {step.icon ? (
+                  <div className="w-5 h-5">{step.icon}</div>
+                ) : isCompleted ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : isError ? (
+                  <XCircle className="w-5 h-5" />
+                ) : isActive ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <span className="text-sm font-semibold">{index + 1}</span>
+                )}
+              </div>
+
+              {/* Step content */}
+              <div className="flex-1 pt-1">
+                <div
+                  className={`font-medium ${
+                    isActive
+                      ? "text-primary"
+                      : isCompleted
+                      ? "text-green-700 dark:text-green-400"
+                      : isError
+                      ? "text-red-700 dark:text-red-400"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {step.label}
+                </div>
+                {step.description && (
+                  <div className="text-sm text-muted-foreground mt-1">{step.description}</div>
+                )}
+              </div>
+
+              {/* Step button */}
+              {step.button && (
+                <div className="pt-1">
+                  {step.button}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 /**
  * Trang Cluster Setup - Thiết lập và cấu hình Kubernetes Cluster
  */
@@ -69,6 +164,87 @@ export function ClusterSetup() {
   // Completion tracking states
   const [part1Completed, setPart1Completed] = useState(false);
   const [k8sActiveTab, setK8sActiveTab] = useState<string>("tab1");
+
+  // Step tracking states for Part 1 (Ansible) - 3 bước
+  const [ansibleSteps, setAnsibleSteps] = useState<StepperStep[]>([]);
+
+  // Step tracking states for Part 2 - Tab 1 (K8s Preparation)
+  const [k8sTab1Steps, setK8sTab1Steps] = useState<StepperStep[]>([
+    {
+      id: "update-hosts",
+      label: "Cập nhật hosts & hostname",
+      description: "Cấu hình /etc/hosts và hostname cho các nodes",
+      status: "pending",
+    },
+    {
+      id: "kernel-sysctl",
+      label: "Cấu hình kernel & sysctl",
+      description: "Thiết lập kernel modules và sysctl parameters",
+      status: "pending",
+    },
+    {
+      id: "install-containerd",
+      label: "Cài đặt containerd",
+      description: "Cài đặt và cấu hình containerd runtime",
+      status: "pending",
+    },
+    {
+      id: "install-kubernetes",
+      label: "Cài đặt Kubernetes tools",
+      description: "Cài đặt kubeadm, kubelet và kubectl",
+      status: "pending",
+    },
+  ]);
+
+  // Step tracking states for Part 2 - Tab 2 (K8s Deployment)
+  const [k8sTab2Steps, setK8sTab2Steps] = useState<StepperStep[]>([
+    {
+      id: "init-master",
+      label: "Khởi tạo master node",
+      description: "Chạy kubeadm init để tạo control plane",
+      status: "pending",
+    },
+    {
+      id: "install-cni",
+      label: "Cài đặt CNI (Calico/Flannel)",
+      description: "Cài đặt network plugin cho cluster",
+      status: "pending",
+    },
+    {
+      id: "join-workers",
+      label: "Thêm worker nodes",
+      description: "Join các worker nodes vào cluster",
+      status: "pending",
+    },
+  ]);
+
+  // Step tracking states for Part 2 - Tab 3 (K8s Verification)
+  const [k8sTab3Steps, setK8sTab3Steps] = useState<StepperStep[]>([
+    {
+      id: "verify-cluster",
+      label: "Xác minh trạng thái cluster",
+      description: "Kiểm tra nodes và pods trong cluster",
+      status: "pending",
+    },
+    {
+      id: "install-helm",
+      label: "Cài đặt Helm 3",
+      description: "Cài đặt package manager cho Kubernetes",
+      status: "pending",
+    },
+    {
+      id: "install-metrics",
+      label: "Cài đặt Metrics Server",
+      description: "Cài đặt metrics server để monitor cluster",
+      status: "pending",
+    },
+    {
+      id: "install-ingress",
+      label: "Cài đặt Nginx Ingress",
+      description: "Cài đặt ingress controller",
+      status: "pending",
+    },
+  ]);
 
   // K8s installation states for 3 tabs
   const [isInstallingK8sTab1, setIsInstallingK8sTab1] = useState(false);
@@ -97,9 +273,29 @@ export function ClusterSetup() {
 
   // Modal states
   const [showInitModal, setShowInitModal] = useState(false);
+  const [showInitQuicklyModal, setShowInitQuicklyModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showPlaybookModal, setShowPlaybookModal] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
   const [showSudoPasswordModal, setShowSudoPasswordModal] = useState(false);
+
+  // Init quickly steps status for quick modal - Bước 2 có 3 bước con
+  const [initQuicklySteps, setInitQuicklySteps] = useState<Array<{
+    id: number;
+    label: string;
+    status: "pending" | "running" | "completed" | "error";
+    errorMessage?: string;
+  }>>([
+    { id: 1, label: "Bước 1: Tạo cấu trúc thư mục", status: "pending" },
+    { id: 2, label: "Bước 2: Ghi cấu hình mặc định", status: "pending" },
+    { id: 3, label: "Bước 3: Phân phối SSH key", status: "pending" },
+  ]);
+
+  // Ping nodes step status (Bước 3 riêng)
+  const [pingNodesStep, setPingNodesStep] = useState<{
+    status: "pending" | "running" | "completed" | "error";
+    errorMessage?: string;
+  }>({ status: "pending" });
   const [sudoPasswords, setSudoPasswords] = useState<Record<string, string>>({});
   const [pendingAnsibleAction, setPendingAnsibleAction] = useState<"install" | "reinstall" | "uninstall" | null>(null);
   const [pendingControllerHost, setPendingControllerHost] = useState<string | null>(null);
@@ -159,6 +355,7 @@ export function ClusterSetup() {
   const initTaskLogLengthRef = useRef(0);
   const initTaskPollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+
   // Prerequisites check states
   const [prerequisites, setPrerequisites] = useState<{
     serversReady: boolean;
@@ -197,6 +394,216 @@ export function ClusterSetup() {
       setServerAuthStatus(null);
     }
   }, [showSudoPasswordModal, pendingServerId]);
+
+  // Auto-update Ansible steps based on status - 3 bước với button
+  useEffect(() => {
+    // Bước 1: Kiểm tra & Cài đặt Ansible
+    const step1Status =
+      isCheckingAnsibleStatus || isInstallingAnsible || isReinstallingAnsible
+        ? "active"
+        : ansibleStatus?.installed
+        ? "completed"
+        : "pending";
+
+    const step1Button = (
+      <div className="flex items-center gap-2">
+        <Button
+          onClick={() => handleCheckAnsibleStatus(false)}
+          disabled={isCheckingAnsibleStatus}
+          variant="outline"
+          size="sm"
+        >
+          {isCheckingAnsibleStatus ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Đang kiểm tra...
+            </>
+          ) : (
+            <>
+              <Search className="h-4 w-4 mr-2" />
+              Kiểm tra
+            </>
+          )}
+        </Button>
+        {ansibleStatus?.controllerHost && !ansibleStatus?.installed && (
+          <Button
+            onClick={handleInstallAnsible}
+            disabled={isInstallingAnsible}
+            size="sm"
+          >
+            {isInstallingAnsible ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Đang cài đặt...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4 mr-2" />
+                Cài đặt
+              </>
+            )}
+          </Button>
+        )}
+      </div>
+    );
+
+    // Bước 2: Khởi tạo Ansible (3 bước: Tạo cấu trúc, Ghi cấu hình, Phân phối SSH key)
+    const step2Status = 
+      initQuicklySteps.some(s => s.status === "running") 
+        ? "active" 
+        : initQuicklySteps.every(s => s.status === "completed")
+        ? "completed"
+        : ansibleStatus?.installed 
+        ? "pending" 
+        : "pending";
+
+    const step2Button = ansibleStatus?.installed ? (
+      <Button
+        onClick={() => setShowInitQuicklyModal(true)}
+        disabled={isInitializing || !ansibleStatus.installed || initQuicklySteps.some(s => s.status === "running")}
+        size="sm"
+      >
+        {initQuicklySteps.some(s => s.status === "running") ? (
+          <>
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            Đang khởi tạo...
+          </>
+        ) : (
+          <>
+            <Zap className="h-4 w-4 mr-2" />
+            Khởi tạo
+          </>
+        )}
+      </Button>
+    ) : null;
+
+    // Bước 3: Ping nodes
+    const step3Status = 
+      pingNodesStep.status === "running"
+        ? "active"
+        : pingNodesStep.status === "completed"
+        ? "completed"
+        : pingNodesStep.status === "error"
+        ? "error"
+        : initQuicklySteps.every(s => s.status === "completed")
+        ? "pending"
+        : "pending";
+
+    const step3Button = initQuicklySteps.every(s => s.status === "completed") ? (
+      <Button
+        onClick={handlePingNodes}
+        disabled={pingNodesStep.status === "running" || !ansibleStatus?.installed}
+        size="sm"
+      >
+        {pingNodesStep.status === "running" ? (
+          <>
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            Đang ping...
+          </>
+        ) : (
+          <>
+            <Network className="h-4 w-4 mr-2" />
+            Ping nodes
+          </>
+        )}
+      </Button>
+    ) : null;
+
+    setAnsibleSteps([
+      {
+        id: "step1",
+        label: "Bước 1: Kiểm tra & Cài đặt Ansible",
+        description: "Kiểm tra trạng thái và cài đặt Ansible trên controller host",
+        status: step1Status as "pending" | "active" | "completed" | "error",
+        button: step1Button,
+      },
+      {
+        id: "step2",
+        label: "Bước 2: Khởi tạo Ansible",
+        description: "Tạo cấu trúc, cấu hình, phân phối SSH key (3 bước)",
+        status: step2Status as "pending" | "active" | "completed" | "error",
+        button: step2Button,
+      },
+      {
+        id: "step3",
+        label: "Bước 3: Ping nodes",
+        description: "Ping và kiểm tra kết nối đến các nodes",
+        status: step3Status as "pending" | "active" | "completed" | "error",
+        button: step3Button,
+      },
+    ]);
+  }, [
+    isCheckingAnsibleStatus,
+    isInstallingAnsible,
+    isReinstallingAnsible,
+    ansibleStatus,
+    isInitializing,
+    part1Completed,
+    initQuicklySteps,
+    pingNodesStep,
+  ]);
+
+  // Auto-update K8s Tab 1 steps based on status
+  useEffect(() => {
+    setK8sTab1Steps((prev) =>
+      prev.map((step) => {
+        if (isInstallingK8sTab1) {
+          // When installing, set first pending step to active
+          const firstPendingIndex = prev.findIndex((s) => s.status === "pending");
+          if (firstPendingIndex === prev.indexOf(step)) {
+            return { ...step, status: "active" as const };
+          }
+          // Set completed steps
+          if (prev.indexOf(step) < firstPendingIndex) {
+            return { ...step, status: "completed" as const };
+          }
+        } else if (k8sTab1Completed) {
+          return { ...step, status: "completed" as const };
+        }
+        return step;
+      })
+    );
+  }, [isInstallingK8sTab1, k8sTab1Completed]);
+
+  // Auto-update K8s Tab 2 steps based on status
+  useEffect(() => {
+    setK8sTab2Steps((prev) =>
+      prev.map((step) => {
+        if (isInstallingK8sTab2) {
+          const firstPendingIndex = prev.findIndex((s) => s.status === "pending");
+          if (firstPendingIndex === prev.indexOf(step)) {
+            return { ...step, status: "active" as const };
+          }
+          if (prev.indexOf(step) < firstPendingIndex) {
+            return { ...step, status: "completed" as const };
+          }
+        } else if (k8sTab2Completed) {
+          return { ...step, status: "completed" as const };
+        }
+        return step;
+      })
+    );
+  }, [isInstallingK8sTab2, k8sTab2Completed]);
+
+  // Auto-update K8s Tab 3 steps based on status
+  useEffect(() => {
+    setK8sTab3Steps((prev) =>
+      prev.map((step) => {
+        if (isInstallingK8sTab3) {
+          const firstPendingIndex = prev.findIndex((s) => s.status === "pending");
+          if (firstPendingIndex === prev.indexOf(step)) {
+            return { ...step, status: "active" as const };
+          }
+          if (prev.indexOf(step) < firstPendingIndex) {
+            return { ...step, status: "completed" as const };
+          }
+        } else if (k8sTab3Completed) {
+          return { ...step, status: "completed" as const };
+        }
+        return step;
+      })
+    );
+  }, [isInstallingK8sTab3, k8sTab3Completed]);
 
   // Load Ansible config từ server khi mở modal
   useEffect(() => {
@@ -689,11 +1096,6 @@ export function ClusterSetup() {
       return;
     }
 
-    if (!part1Completed) {
-      toast.error("Phải hoàn thành Phần 1 trước.");
-      return;
-    }
-
     if (!ansibleStatus?.controllerHost) {
       toast.error("Không tìm thấy controller host.");
       return;
@@ -908,6 +1310,7 @@ export function ClusterSetup() {
     }
   }, []);
 
+
   useEffect(() => {
     return () => {
       cancelInitTaskPolling();
@@ -993,7 +1396,8 @@ export function ClusterSetup() {
         return true;
       } catch (error: any) {
         const errorMessage = error.message || "Lỗi không xác định";
-        emitInitLogLine(`Lỗi: ${errorMessage}`);
+        // Không append log vì error đã được append trong logs từ backend qua markFailed()
+        // Chỉ hiển thị toast để thông báo
         toast.error(errorMessage);
         return false;
       } finally {
@@ -1003,6 +1407,7 @@ export function ClusterSetup() {
     },
     [ansibleStatus?.controllerHost, cancelInitTaskPolling, emitInitLogLine, monitorInitTask]
   );
+
 
   // Backup config before saving
   const backupConfig = (
@@ -1612,7 +2017,118 @@ export function ClusterSetup() {
     });
   };
 
-  // Khởi tạo tuần tự cả 4 bước
+  // Khởi tạo 3 bước đầu (cho modal nhanh - Bước 2)
+  const handleStartInitQuickly = async () => {
+    if (!ansibleStatus?.controllerHost) {
+      toast.error("Không tìm thấy controller host. Vui lòng kiểm tra trạng thái Ansible trước.");
+      return;
+    }
+
+    // Reset steps về pending
+    setInitQuicklySteps([
+      { id: 1, label: "Bước 1: Tạo cấu trúc thư mục", status: "pending" },
+      { id: 2, label: "Bước 2: Ghi cấu hình mặc định", status: "pending" },
+      { id: 3, label: "Bước 3: Phân phối SSH key", status: "pending" },
+    ]);
+
+    setIsInitializing(true);
+
+    const finish = () => {
+      setIsInitializing(false);
+      cancelInitTaskPolling();
+    };
+
+    // Bước 1
+    setInitQuicklySteps((prev) => prev.map((s) => s.id === 1 ? { ...s, status: "running" as const } : s));
+    const step1Ok = await executeStep1();
+    if (!step1Ok) {
+      setInitQuicklySteps((prev) => prev.map((s) => s.id === 1 ? { ...s, status: "error" as const, errorMessage: "Xảy ra lỗi" } : s));
+      finish();
+      return;
+    }
+    setInitQuicklySteps((prev) => prev.map((s) => s.id === 1 ? { ...s, status: "completed" as const } : s));
+
+    // Bước 2
+    setInitQuicklySteps((prev) => prev.map((s) => s.id === 2 ? { ...s, status: "running" as const } : s));
+    const step2Ok = await executeStep2();
+    if (!step2Ok) {
+      setInitQuicklySteps((prev) => prev.map((s) => s.id === 2 ? { ...s, status: "error" as const, errorMessage: "Xảy ra lỗi" } : s));
+      finish();
+      return;
+    }
+    setInitQuicklySteps((prev) => prev.map((s) => s.id === 2 ? { ...s, status: "completed" as const } : s));
+
+    // Bước 3
+    setInitQuicklySteps((prev) => prev.map((s) => s.id === 3 ? { ...s, status: "running" as const } : s));
+    const step3Ok = await executeStep3();
+    if (!step3Ok) {
+      setInitQuicklySteps((prev) => prev.map((s) => s.id === 3 ? { ...s, status: "error" as const, errorMessage: "Xảy ra lỗi" } : s));
+      finish();
+      return;
+    }
+    setInitQuicklySteps((prev) => prev.map((s) => s.id === 3 ? { ...s, status: "completed" as const } : s));
+
+    toast.success("Khởi tạo Ansible thành công! Vui lòng thực hiện Bước 3: Ping nodes.");
+
+    setTimeout(() => {
+      setShowInitQuicklyModal(false);
+    }, 1000);
+
+    finish();
+  };
+
+  // Ping nodes (Bước 3 riêng)
+  const handlePingNodes = async () => {
+    if (!ansibleStatus?.controllerHost) {
+      toast.error("Không tìm thấy controller host.");
+      return;
+    }
+
+    const clusterServersForInit = servers.filter(
+      (s) => s.clusterStatus === "AVAILABLE" && (s.role === "MASTER" || s.role === "WORKER")
+    );
+
+    if (clusterServersForInit.length === 0) {
+      toast.warning("Không có nodes nào trong cluster");
+      setPingNodesStep({ status: "error", errorMessage: "Xảy ra lỗi" });
+      return;
+    }
+
+    setPingNodesStep({ status: "running" });
+
+    try {
+      const serverIds = clusterServersForInit.map((s) => String(s.id));
+      const result = await runInitStep({
+        stepNumber: 4,
+        startMessage: `Bước 4: Ping và kiểm tra kết nối đến ${serverIds.length} node(s)...`,
+        successMessage: "Bước 4 hoàn tất!",
+        startRequest: () =>
+          adminAPI.initAnsibleStep4(ansibleStatus.controllerHost, serverIds),
+      });
+
+      if (result) {
+        setPingNodesStep({ status: "completed" });
+        setPart1Completed(true);
+        toast.success("Ping nodes thành công! Phần 1 đã hoàn thành.");
+
+        setTimeout(() => {
+          setExpandedSection("kubernetes");
+          setK8sActiveTab("tab1");
+          toast.info("Đã chuyển sang Phần 2: Cài đặt Kubernetes");
+        }, 1000);
+      } else {
+        setPingNodesStep({ status: "error", errorMessage: "Xảy ra lỗi" });
+        toast.error("Lỗi khi ping nodes");
+      }
+    } catch (error: any) {
+      setPingNodesStep({ status: "error", errorMessage: "Xảy ra lỗi" });
+      toast.error(error.message || "Lỗi khi ping nodes");
+    } finally {
+      cancelInitTaskPolling();
+    }
+  };
+
+  // Khởi tạo tuần tự cả 4 bước (cho modal chi tiết)
   const handleStartInit = async () => {
     if (!ansibleStatus?.controllerHost) {
       toast.error("Không tìm thấy controller host. Vui lòng kiểm tra trạng thái Ansible trước.");
@@ -1767,27 +2283,7 @@ export function ClusterSetup() {
             {/* Card hiển thị thông tin Ansible */}
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Thông tin Ansible</CardTitle>
-                  <Button
-                    onClick={() => handleCheckAnsibleStatus(false)}
-                    disabled={isCheckingAnsibleStatus}
-                    variant="outline"
-                    size="sm"
-                  >
-                    {isCheckingAnsibleStatus ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Đang kiểm tra...
-                      </>
-                    ) : (
-                      <>
-                        <Search className="h-4 w-4 mr-2" />
-                        Kiểm tra trạng thái
-                      </>
-                    )}
-                  </Button>
-                </div>
+                <CardTitle className="text-lg">Thông tin Ansible</CardTitle>
               </CardHeader>
               <CardContent>
                 {ansibleStatus?.error && !ansibleStatus.controllerHost ? (
@@ -1797,35 +2293,35 @@ export function ClusterSetup() {
                     <p className="text-sm mt-1">Vui lòng thêm server với role ANSIBLE hoặc MASTER trong trang Servers</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Trạng thái */}
                     <div className="space-y-2">
-                      <Label className="text-sm text-muted-foreground">Trạng thái</Label>
-                      <div className="flex items-center gap-2">
+                      <Label className="text-sm text-muted-foreground font-medium">Trạng thái</Label>
+                      <div className="flex items-center gap-2 min-h-[24px]">
                         {isCheckingAnsibleStatus ? (
                           <>
                             <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse"></div>
-                            <span className="font-medium">Đang kiểm tra...</span>
+                            <span className="font-medium text-sm">Đang kiểm tra...</span>
                           </>
                         ) : ansibleStatus?.controllerHost ? (
                           <>
                             <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                            <span className="font-medium">Online</span>
+                            <span className="font-medium text-sm">Online</span>
                           </>
                         ) : ansibleServers.length > 0 && ansibleServers[0]?.status === "online" ? (
                           <>
                             <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                            <span className="font-medium">Online</span>
+                            <span className="font-medium text-sm">Online</span>
                           </>
                         ) : ansibleServers.length > 0 ? (
                           <>
                             <div className="h-2 w-2 rounded-full bg-gray-400"></div>
-                            <span className="font-medium">Chưa kiểm tra</span>
+                            <span className="font-medium text-sm">Chưa kiểm tra</span>
                           </>
                         ) : (
                           <>
                             <div className="h-2 w-2 rounded-full bg-gray-400"></div>
-                            <span className="font-medium">Offline</span>
+                            <span className="font-medium text-sm">Offline</span>
                           </>
                         )}
                       </div>
@@ -1833,26 +2329,26 @@ export function ClusterSetup() {
 
                     {/* Máy controller */}
                     <div className="space-y-2">
-                      <Label className="text-sm text-muted-foreground">Máy controller</Label>
-                      <div className="font-medium">
+                      <Label className="text-sm text-muted-foreground font-medium">Máy controller</Label>
+                      <div className="font-medium text-sm min-h-[24px] flex items-center">
                         {isCheckingAnsibleStatus ? (
                           <span className="text-muted-foreground">Đang kiểm tra...</span>
                         ) : ansibleStatus?.controllerHost ? (
-                          <span>
-                            {ansibleStatus.controllerHost}
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="break-all">{ansibleStatus.controllerHost}</span>
                             {ansibleStatus.controllerRole && (
-                              <Badge variant="outline" className="ml-2">
+                              <Badge variant="outline" className="text-xs">
                                 {ansibleStatus.controllerRole}
                               </Badge>
                             )}
-                          </span>
+                          </div>
                         ) : ansibleServers.length > 0 ? (
-                          <span>
-                            {ansibleServers[0]?.ipAddress || "-"}
-                            <Badge variant="outline" className="ml-2">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="break-all">{ansibleServers[0]?.ipAddress || "-"}</span>
+                            <Badge variant="outline" className="text-xs">
                               {ansibleServers[0]?.role || "ANSIBLE"}
                             </Badge>
-                          </span>
+                          </div>
                         ) : (
                           "-"
                         )}
@@ -1861,137 +2357,195 @@ export function ClusterSetup() {
 
                     {/* Phiên bản Ansible */}
                     <div className="space-y-2">
-                      <Label className="text-sm text-muted-foreground">Phiên bản Ansible</Label>
-                      <div className="font-medium">
+                      <Label className="text-sm text-muted-foreground font-medium">Phiên bản Ansible</Label>
+                      <div className="font-medium min-h-[24px] flex items-center">
                         {isCheckingAnsibleStatus ? (
-                          <Badge variant="outline">Đang kiểm tra...</Badge>
+                          <Badge variant="outline" className="text-xs">Đang kiểm tra...</Badge>
                         ) : ansibleStatus ? (
                           ansibleStatus.installed ? (
-                            <Badge variant="default">{ansibleStatus.version || "Đã cài đặt"}</Badge>
+                            <Badge variant="default" className="text-xs">{ansibleStatus.version || "Đã cài đặt"}</Badge>
                           ) : (
-                            <Badge variant="secondary">Chưa cài đặt</Badge>
+                            <Badge variant="secondary" className="text-xs">Chưa cài đặt</Badge>
                           )
                         ) : (
-                          <Badge variant="outline">Chưa kiểm tra</Badge>
+                          <Badge variant="outline" className="text-xs">Chưa kiểm tra</Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Thao tác */}
+                    <div className="space-y-2">
+                      <Label className="text-sm text-muted-foreground font-medium">Thao tác</Label>
+                      <div className="flex items-start gap-2 flex-wrap min-h-[24px]">
+                        {ansibleStatus?.controllerHost ? (
+                          !ansibleStatus?.installed ? (
+                            <Button
+                              onClick={handleInstallAnsible}
+                              disabled={isInstallingAnsible}
+                              size="sm"
+                              className="h-8"
+                            >
+                              {isInstallingAnsible ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  <span className="text-xs">Đang cài đặt...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="h-3 w-3 mr-1" />
+                                  <span className="text-xs">Cài đặt</span>
+                                </>
+                              )}
+                            </Button>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              <Button
+                                onClick={handleReinstallAnsible}
+                                disabled={isReinstallingAnsible}
+                                variant="outline"
+                                size="sm"
+                                className="h-8"
+                              >
+                                {isReinstallingAnsible ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    <span className="text-xs">Đang cài...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <RotateCcw className="h-3 w-3 mr-1" />
+                                    <span className="text-xs">Cài lại</span>
+                                  </>
+                                )}
+                              </Button>
+                              <Button
+                                onClick={handleUninstallAnsible}
+                                disabled={isUninstallingAnsible}
+                                variant="destructive"
+                                size="sm"
+                                className="h-8"
+                              >
+                                {isUninstallingAnsible ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    <span className="text-xs">Đang gỡ...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Trash2 className="h-3 w-3 mr-1" />
+                                    <span className="text-xs">Gỡ</span>
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          )
+                        ) : (
+                          <span className="text-sm text-muted-foreground">-</span>
                         )}
                       </div>
                     </div>
                   </div>
                 )}
-
-                {/* Action buttons */}
-                {ansibleStatus?.controllerHost && (
-                  <div className="flex items-center gap-2 mt-4 pt-4 border-t">
-                    {!ansibleStatus?.installed ? (
-                      <Button
-                        onClick={handleInstallAnsible}
-                        disabled={isInstallingAnsible}
-                        size="sm"
-                      >
-                        {isInstallingAnsible ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Đang cài đặt...
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-4 w-4 mr-2" />
-                            Cài đặt Ansible
-                          </>
-                        )}
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          onClick={handleReinstallAnsible}
-                          disabled={isReinstallingAnsible}
-                          variant="outline"
-                          size="sm"
-                        >
-                          {isReinstallingAnsible ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Đang cài đặt lại...
-                            </>
-                          ) : (
-                            <>
-                              <RotateCcw className="h-4 w-4 mr-2" />
-                              Cài đặt lại
-                            </>
-                          )}
-                        </Button>
-                        <Button
-                          onClick={handleUninstallAnsible}
-                          disabled={isUninstallingAnsible}
-                          variant="destructive"
-                          size="sm"
-                        >
-                          {isUninstallingAnsible ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Đang gỡ...
-                            </>
-                          ) : (
-                            <>
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Gỡ
-                            </>
-                          )}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                )}
               </CardContent>
             </Card>
 
-            {/* Thông tin cài đặt */}
-            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-              <div className="flex items-start gap-3">
-                <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
-                <div className="flex-1 text-sm text-blue-800 dark:text-blue-200">
-                  <p className="font-semibold mb-1">Thông tin cài đặt Ansible:</p>
-                  <ul className="list-disc list-inside space-y-1 ml-2">
-                    <li>Ansible sẽ được cài đặt trên máy Ansible duy nhất trong hệ thống</li>
-                    <li>Quá trình cài đặt sẽ tự động cấu hình Python, pip và các dependencies cần thiết</li>
-                    <li>Sau khi cài đặt xong, Ansible có thể được sử dụng để quản lý các server khác</li>
-                    <li>Máy Ansible phải đang online để có thể cài đặt</li>
-                  </ul>
+            {/* Stepper - Các bước nhỏ của Phần 1 */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <CardTitle className="text-lg">Các bước chuẩn bị</CardTitle>
+                    <CardDescription>
+                      Tiến trình thực hiện các bước để chuẩn bị môi trường Ansible
+                    </CardDescription>
+                  </div>
+                  <Button
+                    onClick={() => setShowInfoModal(true)}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Info className="h-4 w-4 mr-2" />
+                    Lưu ý
+                  </Button>
                 </div>
-              </div>
-            </div>
+              </CardHeader>
+              <CardContent>
+                <Stepper steps={ansibleSteps} />
+              </CardContent>
+            </Card>
 
-            {/* Các nút hành động */}
+            {/* Tùy chọn khác */}
             {ansibleStatus?.installed && (
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  onClick={() => setShowInitModal(true)}
-                  disabled={!ansibleStatus.installed}
-                  size="lg"
-                  variant="default"
-                >
-                  <Zap className="h-4 w-4 mr-2" />
-                  Khởi tạo
-                </Button>
-                <Button
-                  onClick={() => setShowConfigModal(true)}
-                  disabled={!ansibleStatus.installed}
-                  size="lg"
-                  variant="outline"
-                >
-                  <Settings className="h-4 w-4 mr-2" />
-                  Cấu hình
-                </Button>
-                <Button
-                  onClick={() => setShowPlaybookModal(true)}
-                  disabled={!ansibleStatus.installed}
-                  size="lg"
-                  variant="outline"
-                >
-                  <BookOpen className="h-4 w-4 mr-2" />
-                  Playbook & K8s
-                </Button>
-              </div>
+              <Card className="bg-gradient-to-br from-blue-50/50 to-indigo-50/50 dark:from-blue-950/20 dark:to-indigo-950/20 border-blue-200/50 dark:border-blue-800/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <div className="p-1.5 bg-blue-100 dark:bg-blue-900/40 rounded-lg">
+                      <Settings className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    Tùy chọn khác
+                  </CardTitle>
+                  <CardDescription className="text-sm">
+                    Các tùy chọn bổ sung để quản lý và cấu hình Ansible
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <Button
+                      onClick={() => setShowInitModal(true)}
+                      disabled={isInitializing || !ansibleStatus.installed}
+                      size="lg"
+                      variant="outline"
+                      className="h-auto py-5 px-4 flex flex-col items-start bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 border shadow-sm transition-all hover:shadow-md hover:border-primary/50"
+                    >
+                      <div className="flex items-center gap-2.5 mb-2.5 w-full">
+                        <div className="p-1.5 bg-primary/10 rounded-lg">
+                          <Zap className="h-4 w-4 text-primary" />
+                        </div>
+                        <span className="font-semibold text-base">Khởi tạo Ansible</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground text-left leading-relaxed">
+                        Tạo cấu trúc, cấu hình, phân phối SSH key và ping nodes
+                      </span>
+                    </Button>
+
+                    <Button
+                      onClick={() => setShowConfigModal(true)}
+                      disabled={!ansibleStatus.installed}
+                      size="lg"
+                      variant="outline"
+                      className="h-auto py-5 px-4 flex flex-col items-start bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 border shadow-sm transition-all hover:shadow-md hover:border-primary/50"
+                    >
+                      <div className="flex items-center gap-2.5 mb-2.5 w-full">
+                        <div className="p-1.5 bg-blue-100 dark:bg-blue-900/40 rounded-lg">
+                          <Settings className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <span className="font-semibold text-base">Cấu hình Ansible</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground text-left leading-relaxed">
+                        Thiết lập ansible.cfg, inventory và variables
+                      </span>
+                    </Button>
+
+                    <Button
+                      onClick={() => setShowPlaybookModal(true)}
+                      disabled={!ansibleStatus.installed}
+                      size="lg"
+                      variant="outline"
+                      className="h-auto py-5 px-4 flex flex-col items-start bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 border shadow-sm transition-all hover:shadow-md hover:border-primary/50"
+                    >
+                      <div className="flex items-center gap-2.5 mb-2.5 w-full">
+                        <div className="p-1.5 bg-purple-100 dark:bg-purple-900/40 rounded-lg">
+                          <BookOpen className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <span className="font-semibold text-base">Quản lý playbook & cài đặt K8s</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground text-left leading-relaxed">
+                        Quản lý playbooks và cài đặt Kubernetes cluster
+                      </span>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             )}
           </CardContent>
         )}
@@ -2032,20 +2586,7 @@ export function ClusterSetup() {
         </CardHeader>
         {expandedSection === "kubernetes" && (
           <CardContent className="space-y-6">
-            {!part1Completed && (
-              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
-                  <div className="flex-1 text-sm text-yellow-800 dark:text-yellow-200">
-                    <p className="font-semibold mb-1">Vui lòng hoàn thành Phần 1 trước</p>
-                    <p>Phần 1 phải được hoàn thành trước khi có thể cài đặt Kubernetes.</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {part1Completed && (
-              <Tabs
+            <Tabs
                 value={k8sActiveTab}
                 onValueChange={(value) => {
                   if (value === "tab2" && !k8sTab1Completed) {
@@ -2091,6 +2632,16 @@ export function ClusterSetup() {
                       Cập nhật hosts & hostname, cấu hình kernel & sysctl, cài đặt containerd và kubeadm/kubelet/kubectl
                     </p>
                   </div>
+
+                  {/* Stepper - Các bước nhỏ của Tab 1 */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Tiến trình cài đặt</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Stepper steps={k8sTab1Steps} />
+                    </CardContent>
+                  </Card>
 
                   {/* Log Console */}
                   <div className="border rounded-lg overflow-hidden bg-gray-900 flex flex-col" style={{ minHeight: "400px", maxHeight: "500px" }}>
@@ -2159,7 +2710,7 @@ export function ClusterSetup() {
                   <div className="flex justify-end">
                     <Button
                       onClick={handleInstallK8sTab1}
-                      disabled={isInstallingK8sTab1 || k8sTab1Completed || !part1Completed}
+                      disabled={isInstallingK8sTab1 || k8sTab1Completed}
                       size="lg"
                       className="min-w-[200px]"
                     >
@@ -2193,6 +2744,16 @@ export function ClusterSetup() {
                       Khởi tạo master node, cài đặt CNI (Calico), và thêm worker nodes vào cluster
                     </p>
                   </div>
+
+                  {/* Stepper - Các bước nhỏ của Tab 2 */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Tiến trình triển khai</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Stepper steps={k8sTab2Steps} />
+                    </CardContent>
+                  </Card>
 
                   {/* Log Console */}
                   <div className="border rounded-lg overflow-hidden bg-gray-900 flex flex-col" style={{ minHeight: "400px", maxHeight: "500px" }}>
@@ -2296,6 +2857,16 @@ export function ClusterSetup() {
                     </p>
                   </div>
 
+                  {/* Stepper - Các bước nhỏ của Tab 3 */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Tiến trình kiểm tra & mở rộng</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Stepper steps={k8sTab3Steps} />
+                    </CardContent>
+                  </Card>
+
                   {/* Log Console */}
                   <div className="border rounded-lg overflow-hidden bg-gray-900 flex flex-col" style={{ minHeight: "400px", maxHeight: "500px" }}>
                     <div className="flex items-center justify-between p-2 bg-gray-800 border-b border-gray-700">
@@ -2387,12 +2958,181 @@ export function ClusterSetup() {
                   </div>
                 </TabsContent>
               </Tabs>
-            )}
           </CardContent>
         )}
       </Card>
 
       {/* Modals */}
+      {/* Info Modal - Lưu ý */}
+      <Dialog open={showInfoModal} onOpenChange={setShowInfoModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Info className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              Thông tin cài đặt Ansible
+            </DialogTitle>
+            <DialogDescription>
+              Các lưu ý quan trọng khi cài đặt và sử dụng Ansible
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <div className="flex items-start gap-3">
+                <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 text-sm text-blue-800 dark:text-blue-200">
+                  <p className="font-semibold mb-2">Lưu ý quan trọng:</p>
+                  <ul className="list-disc list-inside space-y-2 ml-2">
+                    <li>Ansible sẽ được cài đặt trên máy Ansible duy nhất trong hệ thống</li>
+                    <li>Quá trình cài đặt sẽ tự động cấu hình Python, pip và các dependencies cần thiết</li>
+                    <li>Sau khi cài đặt xong, Ansible có thể được sử dụng để quản lý các server khác</li>
+                    <li>Máy Ansible phải đang online để có thể cài đặt</li>
+                    <li>Đảm bảo máy Ansible có quyền truy cập SSH đến các máy khác trong cluster</li>
+                    <li>Khuyến nghị cấu hình SSH key authentication để tránh nhập password nhiều lần</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end mt-6">
+            <Button onClick={() => setShowInfoModal(false)}>
+              Đóng
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Init Quickly Ansible Modal */}
+      <Dialog 
+        open={showInitQuicklyModal} 
+        onOpenChange={(open) => {
+          if (!open && !isInitializing) {
+            setShowInitQuicklyModal(false);
+            // Reset steps khi đóng modal
+            setInitQuicklySteps([
+              { id: 1, label: "Bước 1: Tạo cấu trúc thư mục", status: "pending" },
+              { id: 2, label: "Bước 2: Ghi cấu hình mặc định", status: "pending" },
+              { id: 3, label: "Bước 3: Phân phối SSH key", status: "pending" },
+            ]);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5" />
+              Khởi tạo nhanh Ansible
+            </DialogTitle>
+            <DialogDescription>
+              Tự động thực hiện 3 bước: Tạo cấu trúc, Ghi cấu hình, và Phân phối SSH key
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-6 mt-4">
+            {/* Loading Animation */}
+            {isInitializing && (
+              <div className="flex flex-col items-center justify-center py-8">
+                <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                <p className="text-sm text-muted-foreground">Đang khởi tạo Ansible...</p>
+              </div>
+            )}
+
+            {/* Steps Status */}
+            <div className="space-y-3">
+              {initQuicklySteps.map((step, index) => {
+                const isRunning = step.status === "running";
+                const isCompleted = step.status === "completed";
+                const isError = step.status === "error";
+                const isPending = step.status === "pending";
+
+                return (
+                  <div
+                    key={step.id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                      isRunning
+                        ? "bg-primary/10 border-primary/20"
+                        : isCompleted
+                        ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
+                        : isError
+                        ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800"
+                        : "bg-muted/50 border-border"
+                    }`}
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      {isRunning ? (
+                        <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                      ) : isCompleted ? (
+                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                      ) : isError ? (
+                        <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                      ) : (
+                        <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p
+                        className={`text-sm font-medium ${
+                          isRunning
+                            ? "text-primary"
+                            : isCompleted
+                            ? "text-green-700 dark:text-green-300"
+                            : isError
+                            ? "text-red-700 dark:text-red-300"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {step.label}
+                      </p>
+                      {isError && step.errorMessage && (
+                        <p className="text-xs text-red-600 dark:text-red-400 mt-1 font-semibold">
+                          {step.errorMessage}
+                        </p>
+                      )}
+                      {isRunning && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Đang thực hiện...
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (!isInitializing) {
+                    setShowInitQuicklyModal(false);
+                  }
+                }}
+                disabled={isInitializing}
+              >
+                {isInitializing ? "Đang chạy..." : "Đóng"}
+              </Button>
+              <Button
+                onClick={handleStartInitQuickly}
+                disabled={isInitializing || !ansibleStatus?.installed}
+                size="lg"
+              >
+                {isInitializing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Đang khởi tạo...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-4 w-4 mr-2" />
+                    Bắt đầu khởi tạo
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Init Ansible Modal */}
       <Dialog open={showInitModal} onOpenChange={setShowInitModal}>
         <DialogContent className="w-[75vw] h-[90vh] max-w-none max-h-none flex flex-col p-6 overflow-hidden">

@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1449,6 +1450,157 @@ public class ServerServiceImpl implements ServerService {
     }
     
     /**
+     * Helper: Thực thi command qua SSH key với streaming output
+     */
+    private String execCommandWithKey(String ip, Integer port, String username, String privateKeyPem, String command, int timeoutMs, Consumer<String> outputHandler) {
+        Session session = null;
+        ChannelExec channel = null;
+        try {
+            JSch jsch = new JSch();
+            byte[] prv = privateKeyPem.getBytes(StandardCharsets.UTF_8);
+            jsch.addIdentity("inmem-key", prv, null, null);
+            session = jsch.getSession(username, ip, port);
+            session.setConfig("StrictHostKeyChecking", "no");
+            session.setTimeout(timeoutMs);
+            session.connect(timeoutMs);
+            
+            channel = (ChannelExec) session.openChannel("exec");
+            channel.setCommand(command);
+            
+            InputStream in = channel.getInputStream();
+            InputStream err = channel.getErrStream();
+            channel.connect(timeoutMs);
+            
+            StringBuilder aggregated = new StringBuilder();
+            byte[] buffer = new byte[2048];
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            
+            while (true) {
+                // Read stdout
+                while (in.available() > 0) {
+                    int read = in.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                    aggregated.append(chunk);
+                    if (outputHandler != null) {
+                        outputHandler.accept(chunk);
+                    }
+                }
+                // Read stderr
+                while (err.available() > 0) {
+                    int read = err.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                    aggregated.append(chunk);
+                    if (outputHandler != null) {
+                        outputHandler.accept(chunk);
+                    }
+                }
+                if (channel.isClosed()) {
+                    if (in.available() == 0 && err.available() == 0) {
+                        break;
+                    }
+                }
+                if (System.currentTimeMillis() > deadline) break;
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            
+            return aggregated.toString();
+        } catch (Exception e) {
+            System.err.println("[execCommandWithKey with outputHandler] Loi: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        } finally {
+            if (channel != null && channel.isConnected()) {
+                channel.disconnect();
+            }
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+    
+    /**
+     * Helper: Thực thi command qua password với streaming output
+     */
+    private String execCommandWithPassword(String ip, Integer port, String username, String password, String command, int timeoutMs, Consumer<String> outputHandler) {
+        Session session = null;
+        ChannelExec channel = null;
+        try {
+            JSch jsch = new JSch();
+            session = jsch.getSession(username, ip, port);
+            session.setPassword(password);
+            session.setConfig("StrictHostKeyChecking", "no");
+            session.setTimeout(timeoutMs);
+            session.connect(timeoutMs);
+            
+            channel = (ChannelExec) session.openChannel("exec");
+            channel.setCommand(command);
+            
+            InputStream in = channel.getInputStream();
+            InputStream err = channel.getErrStream();
+            channel.connect(timeoutMs);
+            
+            StringBuilder aggregated = new StringBuilder();
+            byte[] buffer = new byte[2048];
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            
+            while (true) {
+                // Read stdout
+                while (in.available() > 0) {
+                    int read = in.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                    aggregated.append(chunk);
+                    if (outputHandler != null) {
+                        outputHandler.accept(chunk);
+                    }
+                }
+                // Read stderr
+                while (err.available() > 0) {
+                    int read = err.read(buffer, 0, buffer.length);
+                    if (read < 0) break;
+                    String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                    aggregated.append(chunk);
+                    if (outputHandler != null) {
+                        outputHandler.accept(chunk);
+                    }
+                }
+                if (channel.isClosed()) {
+                    if (in.available() == 0 && err.available() == 0) {
+                        break;
+                    }
+                }
+                if (System.currentTimeMillis() > deadline) break;
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            
+            return aggregated.toString();
+        } catch (Exception e) {
+            System.err.println("[execCommandWithPassword with outputHandler] Loi: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        } finally {
+            if (channel != null && channel.isConnected()) {
+                channel.disconnect();
+            }
+            if (session != null && session.isConnected()) {
+                session.disconnect();
+            }
+        }
+    }
+    
+    /**
      * Helper: Thực thi command qua password
      */
     private String execCommandWithPassword(String ip, Integer port, String username, String password, String command, int timeoutMs) {
@@ -1686,6 +1838,50 @@ public class ServerServiceImpl implements ServerService {
                 } else {
                     System.out.println("[execCommand] Output: (empty)");
                 }
+                return output;
+            }
+        }
+        
+        throw new RuntimeException("Khong the thuc thi command. Server khong co SSH key hoac password hop le.");
+    }
+    
+    @Override
+    public String execCommand(Long id, String command, int timeoutMs, Consumer<String> outputHandler) {
+        System.out.println("[execCommand with outputHandler] Thuc thi command tren server ID: " + id);
+        System.out.println("[execCommand with outputHandler] Command: " + command);
+        
+        ServerEntity server = serverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay server voi ID: " + id));
+        
+        // Kiem tra server status
+        if (server.getStatus() == ServerEntity.ServerStatus.DISABLED) {
+            throw new RuntimeException("Server da bi ngat ket noi (DISABLED). Vui long ket noi lai truoc khi thuc thi command.");
+        }
+        if (server.getStatus() != ServerEntity.ServerStatus.ONLINE) {
+            throw new RuntimeException("Server khong online. Khong the thuc thi command.");
+        }
+        
+        String ip = server.getIp();
+        Integer port = server.getPort() != null ? server.getPort() : 22;
+        String username = server.getUsername();
+        
+        // Uu tien dung SSH key
+        String privateKeyPem = resolveServerPrivateKeyPem(id);
+        if (privateKeyPem != null && !privateKeyPem.isBlank()) {
+            String output = execCommandWithKey(ip, port, username, privateKeyPem, command, timeoutMs, outputHandler);
+            if (output != null) {
+                System.out.println("[execCommand with outputHandler] Thuc thi thanh cong bang SSH key");
+                System.out.println("[execCommand with outputHandler] Output: " + output);
+                return output;
+            }
+        }
+        
+        // Fallback: dung password neu co
+        String password = server.getPassword();
+        if (password != null && !password.isBlank()) {
+            String output = execCommandWithPassword(ip, port, username, password, command, timeoutMs, outputHandler);
+            if (output != null) {
+                System.out.println("[execCommand with outputHandler] Thuc thi thanh cong bang password");
                 return output;
             }
         }

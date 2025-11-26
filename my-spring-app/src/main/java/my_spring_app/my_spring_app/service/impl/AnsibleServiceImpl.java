@@ -1,8 +1,5 @@
 package my_spring_app.my_spring_app.service.impl;
 
-import com.jcraft.jsch.ChannelExec;
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.Session;
 import my_spring_app.my_spring_app.dto.reponse.AnsibleStatusResponse;
 import my_spring_app.my_spring_app.dto.reponse.AnsibleOperationResponse;
 import my_spring_app.my_spring_app.dto.reponse.AnsibleTaskStatusResponse;
@@ -24,13 +21,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.concurrent.ConcurrentHashMap;
@@ -703,8 +698,7 @@ public class AnsibleServiceImpl implements AnsibleService {
                         "deprecation_warnings = False\n";
             
                 List<ServerEntity> availableServers = serverRepository.findAll().stream()
-                        .filter(s -> s != null && "AVAILABLE".equals(s.getClusterStatus()) 
-                                && s.getStatus() == ServerEntity.ServerStatus.ONLINE)
+                        .filter(s -> s != null && "AVAILABLE".equals(s.getClusterStatus()))
                         .collect(Collectors.toList());
                 
             StringBuilder hostsBuilder = new StringBuilder();
@@ -966,17 +960,203 @@ public class AnsibleServiceImpl implements AnsibleService {
             }
             
             taskStatus.setProgress(40);
-            String pingCmd = "bash -lc 'ansible all -m ping -i /etc/ansible/hosts -T 10'";
+            String pingCmd = "bash -lc 'ansible all -m ping -i /etc/ansible/hosts -T 5'";
             try {
-                sshExecWithOutput(controllerServer, pingCmd, chunk -> taskStatus.appendLog(chunk));
+                // Thu thập output để phân tích
+                StringBuilder pingOutput = new StringBuilder();
+                String fullOutput = serverService.execCommand(
+                    controllerServer.getId(), 
+                    pingCmd, 
+                    60000, 
+                    chunk -> {
+                        pingOutput.append(chunk);
+                        taskStatus.appendLog(chunk);
+                    }
+                );
+                
+                // Thêm full output vào nếu chưa có
+                if (fullOutput != null && !fullOutput.isEmpty()) {
+                    pingOutput.append(fullOutput);
+                }
+                
+                String outputText = pingOutput.toString();
+                
+                // Kiểm tra xem có host nào ping thất bại không
+                java.util.List<String> failedHosts = new java.util.ArrayList<>();
+                java.util.List<String> unreachableHosts = new java.util.ArrayList<>();
+                java.util.Map<String, String> failedHostMessages = new java.util.HashMap<>();
+                java.util.Map<String, String> unreachableHostMessages = new java.util.HashMap<>();
+                
+                // Parse output để tìm các host bị lỗi và message lỗi
+                // Pattern: hostname | FAILED! => { ... "msg": "error message" ... }
+                // Pattern: hostname | UNREACHABLE! => { ... "msg": "error message" ... }
+                String[] lines = outputText.split("\n");
+                String currentHost = null;
+                String currentStatus = null;
+                StringBuilder jsonBlock = new StringBuilder();
+                boolean inJsonBlock = false;
+                
+                for (String line : lines) {
+                    String trimmedLine = line.trim();
+                    
+                    // Tìm dòng bắt đầu với hostname và status
+                    if (trimmedLine.contains("| FAILED!") || trimmedLine.contains("| UNREACHABLE!")) {
+                        // Lưu block JSON trước đó nếu có
+                        if (currentHost != null && inJsonBlock) {
+                            String jsonStr = jsonBlock.toString();
+                            String errorMsg = extractErrorMessage(jsonStr);
+                            if (currentStatus != null && currentStatus.contains("FAILED")) {
+                                if (!failedHosts.contains(currentHost)) {
+                                    failedHosts.add(currentHost);
+                                    failedHostMessages.put(currentHost, errorMsg);
+                                }
+                            } else if (currentStatus != null && currentStatus.contains("UNREACHABLE")) {
+                                if (!unreachableHosts.contains(currentHost)) {
+                                    unreachableHosts.add(currentHost);
+                                    unreachableHostMessages.put(currentHost, errorMsg);
+                                }
+                            }
+                        }
+                        
+                        // Parse hostname và status mới
+                        int pipeIndex = trimmedLine.indexOf("|");
+                        if (pipeIndex > 0) {
+                            currentHost = trimmedLine.substring(0, pipeIndex).trim();
+                            if (trimmedLine.contains("FAILED")) {
+                                currentStatus = "FAILED";
+                            } else if (trimmedLine.contains("UNREACHABLE")) {
+                                currentStatus = "UNREACHABLE";
+                            }
+                            jsonBlock = new StringBuilder();
+                            inJsonBlock = true;
+                            
+                            // Lấy phần JSON sau "=>"
+                            int arrowIndex = trimmedLine.indexOf("=>");
+                            if (arrowIndex > 0 && trimmedLine.length() > arrowIndex + 2) {
+                                String afterArrow = trimmedLine.substring(arrowIndex + 2).trim();
+                                if (afterArrow.startsWith("{")) {
+                                    jsonBlock.append(afterArrow);
+                                }
+                            }
+                        }
+                    } else if (inJsonBlock && currentHost != null) {
+                        // Tiếp tục thu thập JSON block
+                        jsonBlock.append(line).append("\n");
+                        
+                        // Kiểm tra xem đã kết thúc JSON block chưa (dòng chỉ có "}")
+                        if (trimmedLine.equals("}")) {
+                            String jsonStr = jsonBlock.toString();
+                            String errorMsg = extractErrorMessage(jsonStr);
+                            if (currentStatus != null && currentStatus.contains("FAILED")) {
+                                if (!failedHosts.contains(currentHost)) {
+                                    failedHosts.add(currentHost);
+                                    failedHostMessages.put(currentHost, errorMsg);
+                                }
+                            } else if (currentStatus != null && currentStatus.contains("UNREACHABLE")) {
+                                if (!unreachableHosts.contains(currentHost)) {
+                                    unreachableHosts.add(currentHost);
+                                    unreachableHostMessages.put(currentHost, errorMsg);
+                                }
+                            }
+                            inJsonBlock = false;
+                            currentHost = null;
+                            currentStatus = null;
+                            jsonBlock = new StringBuilder();
+                        }
+                    }
+                }
+                
+                // Xử lý block cuối cùng nếu còn
+                if (currentHost != null && inJsonBlock) {
+                    String jsonStr = jsonBlock.toString();
+                    String errorMsg = extractErrorMessage(jsonStr);
+                    if (currentStatus != null && currentStatus.contains("FAILED")) {
+                        if (!failedHosts.contains(currentHost)) {
+                            failedHosts.add(currentHost);
+                            failedHostMessages.put(currentHost, errorMsg);
+                        }
+                    } else if (currentStatus != null && currentStatus.contains("UNREACHABLE")) {
+                        if (!unreachableHosts.contains(currentHost)) {
+                            unreachableHosts.add(currentHost);
+                            unreachableHostMessages.put(currentHost, errorMsg);
+                        }
+                    }
+                }
+                
+                // Báo lỗi nếu có host nào ping thất bại - chỉ hiển thị hostname + message lỗi
+                if (!failedHosts.isEmpty() || !unreachableHosts.isEmpty()) {
+                    StringBuilder errorMsg = new StringBuilder();
+                    errorMsg.append("Ping thất bại:\n");
+                    
+                    if (!failedHosts.isEmpty()) {
+                        for (String host : failedHosts) {
+                            errorMsg.append("   • ").append(host);
+                            String msg = failedHostMessages.get(host);
+                            if (msg != null && !msg.isEmpty()) {
+                                errorMsg.append(": ").append(msg);
+                            }
+                            errorMsg.append("\n");
+                        }
+                    }
+                    
+                    if (!unreachableHosts.isEmpty()) {
+                        for (String host : unreachableHosts) {
+                            errorMsg.append("   • ").append(host);
+                            String msg = unreachableHostMessages.get(host);
+                            if (msg != null && !msg.isEmpty()) {
+                                errorMsg.append(": ").append(msg);
+                            }
+                            errorMsg.append("\n");
+                        }
+                    }
+                    
+                    taskStatus.markFailed(errorMsg.toString().trim());
+                    return;
+                }
+                
+                // Kiểm tra xem có ít nhất một host SUCCESS không
+                boolean hasSuccess = outputText.contains("SUCCESS") && outputText.contains("ping");
+                if (!hasSuccess) {
+                    taskStatus.markFailed("Không có host nào ping thành công. Vui lòng kiểm tra lại cấu hình.");
+                    return;
+                }
+                
                 taskStatus.setProgress(100);
-                taskStatus.markCompleted("✅ Ping hoàn tất.\n");
+                taskStatus.markCompleted("✅ Ping hoàn tất thành công cho tất cả hosts.\n");
             } catch (Exception pingError) {
-                taskStatus.markFailed("Ping nodes thất bại: " + pingError.getMessage());
+
+                taskStatus.markFailed("Lỗi khi thực thi ping: " + pingError.getMessage());
             }
         } catch (Exception e) {
             taskStatus.markFailed("Lỗi khi ping nodes: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Extract error message từ JSON block của Ansible output
+     * Tìm field "msg" trong JSON
+     */
+    private String extractErrorMessage(String jsonBlock) {
+        if (jsonBlock == null || jsonBlock.isEmpty()) {
+            return "";
+        }
+        
+        // Tìm pattern "msg": "message content"
+        // Hoặc "msg": 'message content'
+        Pattern msgPattern = Pattern.compile("\"msg\"\\s*:\\s*\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher matcher = msgPattern.matcher(jsonBlock);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        
+        // Thử pattern với single quote
+        Pattern msgPattern2 = Pattern.compile("'msg'\\s*:\\s*'([^']+)'", Pattern.CASE_INSENSITIVE);
+        matcher = msgPattern2.matcher(jsonBlock);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        
+        return "";
     }
     
     private void runPlaybookExecution(ExecutePlaybookRequest request, ServerEntity controllerServer, TaskStatus taskStatus) {
@@ -1001,7 +1181,7 @@ public class AnsibleServiceImpl implements AnsibleService {
             
             taskStatus.appendLog("▶️ " + baseCommand + "\n");
             taskStatus.setProgress(25);
-            sshExecWithOutput(controllerServer, finalCommand, chunk -> taskStatus.appendLog(chunk));
+            serverService.execCommand(serverId, finalCommand, 300000, chunk -> taskStatus.appendLog(chunk));
             
             taskStatus.setProgress(100);
             taskStatus.markCompleted("🎉 Đã thực thi playbook thành công: " + filename + "\n");
@@ -1010,90 +1190,6 @@ public class AnsibleServiceImpl implements AnsibleService {
         }
     }
     
-    @SuppressWarnings("unused")
-    private String sshExecWithOutput(Long serverId, String command, Consumer<String> outputHandler) {
-        ServerEntity server = serverRepository.findById(serverId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy server: " + serverId));
-        return sshExecWithOutput(server, command, outputHandler);
-    }
-    
-    private String sshExecWithOutput(ServerEntity server, String command, Consumer<String> outputHandler) {
-        Session session = null;
-        ChannelExec channel = null;
-        try {
-            JSch jsch = new JSch();
-            String privateKey = null;
-            try {
-                privateKey = serverService.resolveServerPrivateKeyPem(server.getId());
-            } catch (Exception ignored) {
-            }
-            
-            if (privateKey != null && !privateKey.isBlank()) {
-                jsch.addIdentity("server-" + server.getId(),
-                        privateKey.getBytes(StandardCharsets.UTF_8), null, null);
-            }
-            
-            String username = server.getUsername() != null ? server.getUsername() : "root";
-            int port = server.getPort() != null ? server.getPort() : 22;
-            session = jsch.getSession(username, server.getIp(), port);
-            session.setConfig("StrictHostKeyChecking", "no");
-            if (privateKey == null || privateKey.isBlank()) {
-                session.setPassword(server.getPassword());
-            }
-            session.connect(10000);
-            
-            channel = (ChannelExec) session.openChannel("exec");
-            channel.setCommand(command);
-            InputStream stdout = channel.getInputStream();
-            InputStream stderr = channel.getErrStream();
-            channel.connect();
-            
-            StringBuilder aggregated = new StringBuilder();
-            byte[] buffer = new byte[2048];
-            while (true) {
-                while (stdout.available() > 0) {
-                    int len = stdout.read(buffer);
-                    if (len < 0) {
-                        break;
-                    }
-                    String chunk = new String(buffer, 0, len, StandardCharsets.UTF_8);
-                    aggregated.append(chunk);
-                    if (outputHandler != null) {
-                        outputHandler.accept(chunk);
-        }
-                }
-                while (stderr.available() > 0) {
-                    int len = stderr.read(buffer);
-                    if (len < 0) {
-                        break;
-                    }
-                    String chunk = new String(buffer, 0, len, StandardCharsets.UTF_8);
-                    aggregated.append(chunk);
-                    if (outputHandler != null) {
-                        outputHandler.accept(chunk);
-    }
-                }
-                
-                if (channel.isClosed()) {
-                    if (stdout.available() == 0 && stderr.available() == 0) {
-                        break;
-    }
-                }
-                Thread.sleep(100);
-            }
-            
-            return aggregated.toString();
-        } catch (Exception e) {
-            throw new RuntimeException("SSH execution failed: " + e.getMessage(), e);
-        } finally {
-            if (channel != null && channel.isConnected()) {
-                channel.disconnect();
-            }
-            if (session != null && session.isConnected()) {
-                session.disconnect();
-            }
-        }
-    }
     
     private TaskStatus createInitTask(String taskId, String title) {
         TaskStatus status = new TaskStatus(taskId);
